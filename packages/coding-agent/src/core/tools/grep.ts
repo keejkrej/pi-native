@@ -173,7 +173,7 @@ export function createGrepToolDefinition(
 						args.push("--", pattern, isDirectory ? "." : searchPath);
 
 						const child = spawn(rgPath, args, {
-							cwd: isDirectory ? searchPath : undefined,
+							...(isDirectory ? { cwd: searchPath } : {}),
 							stdio: ["ignore", "pipe", "pipe"],
 						});
 						const rl = createInterface({ input: child.stdout });

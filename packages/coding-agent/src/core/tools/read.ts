@@ -85,7 +85,13 @@ async function* readLocalFileChunks(path: string): AsyncIterable<Uint8Array> {
 		const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
 		// No signal for the stream: one that aborts before the stream's iterator attaches makes the stream
 		// emit an 'error' no listener handles, which crashes the process (#11956).
-		yield* handle.createReadStream({ end, autoClose: false });
+		// Destroy the stream before closing so scriptc releases its FileHandle stream ref cleanly on EOF or break.
+		const stream = handle.createReadStream({ end, autoClose: false });
+		try {
+			yield* stream;
+		} finally {
+			stream.destroy();
+		}
 	} finally {
 		await handle.close();
 	}

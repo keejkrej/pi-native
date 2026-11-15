@@ -9,88 +9,15 @@
  * - Two model definitions
  *
  * Usage:
- *   # First install dependencies
- *   cd packages/coding-agent/examples/extensions/custom-provider && npm install
- *
  *   # With OAuth (run /login custom-anthropic first)
- *   pi -e ./packages/coding-agent/examples/extensions/custom-provider
+ *   pi -e ./packages/coding-agent/examples/extensions/custom-provider-anthropic
  *
  *   # With API key
- *   CUSTOM_ANTHROPIC_API_KEY=sk-ant-... pi -e ./packages/coding-agent/examples/extensions/custom-provider
+ *   CUSTOM_ANTHROPIC_API_KEY=sk-ant-... pi -e ./packages/coding-agent/examples/extensions/custom-provider-anthropic
  *
  * Then use /model to select custom-anthropic/claude-sonnet-4-5
  */
 
-type ContentBlockParam =
-	| { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
-	| { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-	| { type: "thinking"; thinking: string; signature: string }
-	| { type: "tool_use"; id: string; name: string; input: unknown }
-	| { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean; cache_control?: { type: "ephemeral" } };
-
-interface MessageCreateParamsStreaming {
-	model: string;
-	messages: any[];
-	max_tokens: number;
-	stream: true;
-	system?: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
-	tools?: any[];
-	thinking?: { type: "enabled"; budget_tokens: number };
-}
-
-async function* streamAnthropicMessages(
-	url: string,
-	headers: Record<string, string>,
-	body: MessageCreateParamsStreaming,
-	signal?: AbortSignal,
-): AsyncGenerator<any> {
-	const response = await fetch(url, {
-		method: "POST",
-		headers,
-		body: JSON.stringify(body),
-		signal,
-	});
-	if (!response.ok) {
-		const errorText = await response.text().catch(() => response.statusText);
-		throw new Error(`${response.status} ${errorText || response.statusText}`);
-	}
-	if (!response.body) {
-		throw new Error("Attempted to iterate over an Anthropic response with no body");
-	}
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	try {
-		while (true) {
-			if (signal?.aborted) {
-				throw new Error("Request was aborted");
-			}
-			const { value, done } = await reader.read();
-			if (done) break;
-			if (!value) continue;
-			buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-			let separatorIdx = buffer.indexOf("\n\n");
-			while (separatorIdx !== -1) {
-				const rawEvent = buffer.slice(0, separatorIdx);
-				buffer = buffer.slice(separatorIdx + 2);
-				const dataLines: string[] = [];
-				for (const line of rawEvent.split("\n")) {
-					if (line.startsWith("data:")) {
-						const content = line.slice(5);
-						dataLines.push(content.startsWith(" ") ? content.slice(1) : content);
-					}
-				}
-				const data = dataLines.join("\n").trim();
-				if (data && data !== "[DONE]") {
-					yield JSON.parse(data);
-				}
-				separatorIdx = buffer.indexOf("\n\n");
-			}
-		}
-	} finally {
-		reader.releaseLock();
-	}
-}
 import {
 	type Api,
 	type AssistantMessage,
@@ -115,6 +42,95 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+type ContentBlockParam =
+	| { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
+	| { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+	| { type: "thinking"; thinking: string; signature: string }
+	| { type: "tool_use"; id: string; name: string; input: unknown }
+	| { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean; cache_control?: { type: "ephemeral" } };
+
+interface MessageCreateParamsStreaming {
+	model: string;
+	messages: any[];
+	max_tokens: number;
+	stream: true;
+	system?: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
+	tools?: any[];
+	thinking?: { type: "enabled"; budget_tokens: number };
+}
+
+function parseSseEventPayload(rawEvent: string): any | undefined {
+	const dataLines: string[] = [];
+	for (const line of rawEvent.split("\n")) {
+		if (line.startsWith("data:")) {
+			const content = line.slice(5);
+			dataLines.push(content.startsWith(" ") ? content.slice(1) : content);
+		}
+	}
+	const data = dataLines.join("\n").trim();
+	if (!data || data === "[DONE]") {
+		return undefined;
+	}
+	return JSON.parse(data);
+}
+
+async function* streamAnthropicMessages(
+	url: string,
+	headers: Record<string, string>,
+	body: MessageCreateParamsStreaming,
+	signal?: AbortSignal,
+): AsyncGenerator<any> {
+	const response = await fetch(url, {
+		method: "POST",
+		headers,
+		body: JSON.stringify(body),
+		signal,
+	});
+	if (!response.ok) {
+		const errorText = await response.text().catch(() => response.statusText);
+		throw new Error(`${response.status} ${errorText || response.statusText}`);
+	}
+	if (!response.body || typeof response.body.getReader !== "function") {
+		const normalized = (await response.text()).replace(/\r\n/g, "\n");
+		for (const rawEvent of normalized.split("\n\n")) {
+			if (signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+			const parsed = parseSseEventPayload(rawEvent);
+			if (parsed !== undefined) {
+				yield parsed;
+			}
+		}
+		return;
+	}
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	try {
+		while (true) {
+			if (signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+			const { value, done } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+			let separatorIdx = buffer.indexOf("\n\n");
+			while (separatorIdx !== -1) {
+				const rawEvent = buffer.slice(0, separatorIdx);
+				buffer = buffer.slice(separatorIdx + 2);
+				const parsed = parseSseEventPayload(rawEvent);
+				if (parsed !== undefined) {
+					yield parsed;
+				}
+				separatorIdx = buffer.indexOf("\n\n");
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
 
 // =============================================================================
 // OAuth implementation adapted for the legacy extension compatibility interface.

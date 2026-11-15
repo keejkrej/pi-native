@@ -33,14 +33,17 @@ function notifyOSC99(title: string, body: string): void {
 	process.stdout.write(`\x1b]99;i=1:p=body;${body}\x1b\\`);
 }
 
-function notifyWindows(title: string, body: string): void {
-	const { execFile } = require("child_process");
-	execFile("powershell.exe", ["-NoProfile", "-Command", windowsToastScript(title, body)]);
+async function notifyWindows(pi: ExtensionAPI, title: string, body: string): Promise<void> {
+	try {
+		await pi.exec("powershell.exe", ["-NoProfile", "-Command", windowsToastScript(title, body)]);
+	} catch {
+		// Ignore notification failures outside Windows environments.
+	}
 }
 
-function notify(title: string, body: string): void {
+async function notify(pi: ExtensionAPI, title: string, body: string): Promise<void> {
 	if (process.env.WT_SESSION) {
-		notifyWindows(title, body);
+		await notifyWindows(pi, title, body);
 	} else if (process.env.KITTY_WINDOW_ID) {
 		notifyOSC99(title, body);
 	} else {
@@ -52,6 +55,6 @@ export default function (pi: ExtensionAPI) {
 	// `agent_end` fires after each low-level run; Pi may still retry, compact,
 	// or continue with queued follow-ups. Notify only after the full run settles.
 	pi.on("agent_settled", async () => {
-		notify("Pi", "Ready for input");
+		await notify(pi, "Pi", "Ready for input");
 	});
 }

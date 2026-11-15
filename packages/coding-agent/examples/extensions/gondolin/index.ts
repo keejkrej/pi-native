@@ -1,26 +1,14 @@
 /**
  * Gondolin Tool Routing Example
  *
- * Runs pi's built-in tools inside a local Gondolin micro-VM. The host working
- * directory is mounted at /workspace in the guest. File changes under
- * /workspace write through to the host; other guest filesystem changes are
- * isolated to the VM.
- *
- * Setup:
- *   cd packages/coding-agent/examples/extensions/gondolin
- *   npm install --ignore-scripts
- *
- * Usage:
- *   cd /path/to/project
- *   pi -e /path/to/pi/packages/coding-agent/examples/extensions/gondolin
- *
- * Requirements:
- *   - Node.js >= 23.6.0 for @earendil-works/gondolin
- *   - QEMU installed (for example, `brew install qemu` on macOS)
+ * Demonstrates routing pi's built-in tools into a local Gondolin micro-VM
+ * interface. Because `@earendil-works/gondolin` is a host-only Node native
+ * package unavailable inside the sandboxed extension runtime, this example
+ * probes `pi.exec("gondolin", ["--version"])` / optional host runtime hooks and
+ * surfaces a clear message when the Gondolin VM runtime is unavailable.
  */
 
 import path from "node:path";
-import { RealFSProvider, VM } from "@earendil-works/gondolin";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
@@ -51,6 +39,48 @@ type TextToolResult<TDetails> = {
 	content: Array<{ type: "text"; text: string }>;
 	details: TDetails | undefined;
 };
+
+interface GondolinStat {
+	isDirectory(): boolean;
+	isFile(): boolean;
+	isSymbolicLink(): boolean;
+	size: number;
+	mtimeMs: number;
+}
+
+interface GondolinExecProcess extends Promise<{ exitCode: number; stdout: string; stderr: string }> {
+	output(): AsyncIterable<{ data: Uint8Array }>;
+}
+
+interface GondolinVM {
+	id: string;
+	fs: {
+		readFile(path: string, options?: { signal?: AbortSignal }): Promise<Buffer>;
+		readFile(path: string, options: { encoding: "utf8"; signal?: AbortSignal }): Promise<string>;
+		writeFile(path: string, content: string, options: { encoding: "utf8" }): Promise<void>;
+		access(path: string): Promise<void>;
+		mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+		stat(path: string, options?: { signal?: AbortSignal }): Promise<GondolinStat>;
+		listDir(path: string, options?: { signal?: AbortSignal }): Promise<string[]>;
+	};
+	exec(
+		command: string[],
+		options?: {
+			cwd?: string;
+			env?: Record<string, string>;
+			signal?: AbortSignal;
+			stdout?: "pipe";
+			stderr?: "pipe";
+		},
+	): GondolinExecProcess;
+	close(): Promise<void>;
+}
+
+interface GondolinHostRuntime {
+	createVM(options: { sessionLabel: string; hostCwd: string; guestWorkspace: string }): Promise<GondolinVM>;
+}
+
+type VM = GondolinVM;
 
 function stripAtPrefix(value: string): string {
 	return value.startsWith("@") ? value.slice(1) : value;
@@ -169,12 +199,41 @@ async function walkGuestFiles(
 	return walkDirectory(root, "");
 }
 
+function globToRegExp(glob: string): RegExp {
+	let regex = "^";
+	for (let i = 0; i < glob.length; i++) {
+		const ch = glob[i]!;
+		if (ch === "*") {
+			if (glob[i + 1] === "*") {
+				if (glob[i + 2] === "/") {
+					regex += "(?:.*/)?";
+					i += 2;
+				} else {
+					regex += ".*";
+					i += 1;
+				}
+			} else {
+				regex += "[^/]*";
+			}
+		} else if (ch === "?") {
+			regex += "[^/]";
+		} else if ("\\^$.|+()[]{}".includes(ch)) {
+			regex += `\\${ch}`;
+		} else {
+			regex += ch;
+		}
+	}
+	regex += "$";
+	return new RegExp(regex);
+}
+
 // Like the built-in find and grep: a pattern with '/' is relative to the search root, one without
 // '/' matches file names at any depth.
 function matchesToolGlob(relativePath: string, pattern: string): boolean {
 	const normalizedPattern = toPosix(pattern).replace(/^(?:\.\/)+/, "");
-	if (normalizedPattern.includes("/")) return path.posix.matchesGlob(relativePath, normalizedPattern);
-	return path.posix.matchesGlob(path.posix.basename(relativePath), normalizedPattern);
+	const matcher = globToRegExp(normalizedPattern);
+	if (normalizedPattern.includes("/")) return matcher.test(relativePath);
+	return matcher.test(path.posix.basename(relativePath));
 }
 
 function createGondolinFindOps(vm: VM, localCwd: string): FindOperations {
@@ -309,7 +368,7 @@ async function executeGondolinGrep(
 	};
 }
 
-function sanitizeEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> | undefined {
+function sanitizeEnv(env: Record<string, string | undefined> | undefined): Record<string, string> | undefined {
 	if (!env) return undefined;
 	const result: Record<string, string> = {};
 	for (const [key, value] of Object.entries(env)) {
@@ -375,13 +434,26 @@ export default function (pi: ExtensionAPI) {
 
 	async function startVm(ctx?: ExtensionContext): Promise<VM> {
 		ctx?.ui.setStatus("gondolin", ctx.ui.theme.fg("accent", `Gondolin: starting ${GUEST_WORKSPACE}`));
-		const created = await VM.create({
+		const hostRuntime = (globalThis as { __piGondolinRuntime?: GondolinHostRuntime }).__piGondolinRuntime;
+		if (!hostRuntime) {
+			const cliProbe = await pi.exec("gondolin", ["--version"]).catch(() => ({
+				stdout: "",
+				stderr: "",
+				code: 1,
+				killed: false,
+			}));
+			const cliNote =
+				cliProbe.code === 0 && cliProbe.stdout.trim()
+					? `Detected CLI (${cliProbe.stdout.trim()}), but `
+					: "";
+			throw new Error(
+				`${cliNote}Gondolin VM runtime (@earendil-works/gondolin) is unavailable in the sandboxed extension host.`,
+			);
+		}
+		const created = await hostRuntime.createVM({
 			sessionLabel: `pi ${path.basename(localCwd)}`,
-			vfs: {
-				mounts: {
-					[GUEST_WORKSPACE]: new RealFSProvider(localCwd),
-				},
-			},
+			hostCwd: localCwd,
+			guestWorkspace: GUEST_WORKSPACE,
 		});
 		const bashProbe = await created.exec(["/bin/sh", "-lc", "command -v bash || true"]);
 		shellPath = bashProbe.stdout.trim() || "/bin/sh";
@@ -405,7 +477,13 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		await ensureVm(ctx);
+		try {
+			await ensureVm(ctx);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.setStatus("gondolin", ctx.ui.theme.fg("muted", "Gondolin: unavailable"));
+			ctx.ui.notify(message, "warning");
+		}
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
@@ -516,8 +594,8 @@ export default function (pi: ExtensionAPI) {
 		return { operations: createGondolinBashOps(activeVm, localCwd, shellPath) };
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		await ensureVm(ctx);
+	pi.on("before_agent_start", async (event) => {
+		if (!vm) return;
 		const localLine = `Current working directory: ${localCwd}`;
 		const guestLine = `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM; host workspace mounted from ${localCwd})`;
 		const systemPrompt = event.systemPrompt.includes(localLine)

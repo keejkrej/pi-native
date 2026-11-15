@@ -22,7 +22,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, OverlayAnchor, OverlayHandle, OverlayOptions, TUI } from "@earendil-works/pi-tui";
 import { Input, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { spawn } from "child_process";
 
 // Global handle for toggle demo (in real code, use a more elegant pattern)
 let globalToggleHandle: OverlayHandle | null = null;
@@ -456,11 +455,11 @@ class StackOverlayComponent extends BaseOverlay {
 	}
 }
 
-// Streaming overflow test - spawns real process with colored output (original crash scenario)
+// Streaming overflow test - generates colored output with OSC 8 links without spawning subprocesses
 class StreamingOverflowComponent extends BaseOverlay {
 	private tui: TUI;
 	private lines: string[] = [];
-	private proc: ReturnType<typeof spawn> | null = null;
+	private timer: ReturnType<typeof setInterval> | null = null;
 	private scrollOffset = 0;
 	private maxVisibleLines = 15;
 	private finished = false;
@@ -475,66 +474,56 @@ class StreamingOverflowComponent extends BaseOverlay {
 	}
 
 	private startProcess(): void {
-		// Run a command that produces many lines with ANSI colors
-		// Using find with -ls produces file listings, or use ls --color
-		this.proc = spawn("bash", [
-			"-c",
-			`
-			echo "Starting streaming overflow test (30+ seconds)..."
-			echo "This simulates subagent output with colors, hyperlinks, and long paths"
-			echo ""
-			for i in $(seq 1 100); do
-				# Simulate long file paths with OSC 8 hyperlinks (clickable) - tests width overflow
-				DIR="/Users/nicobailon/Documents/development/pi-mono/packages/coding-agent/src/modes/interactive"
-				FILE="\${DIR}/components/very-long-component-name-that-exceeds-width-\${i}.ts"
-				echo -e "\\033]8;;file://\${FILE}\\007▶ read: \${FILE}\\033]8;;\\007"
+		this.lines.push("Starting streaming overflow test (30+ seconds)...");
+		this.lines.push("This simulates subagent output with colors, hyperlinks, and long paths");
+		this.lines.push("");
+		this.tui.requestRender();
 
-				# Add some colored status messages with long text
-				if [ $((i % 5)) -eq 0 ]; then
-					echo -e "  \\033[32m✓ Successfully processed \${i} files in /Users/nicobailon/Documents/development/pi-mono\\033[0m"
-				fi
-				if [ $((i % 7)) -eq 0 ]; then
-					echo -e "  \\033[33m⚠ Warning: potential issue detected at line \${i} in very-long-component-name-that-exceeds-width.ts\\033[0m"
-				fi
-				if [ $((i % 11)) -eq 0 ]; then
-					echo -e "  \\033[31m✗ Error: file not found /some/really/long/path/that/definitely/exceeds/the/overlay/width/limit/file-\${i}.ts\\033[0m"
-				fi
-				sleep 0.3
-			done
-			echo ""
-			echo -e "\\033[32m✓ Complete - 100 files processed in 30 seconds\\033[0m"
-			echo "Press Esc to close"
-			`,
-		]);
-
-		this.proc.stdout?.on("data", (data: Buffer) => {
-			if (this.disposed) return; // Guard against callbacks after dispose
-			const text = data.toString();
-			const newLines = text.split("\n");
-			for (const line of newLines) {
-				if (line) this.lines.push(line);
+		let i = 0;
+		const total = 100;
+		const baseDir = "/Users/nicobailon/Documents/development/pi-mono/packages/coding-agent/src/modes/interactive";
+		this.timer = setInterval(() => {
+			if (this.disposed) return;
+			i += 1;
+			if (i <= total) {
+				const file = `${baseDir}/components/very-long-component-name-that-exceeds-width-${i}.ts`;
+				this.lines.push(`\x1b]8;;file://${file}\x07▶ read: ${file}\x1b]8;;\x07`);
+				if (i % 5 === 0) {
+					this.lines.push(
+						`  \x1b[32m✓ Successfully processed ${i} files in /Users/nicobailon/Documents/development/pi-mono\x1b[0m`,
+					);
+				}
+				if (i % 7 === 0) {
+					this.lines.push(
+						`  \x1b[33m⚠ Warning: potential issue detected at line ${i} in very-long-component-name-that-exceeds-width.ts\x1b[0m`,
+					);
+				}
+				if (i % 11 === 0) {
+					this.lines.push(
+						`  \x1b[31m✗ Error: file not found /some/really/long/path/that/definitely/exceeds/the/overlay/width/limit/file-${i}.ts\x1b[0m`,
+					);
+				}
+				this.scrollOffset = Math.max(0, this.lines.length - this.maxVisibleLines);
+				this.tui.requestRender();
+				return;
 			}
-			// Auto-scroll to bottom
+
+			if (this.timer) {
+				clearInterval(this.timer);
+				this.timer = null;
+			}
+			this.lines.push("");
+			this.lines.push("\x1b[32m✓ Complete - 100 files processed in 30 seconds\x1b[0m");
+			this.lines.push("Press Esc to close");
+			this.finished = true;
 			this.scrollOffset = Math.max(0, this.lines.length - this.maxVisibleLines);
 			this.tui.requestRender();
-		});
-
-		this.proc.stderr?.on("data", (data: Buffer) => {
-			if (this.disposed) return; // Guard against callbacks after dispose
-			this.lines.push(this.theme.fg("error", data.toString().trim()));
-			this.tui.requestRender();
-		});
-
-		this.proc.on("close", () => {
-			if (this.disposed) return; // Guard against callbacks after dispose
-			this.finished = true;
-			this.tui.requestRender();
-		});
+		}, 300);
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.proc?.kill();
+			this.dispose();
 			this.done();
 		} else if (matchesKey(data, "up")) {
 			this.scrollOffset = Math.max(0, this.scrollOffset - 1);
@@ -585,7 +574,10 @@ class StreamingOverflowComponent extends BaseOverlay {
 
 	dispose(): void {
 		this.disposed = true;
-		this.proc?.kill();
+		if (this.timer) {
+			clearInterval(this.timer);
+			this.timer = null;
+		}
 	}
 }
 

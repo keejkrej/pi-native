@@ -994,12 +994,16 @@ export async function executeCredentialProcess(
 
 		options?.signal?.addEventListener("abort", onAbort, { once: true });
 
-		child.stdout?.on("data", (chunk: Buffer | string) => {
-			stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-		});
-		child.stderr?.on("data", (chunk: Buffer | string) => {
-			stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-		});
+		if (child.stdout) {
+			child.stdout.on("data", (chunk: Buffer | string) => {
+				stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+			});
+		}
+		if (child.stderr) {
+			child.stderr.on("data", (chunk: Buffer | string) => {
+				stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+			});
+		}
 		child.on("error", (err) => {
 			if (settled) return;
 			settled = true;

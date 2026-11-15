@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Api, Provider } from "@earendil-works/pi-ai";
-import type { KeyId } from "@earendil-works/pi-tui";
+import type { ComponentLike, KeyId } from "@earendil-works/pi-tui";
 import {
 	nativeJscCreate,
 	nativeJscDestroy,
@@ -31,12 +31,14 @@ import type { EventBus } from "../event-bus.ts";
 import { execCommand, type ExecOptions } from "../exec.ts";
 import { bundleExtensionEntry, type BundledExtensionGraph } from "./ts-strip.ts";
 import type {
+	EntryRenderer,
 	Extension,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionRuntime,
 	ExtensionToolContext,
+	MessageRenderer,
 	ToolDefinition,
 	ToolRenderContext,
 } from "./types.ts";
@@ -2636,7 +2638,7 @@ function serializeToolRenderContext(ctx: ToolRenderContext): Record<string, unkn
 	};
 }
 
-function buildRenderedComponentShim(vmId: number, initialLines: string[], compId?: number) {
+function buildRenderedComponentShim(vmId: number, initialLines: string[], compId?: number): ComponentLike {
 	let cachedLines = initialLines;
 	let disposed = false;
 	return {
@@ -3086,21 +3088,23 @@ export async function loadExternalExtensionViaJsc(
 				case "registerMessageRenderer": {
 					const customType = String(args[0]);
 					const fnId = Number(args[1]);
-					api.registerMessageRenderer(customType, (message, options) => {
+					const renderer: MessageRenderer = (message, options) => {
 						const rendered = runSyncCallback(fnId, [toJsonSafe(message), toJsonSafe(options), { __piType: "theme" }]);
 						if (!rendered) return undefined;
 						return buildRenderedComponentShim(vmId, rendered.lines, rendered.compId);
-					});
+					};
+					api.registerMessageRenderer(customType, renderer);
 					break;
 				}
 				case "registerEntryRenderer": {
 					const customType = String(args[0]);
 					const fnId = Number(args[1]);
-					api.registerEntryRenderer(customType, (entry, options) => {
+					const renderer: EntryRenderer = (entry, options) => {
 						const rendered = runSyncCallback(fnId, [toJsonSafe(entry), toJsonSafe(options), { __piType: "theme" }]);
 						if (!rendered) return undefined;
 						return buildRenderedComponentShim(vmId, rendered.lines, rendered.compId);
-					});
+					};
+					api.registerEntryRenderer(customType, renderer);
 					break;
 				}
 				case "registerMarkdownTransformer": {
@@ -3365,14 +3369,29 @@ export async function loadExternalExtensionViaJsc(
 					fs.appendFileSync(String(args[0]), String(args[1] ?? ""), "utf8");
 					break;
 				case "fs.mkdirSync":
-					fs.mkdirSync(String(args[0]), { recursive: Boolean(args[1]) });
+					if (Boolean(args[1])) {
+						fs.mkdirSync(String(args[0]), { recursive: true });
+					} else {
+						fs.mkdirSync(String(args[0]));
+					}
 					break;
 				case "fs.unlinkSync":
 					fs.unlinkSync(String(args[0]));
 					break;
-				case "fs.rmSync":
-					fs.rmSync(String(args[0]), (args[1] ?? {}) as { recursive?: boolean; force?: boolean });
+				case "fs.rmSync": {
+					const rmTarget = String(args[0]);
+					const rmOpts = (args[1] ?? {}) as { recursive?: boolean; force?: boolean };
+					if (rmOpts.recursive && rmOpts.force) {
+						fs.rmSync(rmTarget, { recursive: true, force: true });
+					} else if (rmOpts.recursive) {
+						fs.rmSync(rmTarget, { recursive: true });
+					} else if (rmOpts.force) {
+						fs.rmSync(rmTarget, { force: true });
+					} else {
+						fs.rmSync(rmTarget);
+					}
 					break;
+				}
 				case "fs.renameSync":
 					fs.renameSync(String(args[0]), String(args[1]));
 					break;
@@ -3540,7 +3559,12 @@ export async function loadExternalExtensionViaJsc(
 					return { callId: call.callId, ok: true, value: undefined };
 				}
 				case "fs.mkdir": {
-					await fs.promises.mkdir(String(args[0]), (args[1] ?? { recursive: false }) as { recursive?: boolean });
+					const mkdirOpts = (args[1] ?? {}) as { recursive?: boolean };
+					if (mkdirOpts.recursive) {
+						await fs.promises.mkdir(String(args[0]), { recursive: true });
+					} else {
+						await fs.promises.mkdir(String(args[0]));
+					}
 					return { callId: call.callId, ok: true, value: undefined };
 				}
 				case "fs.readdir": {
@@ -3556,7 +3580,17 @@ export async function loadExternalExtensionViaJsc(
 					return { callId: call.callId, ok: true, value: undefined };
 				}
 				case "fs.rm": {
-					await fs.promises.rm(String(args[0]), (args[1] ?? {}) as { recursive?: boolean; force?: boolean });
+					const rmTarget = String(args[0]);
+					const rmOpts = (args[1] ?? {}) as { recursive?: boolean; force?: boolean };
+					if (rmOpts.recursive && rmOpts.force) {
+						await fs.promises.rm(rmTarget, { recursive: true, force: true });
+					} else if (rmOpts.recursive) {
+						await fs.promises.rm(rmTarget, { recursive: true });
+					} else if (rmOpts.force) {
+						await fs.promises.rm(rmTarget, { force: true });
+					} else {
+						await fs.promises.rm(rmTarget);
+					}
 					return { callId: call.callId, ok: true, value: undefined };
 				}
 				case "fs.rename": {

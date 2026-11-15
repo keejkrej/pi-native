@@ -1,6 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { deflateSync } from "node:zlib";
 
 import { expand } from "brace-expansion";
 import chalk, { Chalk } from "chalk";
@@ -78,15 +80,39 @@ import { stripSchemaMetaKeys } from "../packages/ai/src/utils/json-schema.ts";
 import { toToolDeclaration } from "../packages/ai/src/utils/transcript.ts";
 import { validateToolArguments } from "../packages/ai/src/utils/validation.ts";
 import {
+	isNativeDarwinAvailable,
+	nativeClipboardGetText,
+	nativeClipboardSetText,
+	nativeImageInspect,
+	nativeImageTransform,
+	nativeIsModifierPressed,
+	nativeWordSegment,
+} from "@earendil-works/pi-native-ffi";
+import {
+	assumeRole,
 	buildBedrockConverseStreamUrl,
+	clearBedrockCredentialsCache,
+	fetchSsoRoleCredentials,
+	parseAwsIniFiles,
+	parseAwsIniText,
 	parseBedrockEventStream,
+	parseStsCredentialsXml,
+	resolveBedrockCredentials,
+	resolveBedrockProfileRegion,
+	resolveEc2ImdsV2Credentials,
+	resolveEcsContainerCredentials,
+	resolveSsoCachedToken,
 	serializeBedrockPayload,
 	signAwsSigV4,
 } from "../packages/ai/src/api/bedrock-eventstream.ts";
 import {
 	buildMldevStreamUrl,
 	buildVertexStreamUrl,
+	clearVertexTokenCache,
+	exchangeImpersonatedToken,
 	GoogleGenAI,
+	resolveExternalAccountToken,
+	resolveVertexCredentialsObject,
 	serializeGenerateContentRequest,
 } from "../packages/ai/src/api/google-wire-types.ts";
 import { createOpenAIClient, parseOpenAISSE } from "../packages/ai/src/api/openai-http.ts";
@@ -113,6 +139,8 @@ import {
 	Editor,
 	FunctionalComponent,
 	FunctionalEditorComponent,
+	getNativeClipboard,
+	getWordSegmenter,
 	Input as TuiInput,
 	isViewportTUI,
 	Markdown as TuiMarkdown,
@@ -144,7 +172,52 @@ import {
 	initTheme,
 } from "../packages/coding-agent/src/modes/interactive/theme/theme.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "../packages/coding-agent/src/modes/interactive/tui-renderer.ts";
+import { createEventBus } from "../packages/coding-agent/src/core/event-bus.ts";
+import { AuthStorage } from "../packages/coding-agent/src/core/auth-storage.ts";
+import {
+	clearExtensionCache,
+	createExtensionRuntime,
+	loadExtensions,
+} from "../packages/coding-agent/src/core/extensions/loader.ts";
+import { ExtensionRunner } from "../packages/coding-agent/src/core/extensions/runner.ts";
+import { bundleExtensionEntry, stripTypeScriptTypes } from "../packages/coding-agent/src/core/extensions/ts-strip.ts";
+import type { ExtensionToolContext } from "../packages/coding-agent/src/core/extensions/types.ts";
+import { ModelRegistry } from "../packages/coding-agent/src/core/model-registry.ts";
+import { ModelRuntime } from "../packages/coding-agent/src/core/model-runtime.ts";
+import { SessionManager } from "../packages/coding-agent/src/core/session-manager.ts";
+import { executeCodemode, parseCodemodeOptions } from "../packages/coding-agent/src/extensions/codemode/execute.ts";
+import { createCodemodeExtension } from "../packages/coding-agent/src/extensions/codemode/index.ts";
+import { codemodeRenderers } from "../packages/coding-agent/src/extensions/codemode/renderer.ts";
+import { runCodemodeSandbox } from "../packages/coding-agent/src/extensions/codemode/sandbox.ts";
+import {
+	CODEMODE_TOOL_NAME,
+	createCodemodeDescription,
+	createCodemodeTool,
+} from "../packages/coding-agent/src/extensions/codemode/tool.ts";
+import { ToolExecutionComponent } from "../packages/coding-agent/src/modes/interactive/components/tool-execution.ts";
+import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../packages/coding-agent/src/utils/clipboard.ts";
+import { readClipboardImage } from "../packages/coding-agent/src/utils/clipboard-image.ts";
+import {
+	convertImageBytesToPng,
+	convertToPng,
+	encodePngBytesSync,
+	loadPngTranscoder,
+} from "../packages/coding-agent/src/utils/image-convert.ts";
+import {
+	getExifOrientation,
+	parseImageDimensions,
+	stripPngOrientationChunks,
+} from "../packages/coding-agent/src/utils/image-dimensions.ts";
+import { formatDimensionNote, resizeImage } from "../packages/coding-agent/src/utils/image-resize.ts";
+import { loadPhoton } from "../packages/coding-agent/src/utils/photon.ts";
+import {
+	getHighlightLanguageCount,
+	highlight,
+	loadAllHighlightLanguages,
+	supportsLanguage,
+} from "../packages/coding-agent/src/utils/syntax-highlight.ts";
 import { renderLayoutFrame } from "../packages/tui/src/layout.ts";
+import { getNativePlatformHelper } from "../packages/tui/src/native-platform.ts";
 import { findWordBackward } from "../packages/tui/src/word-navigation.ts";
 
 class MemoryTerminal implements Terminal {
@@ -315,6 +388,157 @@ function buildBinaryResponse(chunks: readonly Uint8Array[]): Response {
 		status: 200,
 		headers: { "content-type": "application/vnd.amazon.eventstream" },
 	});
+}
+
+function makePngChunk(type: string, data: Uint8Array): Uint8Array {
+	const out = new Uint8Array(12 + data.length);
+	const view = new DataView(out.buffer);
+	view.setUint32(0, data.length, false);
+	for (let i = 0; i < 4; i++) {
+		out[4 + i] = type.charCodeAt(i);
+	}
+	out.set(data, 8);
+	view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)), false);
+	return out;
+}
+
+function makeSolidPng(width: number, height: number, r = 40, g = 140, b = 220, a = 255): Uint8Array {
+	const sig = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+	const ihdr = new Uint8Array(13);
+	const ihdrView = new DataView(ihdr.buffer);
+	ihdrView.setUint32(0, width, false);
+	ihdrView.setUint32(4, height, false);
+	ihdr[8] = 8; // bit depth
+	ihdr[9] = 6; // RGBA color type
+
+	const stride = 1 + width * 4;
+	const raw = new Uint8Array(stride * height);
+	for (let y = 0; y < height; y++) {
+		const rowStart = y * stride;
+		raw[rowStart] = 0; // filter: None
+		for (let x = 0; x < width; x++) {
+			const px = rowStart + 1 + x * 4;
+			raw[px] = r;
+			raw[px + 1] = g;
+			raw[px + 2] = b;
+			raw[px + 3] = a;
+		}
+	}
+	const compressed = new Uint8Array(deflateSync(raw));
+	const chunks = [sig, makePngChunk("IHDR", ihdr), makePngChunk("IDAT", compressed), makePngChunk("IEND", new Uint8Array(0))];
+	let total = 0;
+	for (const c of chunks) total += c.length;
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const c of chunks) {
+		out.set(c, offset);
+		offset += c.length;
+	}
+	return out;
+}
+
+function makeSolidBmp2x2(): Uint8Array {
+	// 14-byte file header + 40-byte BITMAPINFOHEADER + 2 rows of (2 * 3 + 2 pad) = 70 bytes
+	const out = new Uint8Array(70);
+	const view = new DataView(out.buffer);
+	out[0] = 0x42; // 'B'
+	out[1] = 0x4d; // 'M'
+	view.setUint32(2, out.length, true);
+	view.setUint32(10, 54, true); // pixel data offset
+	view.setUint32(14, 40, true); // DIB header size
+	view.setInt32(18, 2, true); // width
+	view.setInt32(22, 2, true); // height (positive = bottom-up)
+	view.setUint16(26, 1, true); // planes
+	view.setUint16(28, 24, true); // bpp
+	view.setUint32(34, 16, true); // image size
+	for (let row = 0; row < 2; row++) {
+		const base = 54 + row * 8;
+		out[base] = 200;
+		out[base + 1] = 100;
+		out[base + 2] = 50;
+		out[base + 3] = 200;
+		out[base + 4] = 100;
+		out[base + 5] = 50;
+	}
+	return out;
+}
+
+function injectExifOrientation6(jpegBytes: Uint8Array): Uint8Array {
+	if (jpegBytes.length < 4 || jpegBytes[0] !== 0xff || jpegBytes[1] !== 0xd8) {
+		throw new Error("Expected JPEG SOI header");
+	}
+	// APP1 marker + length(34) + "Exif\0\0" + little-endian TIFF IFD0 with tag 0x0112 = 6
+	const app1 = new Uint8Array([
+		0xff, 0xe1, 0x00, 0x22,
+		0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+		0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+		0x01, 0x00,
+		0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+	]);
+	const out = new Uint8Array(2 + app1.length + (jpegBytes.length - 2));
+	out[0] = 0xff;
+	out[1] = 0xd8;
+	out.set(app1, 2);
+	out.set(jpegBytes.subarray(2), 2 + app1.length);
+	return out;
+}
+
+function findRepoRoot(): string {
+	let dir = resolve(process.cwd());
+	for (let i = 0; i < 8; i++) {
+		if (existsSync(join(dir, "packages/coding-agent/examples/extensions/hello.ts"))) {
+			return dir;
+		}
+		const parent = resolve(dir, "..");
+		if (parent === dir) break;
+		dir = parent;
+	}
+	throw new Error(`Could not locate repo root starting from ${process.cwd()}`);
+}
+
+function makeMockFetch(
+	handler: (url: string, init?: RequestInit) => Promise<Response> | Response,
+): typeof globalThis.fetch {
+	const fn: typeof globalThis.fetch = async (input, init) => handler(getRequestUrl(input), init);
+	return fn;
+}
+
+function createMockExtensionToolContext(
+	cwd: string,
+	tools: ExtensionToolContext["tools"] = [],
+	executeImpl?: (name: string, args: Record<string, unknown>) => Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }>,
+): ExtensionToolContext {
+	return {
+		hasUI: false,
+		mode: "print",
+		cwd,
+		model: undefined,
+		scopedModels: [],
+		thinkingLevel: "off",
+		signal: undefined,
+		isIdle: () => true,
+		isProjectTrusted: () => true,
+		hasPendingMessages: () => false,
+		abort: () => {},
+		shutdown: () => {},
+		getContextUsage: () => undefined,
+		compact: () => {},
+		getSystemPrompt: () => "",
+		tools,
+		async executeTool(name: string, args: unknown) {
+			const rec = (args && typeof args === "object" && !Array.isArray(args) ? args : {}) as Record<string, unknown>;
+			const result = executeImpl
+				? await executeImpl(name, rec)
+				: { content: [{ type: "text" as const, text: "" }], details: {} };
+			return {
+				toolCall: { type: "toolCall" as const, id: "mock-tc-1", name, arguments: rec },
+				result,
+				isError: false,
+				durationMs: 1,
+			};
+		},
+	} as unknown as ExtensionToolContext;
 }
 
 const results: TestResult[] = [];
@@ -1243,6 +1467,945 @@ async function main(): Promise<void> {
 			mainTui.stop();
 			altTui.stop();
 			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
+	// 24. FFI Word Segmenter (Apple NLTokenizer)
+	await runCase("ffi:word-segmenter", () => {
+		assertEqual(isNativeDarwinAvailable(), true, "expected Darwin native FFI to be available");
+
+		const mixed = "hello world 你好世界 日本語 สวัสดีfoo";
+		const nativeSegments = nativeWordSegment(mixed);
+		assert(nativeSegments !== null && nativeSegments.length >= 6, "expected native word segments");
+		assertEqual(
+			nativeSegments!.map((s) => s.segment).join(""),
+			mixed,
+			"native word segments must reconstruct input losslessly",
+		);
+		let expectedOffset = 0;
+		for (const seg of nativeSegments!) {
+			assertEqual(seg.index, expectedOffset, "native word segment index mismatch");
+			expectedOffset += seg.segment.length;
+		}
+		assertEqual(nativeSegments![0]?.segment, "hello", "first word segment mismatch");
+		assertEqual(nativeSegments![0]?.isWordLike, true, "first word isWordLike mismatch");
+		assertEqual(nativeSegments![1]?.segment, " ", "space segment mismatch");
+		assertEqual(nativeSegments![1]?.isWordLike, false, "space isWordLike mismatch");
+
+		const seg = getWordSegmenter();
+		const zhWords = [...seg.segment("你好世界")].filter((s) => s.isWordLike).map((s) => s.segment);
+		assert(zhWords.length >= 2 && zhWords.join("") === "你好世界", "Chinese segmentation failed");
+
+		const jaWords = [...seg.segment("東京都渋谷区")].filter((s) => s.isWordLike).map((s) => s.segment);
+		assert(jaWords.length >= 2 && jaWords.join("") === "東京都渋谷区", "Japanese segmentation failed");
+
+		const thWords = [...seg.segment("สวัสดีครับ")].filter((s) => s.isWordLike).map((s) => s.segment);
+		assert(thWords.length >= 2 && thWords.join("") === "สวัสดีครับ", "Thai segmentation failed");
+
+		const mixWords = [...seg.segment(mixed)].filter((s) => s.isWordLike).map((s) => s.segment);
+		assert(mixWords.includes("hello") && mixWords.includes("world"), "mixed word segmentation missing Latin words");
+		assertEqual(findWordBackward("hello world", 11), 6, "findWordBackward Latin");
+		assert(findWordBackward("你好 世界", 5) < 5, "findWordBackward CJK should move left");
+	});
+
+	// 25. FFI Clipboard & Modifiers (AppKit NSPasteboard + NSEvent)
+	await runCase("ffi:clipboard", async () => {
+		const helper = getNativePlatformHelper();
+		assert(helper !== undefined, "expected Darwin platform helper");
+		assert(getNativeClipboard() === helper, "getNativeClipboard must share singleton helper");
+
+		assertEqual(typeof nativeIsModifierPressed("shift"), "boolean", "shift modifier check must return boolean");
+		assertEqual(typeof nativeIsModifierPressed("command"), "boolean", "command modifier check must return boolean");
+
+		const savedClipboard = nativeClipboardGetText();
+		try {
+			const marker = `pi-native-clipboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+			assertEqual(nativeClipboardSetText(marker), true, "nativeClipboardSetText failed");
+			assertEqual(nativeClipboardGetText(), marker, "nativeClipboardGetText roundtrip mismatch");
+			assertEqual(await readClipboardText(), marker, "readClipboardText roundtrip mismatch");
+
+			const marker2 = `${marker}-copy`;
+			await copyToClipboard(marker2);
+			assertEqual(await readClipboardText(), marker2, "copyToClipboard roundtrip mismatch");
+
+			const paths = await readClipboardFilePaths();
+			assert(paths === null || Array.isArray(paths), "readClipboardFilePaths must return null or string[]");
+
+			const img = await readClipboardImage();
+			assert(
+				img === null || (img.bytes instanceof Uint8Array && typeof img.mimeType === "string"),
+				"readClipboardImage must return null or valid ClipboardImage",
+			);
+		} finally {
+			nativeClipboardSetText(savedClipboard ?? "");
+		}
+	});
+
+	// 26. Media Image Resize & Convert (Apple ImageIO / CoreGraphics)
+	await runCase("media:image-resize-and-convert", async () => {
+		assert((await loadPhoton()) === null, "WASM photon stub must stay disabled");
+
+		const smallPng = makeSolidPng(16, 8);
+		const parsedPng = parseImageDimensions(smallPng);
+		assert(parsedPng !== null, "parseImageDimensions failed on PNG");
+		assertEqual(parsedPng!.width, 16, "PNG width mismatch");
+		assertEqual(parsedPng!.height, 8, "PNG height mismatch");
+		assertEqual(parsedPng!.format, "png", "PNG format mismatch");
+
+		const inspectedPng = nativeImageInspect(smallPng);
+		assert(inspectedPng !== null, "nativeImageInspect failed on PNG");
+		assertEqual(inspectedPng!.width, 16, "native PNG width mismatch");
+		assertEqual(inspectedPng!.height, 8, "native PNG height mismatch");
+
+		const bmp2x2 = makeSolidBmp2x2();
+		const parsedBmp = parseImageDimensions(bmp2x2);
+		assert(parsedBmp !== null, "parseImageDimensions failed on BMP");
+		assertEqual(parsedBmp!.width, 2, "BMP width mismatch");
+		assertEqual(parsedBmp!.height, 2, "BMP height mismatch");
+		assertEqual(parsedBmp!.format, "bmp", "BMP format mismatch");
+
+		const encodedPng = encodePngBytesSync(bmp2x2);
+		assert(encodedPng !== null, "encodePngBytesSync failed on BMP");
+		const encodedDims = parseImageDimensions(encodedPng!);
+		assertEqual(encodedDims?.format, "png", "encoded output must be PNG");
+		assertEqual(encodedDims?.width, 2, "encoded PNG width mismatch");
+		assertEqual(encodedDims?.height, 2, "encoded PNG height mismatch");
+
+		const asyncPng = await convertImageBytesToPng(bmp2x2);
+		assert(asyncPng !== null && parseImageDimensions(asyncPng)?.format === "png", "convertImageBytesToPng failed");
+
+		const converted = await convertToPng(Buffer.from(bmp2x2).toString("base64"), "image/bmp");
+		assert(converted !== null && converted.mimeType === "image/png", "convertToPng failed");
+
+		const transcoder = await loadPngTranscoder();
+		assert(transcoder !== undefined, "expected Darwin PNG transcoder");
+		const transcodedB64 = transcoder!(Buffer.from(bmp2x2).toString("base64"), "image/bmp");
+		assert(transcodedB64 !== null, "synchronous PNG transcoder returned null");
+		assertEqual(
+			parseImageDimensions(new Uint8Array(Buffer.from(transcodedB64!, "base64")))?.format,
+			"png",
+			"transcoded bytes must be PNG",
+		);
+
+		// EXIF orientation 6 (Rotate 90 CW): 16x8 JPEG must auto-orient to 8x16
+		const rawJpeg = nativeImageTransform(smallPng, 0, 0, "jpeg", 85, false);
+		assert(rawJpeg !== null, "nativeImageTransform failed to encode JPEG");
+		const exifJpeg = injectExifOrientation6(rawJpeg!);
+		assertEqual(getExifOrientation(exifJpeg), 6, "EXIF orientation 6 detection failed");
+		const orientedPng = nativeImageTransform(exifJpeg, 0, 0, "png", 100, true);
+		assert(orientedPng !== null, "nativeImageTransform failed on EXIF JPEG");
+		const orientedDims = parseImageDimensions(orientedPng!);
+		assertEqual(orientedDims?.width, 8, "EXIF orientation swap width mismatch");
+		assertEqual(orientedDims?.height, 16, "EXIF orientation swap height mismatch");
+
+		// Fast-path no-op resize preserves bytes & reports wasResized=false
+		const fastRes = await resizeImage(smallPng, "image/png", { maxWidth: 64, maxHeight: 64 });
+		assert(fastRes !== null && !fastRes.wasResized, "expected resizeImage fast-path");
+		assertEqual(fastRes!.width, 16, "fast-path width mismatch");
+		assertEqual(fastRes!.height, 8, "fast-path height mismatch");
+		assertEqual(formatDimensionNote(fastRes!), undefined, "fast-path must omit dimension note");
+
+		const strippedPng = stripPngOrientationChunks(smallPng);
+		assertEqual(parseImageDimensions(strippedPng)?.format, "png", "stripPngOrientationChunks corrupted PNG");
+
+		// Downscale resize preserves aspect ratio & emits dimension note
+		const largePng = makeSolidPng(120, 60);
+		const downscaled = await resizeImage(largePng, "image/png", { maxWidth: 40, maxHeight: 40 });
+		assert(downscaled !== null && downscaled.wasResized, "expected resizeImage to shrink 120x60");
+		assertEqual(downscaled!.originalWidth, 120, "originalWidth mismatch");
+		assertEqual(downscaled!.originalHeight, 60, "originalHeight mismatch");
+		assert(downscaled!.width <= 40 && downscaled!.height <= 40, "resized dimensions exceed 40x40 bounds");
+		const note = formatDimensionNote(downscaled!);
+		assert(note !== undefined && note.includes("120x60"), "missing dimension note for resized image");
+	});
+
+	// 27. AI Bedrock Enterprise Auth (INI, WebIdentity, SSO, RoleArn, ECS, IMDSv2)
+	await runCase("ai:bedrock-enterprise-auth", async () => {
+		const awsTmp = mkdtempSync(join(tmpdir(), "pi-bedrock-auth-"));
+		clearBedrockCredentialsCache();
+		try {
+			const awsDir = join(awsTmp, ".aws");
+			const ssoCacheDir = join(awsDir, "sso", "cache");
+			mkdirSync(ssoCacheDir, { recursive: true });
+
+			const iniSections = parseAwsIniText("[profile dev]\nregion = eu-west-1\nsso_session = corp\n");
+			assertEqual(iniSections.get("profile dev")?.get("region"), "eu-west-1", "parseAwsIniText failed");
+
+			const configContent = [
+				"[profile sso-prof]",
+				"region = us-west-2",
+				"sso_session = corp-sso",
+				"sso_account_id = 111122223333",
+				"sso_role_name = DevRole",
+				"",
+				"[sso-session corp-sso]",
+				"sso_region = us-west-2",
+				"sso_start_url = https://corp.awsapps.com/start",
+				"",
+				"[profile assumed]",
+				"region = us-east-1",
+				"role_arn = arn:aws:iam::111122223333:role/AssumedRole",
+				"source_profile = base",
+				"",
+			].join("\n");
+			const credsContent = [
+				"[base]",
+				"aws_access_key_id = TESTACCESSKEY0001",
+				"aws_secret_access_key = testsecretkey0001",
+				"",
+			].join("\n");
+			writeFileSync(join(awsDir, "config"), configContent, "utf8");
+			writeFileSync(join(awsDir, "credentials"), credsContent, "utf8");
+
+			const parsedIni = parseAwsIniFiles({ env: { HOME: awsTmp } });
+			assertEqual(parsedIni.config?.get("profile assumed")?.get("role_arn"), "arn:aws:iam::111122223333:role/AssumedRole", "parseAwsIniFiles missing role_arn");
+			assertEqual(resolveBedrockProfileRegion("sso-prof", { HOME: awsTmp }), "us-west-2", "resolveBedrockProfileRegion mismatch");
+
+			const sampleStsXml =
+				"<AssumeRoleResponse><AssumeRoleResult><Credentials>" +
+				"<AccessKeyId>TESTSTSKEY1</AccessKeyId>" +
+				"<SecretAccessKey>teststssecret1</SecretAccessKey>" +
+				"<SessionToken>test-sts-token-1</SessionToken>" +
+				`<Expiration>${new Date(Date.now() + 3600_000).toISOString()}</Expiration>` +
+				"</Credentials></AssumeRoleResult></AssumeRoleResponse>";
+			const parsedSts = parseStsCredentialsXml(sampleStsXml);
+			assertEqual(parsedSts.accessKeyId, "TESTSTSKEY1", "parseStsCredentialsXml accessKeyId mismatch");
+			assertEqual(parsedSts.sessionToken, "test-sts-token-1", "parseStsCredentialsXml token mismatch");
+
+			// 27a. WebIdentity via env + fetchFn
+			const webTokenPath = join(awsTmp, "oidc-jwt");
+			writeFileSync(webTokenPath, "jwt-token-value", "utf8");
+			const webCreds = await resolveBedrockCredentials({
+				skipAuth: false,
+				env: {
+					AWS_ROLE_ARN: "arn:aws:iam::111122223333:role/WebRole",
+					AWS_WEB_IDENTITY_TOKEN_FILE: webTokenPath,
+					AWS_ROLE_SESSION_NAME: "pi-web-test",
+					AWS_REGION: "us-east-1",
+				},
+				fetchFn: makeMockFetch(async (_url, init) => {
+					const body = String(init?.body ?? "");
+					assert(body.includes("Action=AssumeRoleWithWebIdentity"), "expected AssumeRoleWithWebIdentity");
+					assert(body.includes("WebIdentityToken=jwt-token-value"), "expected web identity token in body");
+					return new Response(sampleStsXml.replace("TESTSTSKEY1", "TESTWEBKEY"), { status: 200 });
+				}),
+			});
+			assertEqual(webCreds.accessKeyId, "TESTWEBKEY", "WebIdentity accessKeyId mismatch");
+
+			// 27b. SSO expired token -> OIDC refresh -> federation credentials
+			const ssoHash = createHash("sha1").update("corp-sso").digest("hex");
+			writeFileSync(
+				join(ssoCacheDir, `${ssoHash}.json`),
+				JSON.stringify({
+					startUrl: "https://corp.awsapps.com/start",
+					region: "us-west-2",
+					accessToken: "expired-sso-token",
+					expiresAt: new Date(Date.now() - 60_000).toISOString(),
+					clientId: "sso-client-1",
+					clientSecret: "sso-secret-1",
+					refreshToken: "sso-refresh-1",
+					registrationExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+				}),
+				"utf8",
+			);
+			const seenSsoUrls: string[] = [];
+			const ssoFetch = makeMockFetch(async (url, init) => {
+				seenSsoUrls.push(url);
+				if (url.includes("/token")) {
+					return new Response(
+						JSON.stringify({ accessToken: "fresh-sso-token", expiresIn: 3600, refreshToken: "sso-refresh-2" }),
+						{ status: 200 },
+					);
+				}
+				if (url.includes("/federation/credentials")) {
+					const hdrs = new Headers(init?.headers);
+					assertEqual(hdrs.get("x-amz-sso_bearer_token"), "fresh-sso-token", "missing refreshed SSO bearer token");
+					return new Response(
+						JSON.stringify({
+							roleCredentials: {
+								accessKeyId: "TESTSSOKEY1",
+								secretAccessKey: "testssosecret1",
+								sessionToken: "testssotoken1",
+								expiration: Date.now() + 3600_000,
+							},
+						}),
+						{ status: 200 },
+					);
+				}
+				return new Response("unexpected", { status: 404 });
+			});
+			const refreshedToken = await resolveSsoCachedToken({
+				ssoSession: "corp-sso",
+				ssoStartUrl: "https://corp.awsapps.com/start",
+				ssoRegion: "us-west-2",
+				ssoCacheDir,
+				fetchFn: ssoFetch,
+			});
+			assertEqual(refreshedToken, "fresh-sso-token", "SSO refresh mismatch");
+			const ssoFed = await fetchSsoRoleCredentials({
+				ssoRegion: "us-west-2",
+				accountId: "111122223333",
+				roleName: "DevRole",
+				accessToken: refreshedToken,
+				fetchFn: ssoFetch,
+			});
+			assertEqual(ssoFed.credentials.accessKeyId, "TESTSSOKEY1", "SSO federation accessKeyId mismatch");
+			const ssoCreds = await resolveBedrockCredentials({
+				optionsProfile: "sso-prof",
+				skipAuth: false,
+				env: { HOME: awsTmp },
+				fetchFn: ssoFetch,
+			});
+			assertEqual(ssoCreds.accessKeyId, "TESTSSOKEY1", "resolveBedrockCredentials SSO mismatch");
+
+			// 27c. role_arn + source_profile SigV4 AssumeRole + credential cache hit
+			let assumeCalls = 0;
+			const assumeFetch = makeMockFetch(async (_url, init) => {
+				assumeCalls += 1;
+				const hdrs = new Headers(init?.headers);
+				assert(
+					(hdrs.get("authorization") ?? "").startsWith("AWS4-HMAC-SHA256 "),
+					"AssumeRole request must be SigV4 signed",
+				);
+				return new Response(sampleStsXml.replace("TESTSTSKEY1", "TESTASSUMED1"), { status: 200 });
+			});
+			const assumed1 = await resolveBedrockCredentials({
+				optionsProfile: "assumed",
+				skipAuth: false,
+				env: { HOME: awsTmp },
+				fetchFn: assumeFetch,
+			});
+			const assumed2 = await resolveBedrockCredentials({
+				optionsProfile: "assumed",
+				skipAuth: false,
+				env: { HOME: awsTmp },
+				fetchFn: assumeFetch,
+			});
+			assertEqual(assumed1.accessKeyId, "TESTASSUMED1", "role_arn accessKeyId mismatch");
+			assertEqual(assumed2.accessKeyId, "TESTASSUMED1", "cached role_arn mismatch");
+			assertEqual(assumeCalls, 1, "expected second AssumeRole call to hit credential cache");
+
+			// 27d. ECS container credentials + EC2 IMDSv2
+			const ecsCreds = await resolveEcsContainerCredentials({
+				env: {
+					AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "/v2/credentials/test-ecs",
+					AWS_CONTAINER_AUTHORIZATION_TOKEN: "ecs-secret-token",
+				},
+				fetchFn: makeMockFetch(async (_url, init) => {
+					const hdrs = new Headers(init?.headers);
+					assertEqual(hdrs.get("authorization"), "ecs-secret-token", "ECS authorization header mismatch");
+					return new Response(
+						JSON.stringify({
+							AccessKeyId: "TESTECSKEY",
+							SecretAccessKey: "testecssecret",
+							Token: "testecstoken",
+							Expiration: new Date(Date.now() + 3600_000).toISOString(),
+						}),
+						{ status: 200 },
+					);
+				}),
+			});
+			assertEqual(ecsCreds?.accessKeyId, "TESTECSKEY", "ECS accessKeyId mismatch");
+
+			const imdsCreds = await resolveEc2ImdsV2Credentials({
+				env: { AWS_EC2_METADATA_SERVICE_ENDPOINT: "http://169.254.169.254" },
+				fetchFn: makeMockFetch(async (url, init) => {
+					if (url.endsWith("/latest/api/token")) {
+						assertEqual(init?.method, "PUT", "IMDSv2 token method must be PUT");
+						return new Response("imds-v2-tok", { status: 200 });
+					}
+					const hdrs = new Headers(init?.headers);
+					assertEqual(hdrs.get("x-aws-ec2-metadata-token"), "imds-v2-tok", "missing IMDSv2 token header");
+					if (url.endsWith("/latest/meta-data/iam/security-credentials/")) {
+						return new Response("pi-test-role\n", { status: 200 });
+					}
+					if (url.endsWith("/latest/meta-data/iam/security-credentials/pi-test-role")) {
+						return new Response(
+							JSON.stringify({
+								Code: "Success",
+								AccessKeyId: "TESTIMDSKEY",
+								SecretAccessKey: "testimdssecret",
+								Token: "testimdstoken",
+								Expiration: new Date(Date.now() + 3600_000).toISOString(),
+							}),
+							{ status: 200 },
+						);
+					}
+					return new Response("not found", { status: 404 });
+				}),
+			});
+			assertEqual(imdsCreds.accessKeyId, "TESTIMDSKEY", "IMDSv2 accessKeyId mismatch");
+		} finally {
+			clearBedrockCredentialsCache();
+			rmSync(awsTmp, { recursive: true, force: true });
+		}
+	});
+
+	// 28. AI Vertex Enterprise Auth (impersonated_service_account + external_account WIF)
+	await runCase("ai:vertex-enterprise-auth", async () => {
+		const vertexTmp = mkdtempSync(join(tmpdir(), "pi-vertex-auth-"));
+		clearVertexTokenCache();
+		try {
+			// 28a. Recursive impersonated_service_account -> authorized_user -> IAM generateAccessToken + cache hit
+			let iamCalls = 0;
+			const impFetch = makeMockFetch(async (url, init) => {
+				if (url === "https://oauth2.googleapis.com/token") {
+					return new Response(JSON.stringify({ access_token: "source-user-token", expires_in: 3600 }), {
+						status: 200,
+					});
+				}
+				if (url.includes(":generateAccessToken")) {
+					iamCalls += 1;
+					const hdrs = new Headers(init?.headers);
+					assertEqual(hdrs.get("authorization"), "Bearer source-user-token", "IAM bearer token mismatch");
+					return new Response(
+						JSON.stringify({
+							accessToken: "impersonated-sa-token",
+							expireTime: new Date(Date.now() + 3600_000).toISOString(),
+						}),
+						{ status: 200 },
+					);
+				}
+				return new Response("not found", { status: 404 });
+			});
+
+			const impCreds = {
+				type: "impersonated_service_account",
+				service_account_impersonation_url:
+					"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target@proj.iam.gserviceaccount.com:generateAccessToken",
+				delegates: ["projects/-/serviceAccounts/delegate@proj.iam.gserviceaccount.com"],
+				source_credentials: {
+					type: "authorized_user",
+					client_id: "test-client-id",
+					client_secret: "test-client-secret",
+					refresh_token: "test-refresh-token-1234",
+				},
+			};
+			const tok1 = await resolveVertexCredentialsObject(impCreds, impFetch);
+			const tok2 = await resolveVertexCredentialsObject(impCreds, impFetch);
+			assertEqual(tok1, "impersonated-sa-token", "impersonated_service_account token mismatch");
+			assertEqual(tok2, "impersonated-sa-token", "impersonated_service_account cached token mismatch");
+			assertEqual(iamCalls, 1, "expected second impersonated_service_account call to hit token cache");
+
+			// 28b. external_account (file JSON subject token + STS + IAM impersonation)
+			const oidcFile = join(vertexTmp, "oidc-subject.json");
+			writeFileSync(oidcFile, JSON.stringify({ id_token: "file-subject-jwt" }), "utf8");
+			const wifFileCreds = {
+				type: "external_account",
+				audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/prov",
+				subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+				token_url: "https://sts.googleapis.com/v1/token",
+				credential_source: {
+					file: oidcFile,
+					format: { type: "json", subject_token_field_name: "id_token" },
+				},
+				service_account_impersonation_url:
+					"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/wif@proj.iam.gserviceaccount.com:generateAccessToken",
+			};
+			const wifTok = await resolveVertexCredentialsObject(
+				wifFileCreds,
+				makeMockFetch(async (url, init) => {
+					if (url === "https://sts.googleapis.com/v1/token") {
+						const body = String(init?.body ?? "");
+						assert(body.includes("subject_token=file-subject-jwt"), "missing file subject token in STS body");
+						return new Response(JSON.stringify({ access_token: "sts-federated-tok", expires_in: 3600 }), {
+							status: 200,
+						});
+					}
+					if (url.includes(":generateAccessToken")) {
+						const hdrs = new Headers(init?.headers);
+						assertEqual(hdrs.get("authorization"), "Bearer sts-federated-tok", "WIF IAM bearer mismatch");
+						return new Response(
+							JSON.stringify({
+								accessToken: "wif-impersonated-tok",
+								expireTime: new Date(Date.now() + 3600_000).toISOString(),
+							}),
+							{ status: 200 },
+						);
+					}
+					return new Response("unexpected", { status: 404 });
+				}),
+			);
+			assertEqual(wifTok, "wif-impersonated-tok", "external_account file WIF token mismatch");
+
+			// 28c. resolveExternalAccountToken via HTTP url + custom header (without IAM impersonation)
+			const directWif = await resolveExternalAccountToken(
+				{
+					type: "external_account",
+					audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/p/providers/urlp",
+					subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+					credential_source: {
+						url: "https://metadata.local/token",
+						headers: { "Metadata-Flavor": "Google" },
+					},
+				},
+				makeMockFetch(async (url, init) => {
+					if (url === "https://metadata.local/token") {
+						const hdrs = new Headers(init?.headers);
+						assertEqual(hdrs.get("metadata-flavor"), "Google", "external_account custom header missing");
+						return new Response("raw-url-jwt", { status: 200 });
+					}
+					if (url === "https://sts.googleapis.com/v1/token") {
+						const body = String(init?.body ?? "");
+						assert(body.includes("subject_token=raw-url-jwt"), "missing URL subject token in STS body");
+						return new Response(JSON.stringify({ access_token: "direct-sts-tok", expires_in: 1800 }), {
+							status: 200,
+						});
+					}
+					return new Response("unexpected", { status: 404 });
+				}),
+			);
+			assertEqual(directWif.token, "direct-sts-tok", "external_account url STS token mismatch");
+
+			// 28d. Direct exchangeImpersonatedToken
+			const impDirect = await exchangeImpersonatedToken({
+				impersonationUrl: "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/x:generateAccessToken",
+				sourceToken: "src-tok",
+				lifetimeSeconds: 600,
+				fetchFn: makeMockFetch(async () =>
+					new Response(JSON.stringify({ accessToken: "direct-imp-tok", expireTime: new Date(Date.now() + 600_000).toISOString() }), {
+						status: 200,
+					}),
+				),
+			});
+			assertEqual(impDirect.token, "direct-imp-tok", "exchangeImpersonatedToken mismatch");
+		} finally {
+			clearVertexTokenCache();
+			rmSync(vertexTmp, { recursive: true, force: true });
+		}
+	});
+
+	// 29. Syntax Highlight 67+ Languages & Fence Aliases
+	await runCase("highlight:67-languages", async () => {
+		await loadAllHighlightLanguages();
+		const count = getHighlightLanguageCount();
+		assert(count >= 67, `expected at least 67 highlight languages, got ${count}`);
+
+		const addedLanguages = [
+			"zig",
+			"haskell",
+			"elixir",
+			"ocaml",
+			"powershell",
+			"toml",
+			"graphql",
+			"protobuf",
+			"hcl",
+			"cmake",
+			"glsl",
+			"wgsl",
+			"hlsl",
+			"svelte",
+			"vue",
+			"prisma",
+			"clojure",
+			"julia",
+			"r",
+			"solidity",
+			"erlang",
+			"fsharp",
+			"nim",
+			"crystal",
+			"gleam",
+			"odin",
+			"v",
+			"typst",
+			"latex",
+			"nginx",
+			"llvm",
+			"x86asm",
+			"awk",
+			"fish",
+			"scheme",
+		];
+		for (const lang of addedLanguages) {
+			assertEqual(supportsLanguage(lang), true, `missing highlight grammar: ${lang}`);
+		}
+
+		const requiredAliases = [
+			"tsx",
+			"jsx",
+			"mts",
+			"cts",
+			"mjs",
+			"cjs",
+			"sh",
+			"zsh",
+			"shell",
+			"console",
+			"py",
+			"rb",
+			"rs",
+			"ts",
+			"js",
+			"hs",
+			"ex",
+			"exs",
+			"ml",
+			"mli",
+			"ps",
+			"ps1",
+			"pwsh",
+			"gql",
+			"proto",
+			"terraform",
+			"tf",
+			"clj",
+			"edn",
+			"jl",
+			"sol",
+			"erl",
+			"fs",
+			"cr",
+			"vlang",
+			"typ",
+			"tex",
+			"nasm",
+			"asm",
+			"armasm",
+			"lisp",
+			"elisp",
+			"jsonc",
+			"jsonl",
+			"yml",
+			"md",
+			"scss",
+			"less",
+			"html",
+			"svg",
+			"docker",
+			"make",
+			"gradle",
+			"golang",
+			"nixos",
+			"patch",
+		];
+		assert(requiredAliases.length >= 40, "expected >= 40 aliases in test matrix");
+		for (const alias of requiredAliases) {
+			assertEqual(supportsLanguage(alias), true, `missing highlight alias: ${alias}`);
+		}
+
+		const ansiTheme = {
+			keyword: (s: string) => `[KW:${s}]`,
+			string: (s: string) => `[STR:${s}]`,
+			number: (s: string) => `[NUM:${s}]`,
+			title: (s: string) => `[TIT:${s}]`,
+		};
+		const tomlOut = highlight('[pkg]\nname = "pi"\nver = 1', { language: "toml", theme: ansiTheme });
+		assert(tomlOut.includes("[STR:"), `toml highlight failed: ${tomlOut}`);
+		const svelteOut = highlight("<script>let count = 1;</script><p>{count}</p>", { language: "svelte", theme: ansiTheme });
+		assert(svelteOut.includes("[KW:") || svelteOut.includes("[NUM:"), `svelte highlight failed: ${svelteOut}`);
+		const hclOut = highlight('resource "aws_s3_bucket" "b" { count = 1 }', { language: "hcl", theme: ansiTheme });
+		assert(hclOut.includes("[KW:") || hclOut.includes("[STR:"), `hcl highlight failed: ${hclOut}`);
+		const latexOut = highlight("\\section{Intro} $x + 1$", { language: "latex", theme: ansiTheme });
+		assert(latexOut.includes("\\section"), `latex highlight failed: ${latexOut}`);
+		const rustOut = highlight("fn main() { let x = 42; }", { language: "rs", theme: ansiTheme });
+		assert(rustOut.includes("[KW:") && rustOut.includes("[NUM:"), `rust alias highlight failed: ${rustOut}`);
+		const jsoncOut = highlight('{ "ok": true }', { language: "jsonc", theme: ansiTheme });
+		assert(jsoncOut.includes("[STR:") || jsoncOut.includes("true"), `jsonc alias highlight failed: ${jsoncOut}`);
+	});
+
+	// 30. Codemode JavaScriptCore Sandbox, Tool RPC, Timeout, Store & Renderer
+	await runCase("codemode:jsc-sandbox", async () => {
+		const optsOk = parseCodemodeOptions('// @options: {"max_output_tokens": 500, "timeout_ms": 2000}\ntext("ok");');
+		assertEqual(optsOk.ok, true, "parseCodemodeOptions valid header failed");
+		if (optsOk.ok) {
+			assertEqual(optsOk.value.maxOutputTokens, 500, "max_output_tokens mismatch");
+			assertEqual(optsOk.value.timeoutMs, 2000, "timeout_ms mismatch");
+		}
+		const optsBad = parseCodemodeOptions('const x = 1;\n// @options: {"timeout_ms": 100}');
+		assertEqual(optsBad.ok, false, "misplaced @options line should fail");
+
+		const desc = createCodemodeDescription([
+			{
+				name: "echo",
+				description: "Echo a message",
+				parameters: Type.Object({ msg: Type.String() }),
+			},
+		]);
+		assert(desc.includes("tools.") && desc.includes("store("), "codemode description missing globals docs");
+
+		const cmTool = createCodemodeTool();
+		assertEqual(cmTool.name, CODEMODE_TOOL_NAME, "codemode tool name mismatch");
+		assertEqual(typeof createCodemodeExtension(), "function", "createCodemodeExtension must return factory");
+
+		// 30a. Direct sandbox RPC + console + store + text output
+		const rpcCalls: Array<{ name: string; args: unknown }> = [];
+		const sandboxRes = await runCodemodeSandbox({
+			code: `
+				const reply = await tools.echo({ msg: "jsc-rpc" });
+				console.log("trace", reply);
+				store("lastReply", { reply });
+				const loaded = load("lastReply");
+				text("result:" + loaded.reply);
+			`,
+			tools: [{ name: "echo", scriptName: "echo", description: "Echo a message" }],
+			initialStore: {},
+			timeoutMs: 3000,
+			includeModels: false,
+			handlers: {
+				async callTool(name, args) {
+					rpcCalls.push({ name, args });
+					const rec = args as { msg?: string };
+					return `echo:${rec.msg ?? ""}`;
+				},
+				async searchTools() {
+					return [];
+				},
+				async describeTool() {
+					return undefined;
+				},
+				async describeNamespace() {
+					return undefined;
+				},
+			},
+		});
+		assertEqual(sandboxRes.ok, true, `runCodemodeSandbox failed: ${sandboxRes.error ?? ""}`);
+		assertEqual(rpcCalls.length, 1, "expected 1 sandbox RPC call");
+		assertEqual(sandboxRes.consoleLines[0], "trace echo:jsc-rpc", "sandbox console line mismatch");
+		assertEqual(sandboxRes.storeDelta.hasWrites, true, "expected storeDelta writes");
+		assertEqual((sandboxRes.storeDelta.set.lastReply as { reply?: string } | undefined)?.reply, "echo:jsc-rpc", "storeDelta mismatch");
+		const textOut = sandboxRes.outputs.find((o) => o.kind === "text");
+		assertEqual(textOut?.kind === "text" ? textOut.text : "", "result:echo:jsc-rpc", "sandbox output text mismatch");
+
+		// 30b. Infinite loop native JSC deadline enforcement
+		const loopRes = await runCodemodeSandbox({
+			code: "while (true) {}",
+			tools: [],
+			initialStore: {},
+			timeoutMs: 80,
+			includeModels: false,
+			handlers: {
+				async callTool() {
+					return "";
+				},
+				async searchTools() {
+					return [];
+				},
+				async describeTool() {
+					return undefined;
+				},
+				async describeNamespace() {
+					return undefined;
+				},
+			},
+		});
+		assertEqual(loopRes.ok, false, "infinite loop must fail");
+		assertEqual(loopRes.timedOut, true, "infinite loop must set timedOut=true");
+
+		// 30c. executeCodemode end-to-end with ExtensionToolContext + store append callback
+		const storeEntries: Array<{ customType: string; data: { set: Record<string, unknown>; delete: string[] } }> = [];
+		const mockToolCtx = createMockExtensionToolContext(
+			process.cwd(),
+			[
+				{
+					name: "echo",
+					label: "Echo",
+					description: "Echo message",
+					parameters: Type.Object({ msg: Type.String() }),
+					async execute(_id: string, params: unknown) {
+						const msg =
+							params && typeof params === "object" && !Array.isArray(params) && typeof (params as { msg?: unknown }).msg === "string"
+								? (params as { msg: string }).msg
+								: "";
+						return { content: [{ type: "text", text: `hi:${msg}` }], details: {} };
+					},
+				},
+			],
+			async (name, rec) => ({
+				content: [{ type: "text", text: `${name}:${typeof rec.msg === "string" ? rec.msg : ""}` }],
+				details: {},
+			}),
+		);
+		const execRes = await executeCodemode(
+			"cm-exec-1",
+			{ code: 'const v = await tools.echo({ msg: "native" }); store("seen", v); text(v);' },
+			undefined,
+			undefined,
+			mockToolCtx,
+			{
+				appendStoreEntry(customType, data) {
+					storeEntries.push({ customType, data });
+				},
+			},
+		);
+		const execText = execRes.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+		assert(!execRes.isError, `executeCodemode returned isError: ${execText}`);
+		assertEqual(execRes.details?.calls.length, 1, "expected 1 recorded codemode call");
+		assertEqual(storeEntries.length, 1, "expected 1 persisted codemode store entry");
+		assert(execText.includes("echo:native"), `executeCodemode text missing output: ${execText}`);
+
+		// 30d. codemodeRenderers inside ToolExecutionComponent (and clear timer cleanly)
+		initTheme("dark", false);
+		const cmTerm = new MemoryTerminal();
+		const cmLogDir = mkdtempSync(join(tmpdir(), "pi-cm-ui-"));
+		const cmTui = createInteractiveTui({
+			tuiMode: "regular",
+			terminal: cmTerm,
+			showHardwareCursor: false,
+			logDirectory: cmLogDir,
+		});
+		try {
+			const comp = new ToolExecutionComponent(
+				"codemode",
+				"cm-ui-1",
+				{ code: 'const x = await tools.echo({ msg: "ui" });\ntext(x);' },
+				{},
+				codemodeRenderers,
+				cmTui,
+				process.cwd(),
+			);
+			comp.markExecutionStarted();
+			comp.updateResult(
+				{
+					content: [{ type: "text", text: "Script completed\nWall time 2ms\nOutput:\nui-ok" }],
+					details: { calls: [{ id: "cm-ui-1/1", name: "echo", args: "{}", status: "ok", durationMs: 2 }] },
+					isError: false,
+					durationMs: 2,
+				},
+				true,
+			);
+			comp.updateResult(
+				{
+					content: [{ type: "text", text: "Script completed\nWall time 2ms\nOutput:\nui-ok" }],
+					details: { calls: [{ id: "cm-ui-1/1", name: "echo", args: "{}", status: "ok", durationMs: 2 }] },
+					isError: false,
+					durationMs: 2,
+				},
+				false,
+			);
+			const rendered = comp.render(80).join("\n");
+			assert(rendered.includes("ui-ok"), `codemode renderer output missing result: ${rendered}`);
+		} finally {
+			cmTui.stop();
+			rmSync(cmLogDir, { recursive: true, force: true });
+		}
+	});
+
+	// 31. External .ts Extension Loader (ts-strip, bundler, JSC VM + examples/extensions)
+	await runCase("extensions:external-ts-loader", async () => {
+		let phase = "init";
+		try {
+			const root = findRepoRoot();
+			phase = "ts-strip";
+			const stripped = stripTypeScriptTypes("export interface X { a: number }\nconst v: number = 1;\nexport default v;");
+			assert(!stripped.includes("interface X") && /const v\s*=\s*1/.test(stripped), `ts-strip failed: ${stripped}`);
+
+			phase = "bundle";
+			const withDepsPath = join(root, "packages/coding-agent/examples/extensions/with-deps/index.ts");
+			const bundled = bundleExtensionEntry(withDepsPath);
+			assertEqual(bundled.missingSpecifiers.length, 0, "with-deps bundle had missing specifiers");
+			assert(Object.keys(bundled.modules).length >= 2, "with-deps bundle should include duration.ts");
+
+			const examplePaths = [
+				"packages/coding-agent/examples/extensions/hello.ts",
+				"packages/coding-agent/examples/extensions/with-deps/index.ts",
+				"packages/coding-agent/examples/extensions/mac-system-theme.ts",
+				"packages/coding-agent/examples/extensions/permission-gate.ts",
+				"packages/coding-agent/examples/extensions/protected-paths.ts",
+				"packages/coding-agent/examples/extensions/todo.ts",
+				"packages/coding-agent/examples/extensions/custom-footer.ts",
+				"packages/coding-agent/examples/extensions/plan-mode/index.ts",
+				"packages/coding-agent/examples/extensions/commands.ts",
+			].map((rel) => join(root, rel));
+
+			clearExtensionCache();
+			const authTmp = mkdtempSync(join(tmpdir(), "pi-ext-auth-"));
+			try {
+				phase = "loadExtensions";
+				const bus = createEventBus();
+				const runtime = createExtensionRuntime();
+				const loaded = await loadExtensions(examplePaths, root, bus, runtime);
+				assertEqual(
+					loaded.errors.length,
+					0,
+					`extension load errors: ${loaded.errors.map((e) => `${e.path}: ${e.error}`).join("; ")}`,
+				);
+				assertEqual(loaded.extensions.length, examplePaths.length, "unexpected loaded extension count");
+
+				const modelRuntime = await ModelRuntime.create({
+					credentials: AuthStorage.create(join(authTmp, "auth.json")),
+					modelsPath: null,
+					allowModelNetwork: false,
+					refreshOnCreate: false,
+				});
+				const runner = new ExtensionRunner(
+					loaded.extensions,
+					loaded.runtime,
+					root,
+					SessionManager.inMemory(root),
+					new ModelRegistry(modelRuntime),
+				);
+				runner.bindCore(
+					{
+						sendMessage: () => {},
+						sendUserMessage: () => {},
+						appendEntry: () => {},
+						setSessionName: () => {},
+						getSessionName: () => undefined,
+						setLabel: () => {},
+						getActiveTools: () => [],
+						getAllTools: () => [],
+						getSettings: () => ({}),
+						setActiveTools: () => {},
+						refreshTools: () => {},
+						getCommands: () => [],
+						setModel: async () => false,
+						getThinkingLevel: () => "off",
+						setThinkingLevel: () => {},
+					},
+					{
+						getModel: () => undefined,
+						getScopedModels: () => [],
+						isIdle: () => true,
+						isProjectTrusted: () => true,
+						getSignal: () => undefined,
+						abort: () => {},
+						hasPendingMessages: () => false,
+						shutdown: () => {},
+						getContextUsage: () => undefined,
+						compact: () => {},
+						getSystemPrompt: () => "",
+					},
+				);
+				const extCtx = runner.createContext();
+				const toolCtx = runner.createToolContext("ext-tc-1", undefined);
+
+				phase = "exec:hello";
+				const helloExt = loaded.extensions.find((ext) => ext.path.endsWith("/hello.ts"));
+				const helloTool = helloExt?.tools.get("hello");
+				assert(helloTool !== undefined, "hello extension missing 'hello' tool");
+				const helloOut = await helloTool!.definition.execute("ext-tc-1", { name: "World" }, undefined, undefined, toolCtx);
+				const helloText = helloOut.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+				assertEqual(helloText, "Hello, World!", "hello tool output mismatch");
+
+				phase = "exec:parse_duration";
+				const withDepsExt = loaded.extensions.find((ext) => ext.path.endsWith("/with-deps/index.ts"));
+				const durTool = withDepsExt?.tools.get("parse_duration");
+				assert(durTool !== undefined, "with-deps extension missing 'parse_duration' tool");
+				const durOut = await durTool!.definition.execute("ext-tc-2", { duration: "1h" }, undefined, undefined, toolCtx);
+				assertEqual((durOut.details as { milliseconds?: number } | undefined)?.milliseconds, 3600_000, "parse_duration 1h mismatch");
+
+				phase = "handler:protected-paths";
+				const protectedExt = loaded.extensions.find((ext) => ext.path.endsWith("/protected-paths.ts"));
+				const toolCallHandlers = protectedExt?.handlers.get("tool_call") ?? [];
+				assert(toolCallHandlers.length >= 1, "protected-paths missing tool_call handler");
+				const blocked = await toolCallHandlers[0]!(
+					{ type: "tool_call", toolCallId: "ext-tc-3", toolName: "write", input: { path: ".env" } },
+					extCtx,
+				);
+				assertEqual((blocked as { block?: boolean } | undefined)?.block, true, "protected-paths did not block .env write");
+				const allowed = await toolCallHandlers[0]!(
+					{ type: "tool_call", toolCallId: "ext-tc-4", toolName: "write", input: { path: "README.md" } },
+					extCtx,
+				);
+				assert(allowed === undefined, "protected-paths unexpectedly blocked README.md");
+			} finally {
+				clearExtensionCache();
+				rmSync(authTmp, { recursive: true, force: true });
+			}
+		} catch (err) {
+			throw new Error(`[${phase}] ${err instanceof Error ? err.message : String(err)}`);
 		}
 	});
 

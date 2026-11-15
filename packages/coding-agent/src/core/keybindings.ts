@@ -14,8 +14,8 @@ import { stripBom } from "../utils/text.ts";
 import { KeybindingValueSchema } from "./key-id-schema.ts";
 
 export function useWindowsKeybindings(
-	platform: NodeJS.Platform = process.platform,
-	env: NodeJS.ProcessEnv = process.env,
+	platform: string = process.platform,
+	env: Record<string, string | undefined> = process.env,
 ): boolean {
 	return platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
 }
@@ -270,7 +270,17 @@ function toKeybindingsConfig(value: Record<string, unknown>): KeybindingsConfig 
 	const config: KeybindingsConfig = {};
 	for (const [key, binding] of Object.entries(value)) {
 		if (key === "$schema") continue;
-		if (validateKeybindingValue.Check(binding)) config[key] = binding;
+		if (validateKeybindingValue.Check(binding)) {
+			if (typeof binding === "string") {
+				config[key] = binding as KeyId;
+			} else if (Array.isArray(binding)) {
+				const items: KeyId[] = [];
+				for (const item of binding) {
+					if (typeof item === "string") items.push(item as KeyId);
+				}
+				config[key] = items;
+			}
+		}
 	}
 	return config;
 }

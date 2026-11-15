@@ -1,4 +1,5 @@
 import type { AgentState } from "@earendil-works/pi-agent-core";
+import { stripSchemaMetaKeys } from "@earendil-works/pi-ai/utils/json-schema";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
@@ -287,7 +288,11 @@ export async function exportSessionToHtml(
 		entries,
 		leafId: sm.getLeafId(),
 		systemPrompt: state?.systemPrompt,
-		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+		tools: state?.tools?.map((t) => ({
+			name: t.name,
+			description: t.description,
+			parameters: stripSchemaMetaKeys(t.parameters) as ToolDefinition["parameters"],
+		})),
 		renderedTools,
 	};
 

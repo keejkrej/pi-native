@@ -13,7 +13,7 @@ export function runClipboardCommand(
 		// Run from / (the current drive root on Windows): clipboard tools ignore the cwd, and WSL cannot start
 		// Windows executables (powershell.exe) when the cwd's \\wsl.localhost\... path
 		// exceeds MAX_PATH (#11592). This also keeps daemons from pinning pi's cwd.
-		const child = spawn(command, args, {
+		const child = spawn(command, [...args], {
 			stdio: ["pipe", options?.input === undefined ? "pipe" : "ignore", "ignore"],
 			cwd: "/",
 			detached: process.platform !== "win32",
@@ -28,10 +28,12 @@ export function runClipboardCommand(
 			clearTimeout(timer);
 			resolve(result);
 		};
+		const childStdout = child.stdout;
+		const childStdin = child.stdin;
 		const abort = (): void => {
 			child.kill("SIGKILL");
-			child.stdout?.destroy();
-			child.stdin?.destroy();
+			if (childStdout) childStdout.destroy();
+			if (childStdin) childStdin.destroy();
 			finish(undefined);
 		};
 		const timer = setTimeout(abort, options?.timeoutMs ?? 3000);
@@ -39,13 +41,17 @@ export function runClipboardCommand(
 		child.on("close", (code) => {
 			if (!settled) finish(code === 0 ? Buffer.concat(chunks, length) : undefined);
 		});
-		child.stdout?.on("data", (chunk: Buffer) => {
-			if (settled) return;
-			length += chunk.length;
-			if (length > (options?.maxBufferBytes ?? 50 * 1024 * 1024)) abort();
-			else chunks.push(chunk);
-		});
-		child.stdin?.on("error", () => {}); // A writer may exit before consuming all input.
-		child.stdin?.end(options?.input);
+		if (childStdout) {
+			childStdout.on("data", (chunk: Buffer) => {
+				if (settled) return;
+				length += chunk.length;
+				if (length > (options?.maxBufferBytes ?? 50 * 1024 * 1024)) abort();
+				else chunks.push(chunk);
+			});
+		}
+		if (childStdin) {
+			childStdin.on("error", () => {}); // A writer may exit before consuming all input.
+			childStdin.end(options?.input);
+		}
 	});
 }

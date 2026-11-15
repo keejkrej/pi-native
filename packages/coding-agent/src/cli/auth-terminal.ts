@@ -37,19 +37,27 @@ function readSecret(message: string, signal: AbortSignal, onInterrupt: () => voi
 			return;
 		}
 		let value = "";
+		let finished = false;
 		const finish = () => {
-			stdin.off("data", onData);
+			if (finished) return;
+			finished = true;
 			signal.removeEventListener("abort", onAbort);
 			stdin.setRawMode(false);
 			stdin.pause();
 			process.stdout.write("\n");
 		};
 		const onAbort = () => {
+			if (finished) return;
 			finish();
 			reject(new Error("Login cancelled"));
 		};
-		const onData = (data: Buffer) => {
-			const chunk = data.toString("utf8");
+		const onData = (data: Uint8Array) => {
+			if (finished) return;
+			// Accept raw bytes or string if a stream decoder/setEncoding wrapper delivers text.
+			const chunk =
+				typeof (data as unknown) === "string"
+					? (data as unknown as string)
+					: new TextDecoder().decode(data);
 			// Ignore escape sequences such as arrow keys.
 			if (chunk.startsWith("\u001b")) return;
 			for (const char of chunk) {

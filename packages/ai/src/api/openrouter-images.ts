@@ -1,11 +1,11 @@
-import OpenAI from "openai";
 import type {
 	ChatCompletion,
 	ChatCompletionContentPart,
 	ChatCompletionContentPartImage,
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
-} from "openai/resources/chat/completions.js";
+} from "./openai-chat-types.ts";
+import { createOpenAIClient, type OpenAIHttpClient } from "./openai-http.ts";
 import type {
 	AssistantImages,
 	ImageApi,
@@ -71,10 +71,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 			maxRetries: 0,
 		};
 		const { data: response, response: rawResponse } = await retryProviderRequest(
-			() =>
-				client.chat.completions
-					.create(params as unknown as ChatCompletionCreateParamsNonStreaming, requestOptions)
-					.withResponse(),
+			() => client.chat.completions.createNonStreaming(params, requestOptions).withResponse(),
 			{
 				maxRetries: options?.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs,
@@ -123,21 +120,16 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
 	identity?: ClientIdentity,
-): OpenAI {
-	return new OpenAI({
+): OpenAIHttpClient {
+	return createOpenAIClient({
 		apiKey,
 		baseURL: model.baseUrl,
-		dangerouslyAllowBrowser: true,
 		fetch,
 		defaultHeaders: providerHeadersToRecord(getIdentityHeaders(model, identity), model.headers, optionsHeaders),
 	});
 }
 
-type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming, "modalities"> & {
-	modalities: Array<"image" | "text">;
-};
-
-function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenRouterImagesCreateParams {
+function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): ChatCompletionCreateParamsNonStreaming {
 	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
 		if (item.type === "text") {
 			return {

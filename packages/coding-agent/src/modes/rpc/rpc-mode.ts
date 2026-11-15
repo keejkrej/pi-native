@@ -388,13 +388,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		const signals: ("SIGINT" | "SIGTERM")[] = ["SIGTERM"];
 
 		for (const signal of signals) {
-			const exitCode = signal === "SIGHUP" ? 129 : 143;
+			const exitCode = 143;
 			// Handlers stay registered until exit: without one, a signal during shutdown would kill
 			// the process before dispose() finishes (for example a pending MCP token refresh).
 			process.on(signal, () => {
@@ -758,7 +755,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let detachInput = () => {};
 
 	/** Dispose the runtime and exit. Runs once; later calls (stdin EOF after a signal) do nothing. */
-	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<void> {
+	async function shutdown(exitCode = 0, signal?: string): Promise<void> {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		unsubscribe?.();
@@ -840,8 +837,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 	};
 
+	let detached = false;
 	const onInputEnd = () => {
-		void shutdown();
+		if (!detached) void shutdown();
 	};
 	process.stdin.on("end", onInputEnd);
 
@@ -850,8 +848,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			void handleInputLine(line);
 		});
 		return () => {
+			detached = true;
 			detachJsonl();
-			process.stdin.off("end", onInputEnd);
 		};
 	})();
 	inputReady = true;

@@ -72,8 +72,8 @@ export async function execCommand(
 	let outputBytes = 0;
 	let truncated = false;
 	let killed = false;
-	let timeoutId: NodeJS.Timeout | undefined;
-	let forceKillId: NodeJS.Timeout | undefined;
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	let forceKillId: ReturnType<typeof setTimeout> | undefined;
 
 	const killProcess = () => {
 		if (killed) return;
@@ -110,21 +110,29 @@ export async function execCommand(
 			return data;
 		}
 		truncated = true;
-		proc.stdout?.destroy();
-		proc.stderr?.destroy();
+		const procStdoutForDestroy = proc.stdout;
+		if (procStdoutForDestroy) procStdoutForDestroy.destroy();
+		const procStderrForDestroy = proc.stderr;
+		if (procStderrForDestroy) procStderrForDestroy.destroy();
 		killProcess();
 		return remaining > 0 ? data.subarray(0, remaining) : undefined;
 	};
 
-	proc.stdout?.on("data", (data: Buffer) => {
-		const chunk = takeWithinCap(data);
-		if (chunk) stdout += stdoutDecoder.write(chunk);
-	});
+	const procStdout = proc.stdout;
+	if (procStdout) {
+		procStdout.on("data", (data: Buffer) => {
+			const chunk = takeWithinCap(data);
+			if (chunk) stdout += stdoutDecoder.write(chunk);
+		});
+	}
 
-	proc.stderr?.on("data", (data: Buffer) => {
-		const chunk = takeWithinCap(data);
-		if (chunk) stderr += stderrDecoder.write(chunk);
-	});
+	const procStderr = proc.stderr;
+	if (procStderr) {
+		procStderr.on("data", (data: Buffer) => {
+			const chunk = takeWithinCap(data);
+			if (chunk) stderr += stderrDecoder.write(chunk);
+		});
+	}
 
 	let code: number | null;
 	try {
@@ -150,7 +158,8 @@ export async function execCommand(
 
 	// A signal-killed command has no exit code. Use the shell convention, as the bash tool does, so a
 	// timeout, an abort or a crash does not read as success (#12088).
-	const exitCode = code ?? (proc.signalCode ? 128 + (osConstants.signals[proc.signalCode] ?? 0) : 1);
+	const signalTable = osConstants.signals as Record<string, number | undefined>;
+	const exitCode = code ?? (proc.signalCode ? 128 + (signalTable[proc.signalCode] ?? 0) : 1);
 	return {
 		stdout,
 		stderr,

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, toNamespacedPath } from "node:path";
-import { getCwdRelativePath } from "./paths.ts";
 
 const QUARANTINE_DIR_NAME = ".pi-native-quarantine";
 
@@ -23,28 +22,9 @@ function getQuarantineRoot(packageDir: string): string | undefined {
 	}
 }
 
-function getLoadedSharedObjectsInPackageDir(packageDir: string): string[] {
-	const sharedObjects = (process.report.getReport() as { sharedObjects?: unknown }).sharedObjects;
-	if (!Array.isArray(sharedObjects)) {
-		return [];
-	}
-
-	const root = normalizePath(packageDir).toLowerCase();
-	const seen = new Set<string>();
-	const loadedFiles: string[] = [];
-	for (const value of sharedObjects) {
-		if (typeof value !== "string") {
-			continue;
-		}
-		const filePath = normalizePath(value);
-		const comparisonPath = filePath.toLowerCase();
-		if (getCwdRelativePath(comparisonPath, root) === undefined || seen.has(comparisonPath)) {
-			continue;
-		}
-		seen.add(comparisonPath);
-		loadedFiles.push(filePath);
-	}
-	return loadedFiles;
+function getLoadedSharedObjectsInPackageDir(_packageDir: string): string[] {
+	// Native scriptc builds do not dynamically load Node native addons and do not expose process.report.
+	return [];
 }
 
 export function cleanupWindowsSelfUpdateQuarantine(packageDir: string): void {

@@ -172,10 +172,9 @@ export function createGrepToolDefinition(
 						// searchPath (macOS /tmp) would no longer lie under the glob root.
 						args.push("--", pattern, isDirectory ? "." : searchPath);
 
-						const child = spawn(rgPath, args, {
-							...(isDirectory ? { cwd: searchPath } : {}),
-							stdio: ["ignore", "pipe", "pipe"],
-						});
+						const child = isDirectory
+							? spawn(rgPath, args, { cwd: searchPath, stdio: ["ignore", "pipe", "pipe"] })
+							: spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						let matchCount = 0;
@@ -200,9 +199,12 @@ export function createGrepToolDefinition(
 							stopChild();
 						};
 						signal?.addEventListener("abort", onAbort, { once: true });
-						child.stderr?.on("data", (chunk) => {
-							stderr += chunk.toString();
-						});
+						const childStderr = child.stderr;
+						if (childStderr) {
+							childStderr.on("data", (chunk) => {
+								stderr += chunk.toString();
+							});
+						}
 
 						// Size of the full output, including lines past the byte cap that are counted but not stored.
 						let outputBytes = 0;

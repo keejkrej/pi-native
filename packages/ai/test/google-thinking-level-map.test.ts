@@ -1,4 +1,4 @@
-import type { GenerateContentParameters } from "@google/genai";
+import type { GenerateContentParameters } from "../src/api/google-wire-types.ts";
 import { describe, expect, it } from "vitest";
 import { streamSimple as streamSimpleGoogle } from "../src/api/google-generative-ai.ts";
 import { resolveGoogleThinkingLevel } from "../src/api/google-shared.ts";

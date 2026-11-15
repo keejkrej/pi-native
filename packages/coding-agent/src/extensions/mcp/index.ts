@@ -1163,7 +1163,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 				isEnabled(server) && hasDirectTools(server.entry) && server.ready ? [server.ready] : [],
 			);
 			if (ready.length === 0) return;
-			let timer: NodeJS.Timeout | undefined;
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			const finished = await Promise.race([
 				Promise.all(ready).then(() => true),
 				new Promise<boolean>((resolve) => {

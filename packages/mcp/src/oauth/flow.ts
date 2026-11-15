@@ -236,7 +236,7 @@ async function tokenRequest(
 	const response = await (options.fetch ?? globalThis.fetch)(url, {
 		method: "POST",
 		headers,
-		body: params,
+		body: params.toString(),
 		signal: options.signal,
 	});
 	const text = await response.text();

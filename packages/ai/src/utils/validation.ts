@@ -1,20 +1,64 @@
 import { type CoercingValidator, compile, type JsonSchema } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
 import type { Tool, ToolCall } from "../types.ts";
+import { stripSchemaMetaKeys } from "./json-schema.ts";
 
 // One compiled validator per schema object: tool schemas are long-lived, so the WeakMap drops entries with their tools.
+// Native scriptc reference schemas cannot be WeakMap keys, so fall back to a bounded structural Map cache for those.
 const validatorCache = new WeakMap<object, CoercingValidator>();
+const MAX_FALLBACK_VALIDATOR_CACHE = 256;
+const fallbackValidatorCache = new Map<string, CoercingValidator>();
+
+function getFallbackCacheKey(cleanSchema: JsonSchema): string | undefined {
+	try {
+		return JSON.stringify(cleanSchema);
+	} catch {
+		return undefined;
+	}
+}
 
 function getValidator(schema: Tool["parameters"]): CoercingValidator {
-	const cached = validatorCache.get(schema);
-	if (cached) {
-		return cached;
+	try {
+		const cached = validatorCache.get(schema);
+		if (cached) {
+			return cached;
+		}
+	} catch {
+		// Fall through to structural fallback cache when scriptc passes a native reference type.
 	}
+
+	const cleanSchema = stripSchemaMetaKeys(schema) as JsonSchema;
+	const fallbackKey = getFallbackCacheKey(cleanSchema);
+	if (fallbackKey !== undefined) {
+		const fallbackCached = fallbackValidatorCache.get(fallbackKey);
+		if (fallbackCached) {
+			return fallbackCached;
+		}
+	}
+
 	// A $ref that names nothing (a dangling definition in an MCP server's schema) rejects only values at its place,
 	// instead of making every call of the tool fail.
-	const validator = compile(schema as JsonSchema, { formats, coerce: true, unresolvedRefs: "reject" });
-	validatorCache.set(schema, validator);
-	return validator;
+	const validator = compile(cleanSchema, {
+		formats,
+		coerce: true,
+		unresolvedRefs: "reject",
+	});
+
+	try {
+		validatorCache.set(schema, validator);
+		return validator;
+	} catch {
+		if (fallbackKey !== undefined) {
+			if (fallbackValidatorCache.size >= MAX_FALLBACK_VALIDATOR_CACHE) {
+				const oldestKey = fallbackValidatorCache.keys().next().value;
+				if (oldestKey !== undefined) {
+					fallbackValidatorCache.delete(oldestKey);
+				}
+			}
+			fallbackValidatorCache.set(fallbackKey, validator);
+		}
+		return validator;
+	}
 }
 
 /** A pi-schema error path (a JSON Pointer) as the dotted path the model sees: `/edits/0/oldText` -> `edits.0.oldText`. */

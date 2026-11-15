@@ -1,16 +1,20 @@
-import OpenAI from "openai";
 import type {
 	ChatCompletionAssistantMessageParam,
 	ChatCompletionChunk,
 	ChatCompletionContentPart,
 	ChatCompletionContentPartImage,
 	ChatCompletionContentPartText,
+	ChatCompletionCreateParamsStreaming,
 	ChatCompletionDeveloperMessageParam,
+	ChatCompletionFinishReason,
 	ChatCompletionMessageParam,
 	ChatCompletionMessageToolCall,
 	ChatCompletionSystemMessageParam,
+	ChatCompletionTool,
+	ChatCompletionToolChoiceOption,
 	ChatCompletionToolMessageParam,
-} from "openai/resources/chat/completions.js";
+} from "./openai-chat-types.ts";
+import { createOpenAIClient } from "./openai-http.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	AssistantMessage,
@@ -158,7 +162,7 @@ function isOpenAIReasoningDetail(detail: unknown): detail is OpenAIReasoningDeta
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
-	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
+	toolChoice?: ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	/** Token budgets per thinking level. Used when `compat.thinkingTokenBudgetField` or `compat.supportsThinkingTokenBudget` is set, or by `{ "$var": "thinking.budget" }`. */
 	thinkingBudgets?: ThinkingBudgets;
@@ -198,7 +202,7 @@ type ChatCompletionInstructionMessageParam = ChatCompletionDeveloperMessageParam
 
 type KimiToolSystemMessageParam = {
 	role: "system";
-	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
+	tools: ChatCompletionTool[];
 };
 
 type OpenAIReasoningDetailBase = Record<string, JsonValue> & {
@@ -295,7 +299,7 @@ type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
 };
 
-type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletionTool & {
+type ChatCompletionToolWithCacheControl = ChatCompletionTool & {
 	cache_control?: OpenAICompatCacheControl;
 };
 
@@ -374,7 +378,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
+				params = nextParams as ChatCompletionCreateParamsStreaming;
 			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
@@ -775,10 +779,9 @@ function createClient(
 		Object.assign(headers, optionsHeaders);
 	}
 
-	return new OpenAI({
+	return createOpenAIClient({
 		apiKey,
 		baseURL: model.baseUrl,
-		dangerouslyAllowBrowser: true,
 		fetch,
 		defaultHeaders: headers,
 	});
@@ -812,7 +815,7 @@ function buildParams(
 			(model.baseUrl.includes("api.openai.com") ||
 				(cacheRetention === "long" && compat.supportsLongCacheRetention)));
 
-	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+	const params: ChatCompletionCreateParamsStreaming = {
 		model: model.id,
 		messages,
 		stream: true,
@@ -834,7 +837,7 @@ function buildParams(
 	if (options?.maxTokens) {
 		if (compat.maxTokensField === "max_tokens") {
 			// Deprecated by OpenAI, but some OpenAI-compatible providers only accept max_tokens.
-			(params as { max_tokens?: number }).max_tokens = options.maxTokens;
+			params.max_tokens = options.maxTokens;
 		} else {
 			params.max_completion_tokens = options.maxTokens;
 		}
@@ -847,7 +850,7 @@ function buildParams(
 	if (transcriptTools.requestTools.length > 0) {
 		params.tools = convertTools(transcriptTools.requestTools, compat);
 		if (compat.zaiToolStream) {
-			(params as any).tool_stream = true;
+			params.tool_stream = true;
 		}
 	} else if (compat.requiresToolsWithToolHistory && hasToolHistory(context.messages)) {
 		params.tools = [];
@@ -862,108 +865,94 @@ function buildParams(
 	}
 
 	if (compat.vllmPriority !== undefined) {
-		(params as any).priority = compat.vllmPriority;
+		params.priority = compat.vllmPriority;
 	}
 
 	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);
 	const thinkingBudget = resolveClampedThinkingBudget(model, options, params);
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
-		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
-			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
-			reasoning_effort?: string;
-		};
-		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+		params.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
 			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
 			if (typeof effort === "string") {
-				zaiParams.reasoning_effort = effort;
+				params.reasoning_effort = effort;
 			}
 		}
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
-		(params as any).enable_thinking = !!options?.reasoningEffort;
+		params.enable_thinking = !!options?.reasoningEffort;
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 			if (typeof effort === "string") {
-				(params as any).reasoning_effort = effort;
+				params.reasoning_effort = effort;
 			}
 		}
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
-		(params as any).chat_template_kwargs = {
+		params.chat_template_kwargs = {
 			enable_thinking: !!options?.reasoningEffort,
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
 		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat.chatTemplateKwargs, thinkingBudget);
 		if (chatTemplateKwargs) {
-			(params as any).chat_template_kwargs = chatTemplateKwargs;
+			params.chat_template_kwargs = chatTemplateKwargs;
 		}
 	} else if (compat.thinkingFormat === "baseten" && model.reasoning) {
-		const basetenParams = params as Omit<typeof params, "reasoning_effort"> & {
-			chat_template_args?: Record<string, ResolvedChatTemplateKwargValue>;
-			reasoning_effort?: string;
-		};
 		const chatTemplateArgs = buildChatTemplateValues(model, options, compat.chatTemplateArgs, thinkingBudget);
 		if (chatTemplateArgs) {
-			basetenParams.chat_template_args = chatTemplateArgs;
+			params.chat_template_args = chatTemplateArgs;
 		}
 		if (compat.supportsReasoningEffort) {
 			const requestedEffort = options?.reasoningEffort;
 			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
 			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
 			if (typeof effort === "string") {
-				basetenParams.reasoning_effort = effort;
+				params.reasoning_effort = effort;
 			}
 		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		if (options?.reasoningEffort) {
-			(params as any).thinking = { type: "enabled" };
+			params.thinking = { type: "enabled" };
 		} else if (model.thinkingLevelMap?.off !== null) {
-			(params as any).thinking = { type: "disabled" };
+			params.thinking = { type: "disabled" };
 		}
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
-			(params as any).reasoning_effort =
+			params.reasoning_effort =
 				model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
-		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
 		if (options?.reasoningEffort) {
-			openRouterParams.reasoning = {
+			params.reasoning = {
 				effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
 			};
 		} else if (model.thinkingLevelMap?.off !== null) {
-			openRouterParams.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
+			params.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
 		}
 	} else if (compat.thinkingFormat === "ant-ling" && model.reasoning && options?.reasoningEffort) {
 		const effort = model.thinkingLevelMap?.[options.reasoningEffort];
 		if (typeof effort === "string") {
-			(params as typeof params & { reasoning?: { effort: string } }).reasoning = { effort };
+			params.reasoning = { effort };
 		}
 	} else if (compat.thinkingFormat === "together" && model.reasoning) {
-		const togetherParams = params as Omit<typeof params, "reasoning_effort"> & {
-			reasoning?: { enabled: boolean };
-			reasoning_effort?: string;
-		};
-		togetherParams.reasoning = { enabled: !!options?.reasoningEffort };
+		params.reasoning = { enabled: !!options?.reasoningEffort };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
-			togetherParams.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+			params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		}
 	} else if (compat.thinkingFormat === "string-thinking" && model.reasoning) {
-		const stringThinkingParams = params as typeof params & { thinking?: string };
 		if (options?.reasoningEffort) {
-			stringThinkingParams.thinking = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+			params.thinking = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		} else if (model.thinkingLevelMap?.off !== null) {
-			stringThinkingParams.thinking = model.thinkingLevelMap?.off ?? "none";
+			params.thinking = model.thinkingLevelMap?.off ?? "none";
 		}
 	} else if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
 		// OpenAI-style reasoning_effort
-		(params as any).reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+		params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 	} else if (!options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
 		const offValue = model.thinkingLevelMap?.off;
 		if (typeof offValue === "string") {
-			(params as any).reasoning_effort = offValue;
+			params.reasoning_effort = offValue;
 		}
 	}
 
@@ -977,17 +966,17 @@ function buildParams(
 
 	// OpenRouter provider routing preferences
 	if (model.compat?.openRouterRouting) {
-		(params as any).provider = model.compat.openRouterRouting;
+		params.provider = model.compat.openRouterRouting;
 	}
 
 	// Vercel AI Gateway provider routing preferences
 	if (model.compat?.vercelGatewayRouting) {
 		const routing = model.compat.vercelGatewayRouting;
 		if (routing.only || routing.order) {
-			const gatewayOptions: Record<string, string[]> = {};
+			const gatewayOptions: { only?: string[]; order?: string[] } = {};
 			if (routing.only) gatewayOptions.only = routing.only;
 			if (routing.order) gatewayOptions.order = routing.order;
-			(params as any).providerOptions = { gateway: gatewayOptions };
+			params.providerOptions = { gateway: gatewayOptions };
 		}
 	}
 
@@ -1079,7 +1068,7 @@ function getCompatCacheControl(
 
 function applyAnthropicCacheControl(
 	messages: ChatCompletionMessageParam[],
-	tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+	tools: ChatCompletionTool[] | undefined,
 	cacheControl: OpenAICompatCacheControl,
 ): void {
 	addCacheControlToSystemPrompt(messages, cacheControl);
@@ -1114,7 +1103,7 @@ function addCacheControlToLastConversationMessage(
 }
 
 function addCacheControlToLastTool(
-	tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+	tools: ChatCompletionTool[] | undefined,
 	cacheControl: OpenAICompatCacheControl,
 ): void {
 	if (!tools || tools.length === 0) {
@@ -1125,59 +1114,68 @@ function addCacheControlToLastTool(
 	lastTool.cache_control = cacheControl;
 }
 
+function applyCacheControlToParts(
+	parts: Array<ChatCompletionContentPartText | ChatCompletionContentPartImage>,
+	cacheControl: OpenAICompatCacheControl,
+): boolean {
+	for (let i = parts.length - 1; i >= 0; i--) {
+		const part = parts[i];
+		if (part?.type === "text") {
+			part.cache_control = cacheControl;
+			return true;
+		}
+	}
+	return false;
+}
+
 function addCacheControlToInstructionMessage(
 	message: ChatCompletionInstructionMessageParam,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
-	return addCacheControlToTextContent(message, cacheControl);
+	if (message.role === "developer") {
+		if (typeof message.content === "string") {
+			if (message.content.length === 0) return false;
+			message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
+			return true;
+		}
+		return Array.isArray(message.content) ? applyCacheControlToParts(message.content, cacheControl) : false;
+	}
+	if (typeof message.content === "string") {
+		if (message.content.length === 0) return false;
+		message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
+		return true;
+	}
+	return Array.isArray(message.content) ? applyCacheControlToParts(message.content, cacheControl) : false;
 }
 
 function addCacheControlToMessage(
 	message: ChatCompletionMessageParam,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
-	if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
-		return addCacheControlToTextContent(message, cacheControl);
-	}
-	return false;
-}
-
-function addCacheControlToTextContent(
-	message:
-		| ChatCompletionInstructionMessageParam
-		| ChatCompletionAssistantMessageParam
-		| ChatCompletionToolMessageParam
-		| Extract<ChatCompletionMessageParam, { role: "user" }>,
-	cacheControl: OpenAICompatCacheControl,
-): boolean {
-	const content = message.content;
-	if (typeof content === "string") {
-		if (content.length === 0) {
-			return false;
-		}
-		message.content = [
-			{
-				type: "text",
-				text: content,
-				cache_control: cacheControl,
-			},
-		] as ChatCompletionTextPartWithCacheControl[];
-		return true;
-	}
-
-	if (!Array.isArray(content)) {
-		return false;
-	}
-
-	for (let i = content.length - 1; i >= 0; i--) {
-		const part = content[i];
-		if (part?.type === "text") {
-			const textPart = part as ChatCompletionTextPartWithCacheControl;
-			textPart.cache_control = cacheControl;
+	if (message.role === "user") {
+		if (typeof message.content === "string") {
+			if (message.content.length === 0) return false;
+			message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
 			return true;
 		}
+		return Array.isArray(message.content) ? applyCacheControlToParts(message.content, cacheControl) : false;
 	}
-
+	if (message.role === "assistant") {
+		if (typeof message.content === "string") {
+			if (message.content.length === 0) return false;
+			message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
+			return true;
+		}
+		return Array.isArray(message.content) ? applyCacheControlToParts(message.content, cacheControl) : false;
+	}
+	if (message.role === "tool") {
+		if (typeof message.content === "string") {
+			if (message.content.length === 0) return false;
+			message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
+			return true;
+		}
+		return Array.isArray(message.content) ? applyCacheControlToParts(message.content, cacheControl) : false;
+	}
 	return false;
 }
 
@@ -1422,7 +1420,7 @@ export function convertMessages(
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
-					(toolResultMsg as any).name = toolMsg.toolName;
+					toolResultMsg.name = toolMsg.toolName;
 				}
 				params.push(toolResultMsg);
 
@@ -1477,7 +1475,7 @@ export function convertMessages(
 function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
-): OpenAI.Chat.Completions.ChatCompletionTool[] {
+): ChatCompletionTool[] {
 	return tools.map((tool) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools);
 		if (grammar) {
@@ -1560,7 +1558,7 @@ function parseChunkUsage(
 	return usage;
 }
 
-function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
+function mapStopReason(reason: ChatCompletionFinishReason | string): {
 	stopReason: StopReason;
 	errorMessage?: string;
 } {

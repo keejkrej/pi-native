@@ -43,7 +43,7 @@ async function readToken(path: string): Promise<string | undefined> {
 	}
 }
 
-export async function findHuggingFaceToken(env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+export async function findHuggingFaceToken(env: Record<string, string | undefined> = process.env): Promise<string | undefined> {
 	const fromEnvironment = env.HF_TOKEN?.trim();
 	if (fromEnvironment) return fromEnvironment;
 

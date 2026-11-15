@@ -1,15 +1,12 @@
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { Type } from "typebox";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import type { ResponseStreamEvent } from "../src/api/openai-responses-types.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, Context, Model } from "../src/types.ts";
 import { formatUserAgent } from "../src/utils/identity.ts";
 
-interface CapturedAzureClientOptions {
-	apiKey: string;
-	apiVersion: string;
-	dangerouslyAllowBrowser: boolean;
+interface CapturedAzureClientRequest {
 	defaultHeaders?: Record<string, string>;
 	baseURL: string;
 }
@@ -20,37 +17,55 @@ interface CapturedAzureResponsesPayload {
 	tools?: Array<{ strict?: boolean }>;
 }
 
-const azureMock = vi.hoisted(() => ({
-	constructorCalls: [] as CapturedAzureClientOptions[],
+const azureMock = {
+	requests: [] as CapturedAzureClientRequest[],
 	lastParams: undefined as CapturedAzureResponsesPayload | undefined,
 	streamEvents: undefined as ResponseStreamEvent[] | undefined,
-}));
+};
 
-vi.mock("openai", () => {
-	class AzureOpenAI {
-		responses = {
-			create: (params: CapturedAzureResponsesPayload) => {
-				azureMock.lastParams = params;
-				const events = azureMock.streamEvents;
-				if (!events) throw new Error("mock create");
-				return {
-					withResponse: async () => ({
-						data: (async function* () {
-							for (const event of events) yield event;
-						})(),
-						response: { status: 200, headers: new Headers() },
-					}),
-				};
-			},
-		};
+const azureMockFetch: typeof globalThis.fetch = async (input, init) => {
+	const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+	const parsed = new URL(rawUrl);
+	expect(parsed.pathname.endsWith("/responses")).toBe(true);
+	expect(parsed.searchParams.get("api-version")).toBe("v1");
+	parsed.pathname = parsed.pathname.slice(0, -"/responses".length) || "/";
+	parsed.searchParams.delete("api-version");
 
-		constructor(config: CapturedAzureClientOptions) {
-			azureMock.constructorCalls.push(config);
-		}
+	const headers: Record<string, string> = {};
+	if (init?.headers && !Array.isArray(init.headers) && !(init.headers instanceof Headers)) {
+		Object.assign(headers, init.headers);
+	} else if (init?.headers) {
+		new Headers(init.headers).forEach((value, key) => {
+			headers[key] = value;
+		});
 	}
 
-	return { AzureOpenAI };
-});
+	azureMock.requests.push({
+		baseURL: parsed.toString().replace(/\/+$/, ""),
+		defaultHeaders: headers,
+	});
+	if (typeof init?.body === "string") {
+		azureMock.lastParams = JSON.parse(init.body) as CapturedAzureResponsesPayload;
+	}
+
+	const events = azureMock.streamEvents;
+	if (!events) {
+		throw new Error("mock create");
+	}
+	const encoder = new TextEncoder();
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			for (const event of events) {
+				controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+			}
+			controller.close();
+		},
+	});
+	return new Response(body, {
+		status: 200,
+		headers: { "content-type": "text/event-stream" },
+	});
+};
 
 const PI_USER_AGENT = formatUserAgent();
 
@@ -64,7 +79,7 @@ const originalAzureOpenAIApiVersion = process.env.AZURE_OPENAI_API_VERSION;
 const originalAzureOpenAIApiKey = process.env.AZURE_OPENAI_API_KEY;
 
 beforeEach(() => {
-	azureMock.constructorCalls.length = 0;
+	azureMock.requests.length = 0;
 	azureMock.lastParams = undefined;
 	azureMock.streamEvents = undefined;
 	delete process.env.AZURE_OPENAI_BASE_URL;
@@ -102,9 +117,12 @@ afterEach(() => {
 async function captureClientBaseUrl(baseUrl: string): Promise<string> {
 	process.env.AZURE_OPENAI_BASE_URL = baseUrl;
 	const model = getModel("azure", "gpt-4o-mini");
-	await streamAzureOpenAIResponses(model, normalizeContext(context), { apiKey: "test-api-key" }).result();
-	expect(azureMock.constructorCalls).toHaveLength(1);
-	return azureMock.constructorCalls[0].baseURL;
+	await streamAzureOpenAIResponses(model, normalizeContext(context), {
+		apiKey: "test-api-key",
+		fetch: azureMockFetch,
+	}).result();
+	expect(azureMock.requests).toHaveLength(1);
+	return azureMock.requests[0].baseURL;
 }
 
 async function captureClientHeaders(headers?: Record<string, string>): Promise<Record<string, string>> {
@@ -113,9 +131,10 @@ async function captureClientHeaders(headers?: Record<string, string>): Promise<R
 		apiKey: "test-api-key",
 		azureBaseUrl: "https://my-resource.openai.azure.com",
 		headers,
+		fetch: azureMockFetch,
 	}).result();
-	expect(azureMock.constructorCalls).toHaveLength(1);
-	return azureMock.constructorCalls[0].defaultHeaders ?? {};
+	expect(azureMock.requests).toHaveLength(1);
+	return azureMock.requests[0].defaultHeaders ?? {};
 }
 
 describe("azure base URL normalization", () => {
@@ -180,6 +199,7 @@ describe("azure base URL normalization", () => {
 			apiKey: "test-api-key",
 			azureBaseUrl: "https://my-resource.openai.azure.com",
 			sessionId: "x".repeat(67),
+			fetch: azureMockFetch,
 		}).result();
 
 		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
@@ -190,6 +210,7 @@ describe("azure base URL normalization", () => {
 		await streamAzureOpenAIResponses(model, normalizeContext(context), {
 			apiKey: "test-api-key",
 			azureBaseUrl: "https://my-resource.openai.azure.com",
+			fetch: azureMockFetch,
 		}).result();
 
 		expect(azureMock.lastParams?.store).toBe(false);
@@ -215,7 +236,7 @@ describe("azure base URL normalization", () => {
 					},
 				],
 			}),
-			{ apiKey: "test-api-key", azureBaseUrl: "https://my-resource.openai.azure.com" },
+			{ apiKey: "test-api-key", azureBaseUrl: "https://my-resource.openai.azure.com", fetch: azureMockFetch },
 		).result();
 
 		expect(azureMock.lastParams?.tools?.[0]).not.toHaveProperty("strict");
@@ -224,9 +245,12 @@ describe("azure base URL normalization", () => {
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {
 		process.env.AZURE_OPENAI_RESOURCE_NAME = "my-resource";
 		const model = getModel("azure", "gpt-4o-mini");
-		await streamAzureOpenAIResponses(model, normalizeContext(context), { apiKey: "test-api-key" }).result();
-		expect(azureMock.constructorCalls).toHaveLength(1);
-		expect(azureMock.constructorCalls[0].baseURL).toBe("https://my-resource.openai.azure.com/openai/v1");
+		await streamAzureOpenAIResponses(model, normalizeContext(context), {
+			apiKey: "test-api-key",
+			fetch: azureMockFetch,
+		}).result();
+		expect(azureMock.requests).toHaveLength(1);
+		expect(azureMock.requests[0].baseURL).toBe("https://my-resource.openai.azure.com/openai/v1");
 	});
 });
 
@@ -246,6 +270,7 @@ describe("azure provider stream events", () => {
 		const result = await streamAzureOpenAIResponses(model, normalizeContext(context), {
 			apiKey: "test-api-key",
 			azureBaseUrl: "https://my-resource.openai.azure.com",
+			fetch: azureMockFetch,
 			onProviderStreamEvent: async (event, eventModel) => {
 				await Promise.resolve();
 				received.push(event);
@@ -254,8 +279,8 @@ describe("azure provider stream events", () => {
 		}).result();
 
 		expect(received).toEqual(azureMock.streamEvents);
-		expect(received[0]).toBe(azureMock.streamEvents[0]);
-		expect(received[1]).toBe(azureMock.streamEvents[1]);
+		expect(received[0]).toEqual(azureMock.streamEvents[0]);
+		expect(received[1]).toEqual(azureMock.streamEvents[1]);
 		expect(eventModels).toEqual([model, model]);
 		expect(result.stopReason).toBe("stop");
 		expect(result.responseId).toBe("resp_azure");

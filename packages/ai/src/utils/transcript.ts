@@ -1,4 +1,5 @@
 import type { Context, Message, SystemMessage, Tool, ToolReference, TranscriptContext } from "../types.ts";
+import { stripSchemaMetaKeys } from "./json-schema.ts";
 import { contentText, getSystemMessageText } from "./text.ts";
 
 export type { TranscriptContext } from "../types.ts";
@@ -124,7 +125,7 @@ export function toToolDeclaration(tool: Tool): Tool {
 	return {
 		name: tool.name,
 		description: tool.description,
-		parameters: JSON.parse(JSON.stringify(tool.parameters)) as Tool["parameters"],
+		parameters: JSON.parse(JSON.stringify(stripSchemaMetaKeys(tool.parameters))) as Tool["parameters"],
 		...(tool.constrainedSampling === undefined ? {} : { constrainedSampling: tool.constrainedSampling }),
 	};
 }

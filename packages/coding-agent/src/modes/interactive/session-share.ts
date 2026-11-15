@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_RADIUS_GATEWAY } from "@earendil-works/pi-ai/providers/radius-config";
+import { stripSchemaMetaKeys } from "@earendil-works/pi-ai/utils/json-schema";
 import { type Container, type EditorComponent, hyperlink, type TUI } from "@earendil-works/pi-tui";
 import { getAuthCredential } from "../../cli/auth-command.ts";
 import { getShareViewerUrl } from "../../config.ts";
@@ -39,7 +40,7 @@ export function createShareTrailingEntries(
 				tools: session.state.tools.map((tool) => ({
 					name: tool.name,
 					description: tool.description,
-					parameters: tool.parameters,
+					parameters: stripSchemaMetaKeys(tool.parameters),
 				})),
 			},
 		},
@@ -182,12 +183,18 @@ async function shareViaGist(tmpFile: string, context: SessionShareContext): Prom
 			proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
 			let stdout = "";
 			let stderr = "";
-			proc.stdout?.on("data", (data) => {
-				stdout += data.toString();
-			});
-			proc.stderr?.on("data", (data) => {
-				stderr += data.toString();
-			});
+			const procStdout = proc.stdout;
+			if (procStdout) {
+				procStdout.on("data", (data) => {
+					stdout += data.toString();
+				});
+			}
+			const procStderr = proc.stderr;
+			if (procStderr) {
+				procStderr.on("data", (data) => {
+					stderr += data.toString();
+				});
+			}
 			// A failed spawn emits 'error' and may never emit 'close'; without a listener it crashes pi.
 			proc.on("error", (error) => resolve({ stdout, stderr: stderr || error.message, code: null }));
 			proc.on("close", (code) => resolve({ stdout, stderr, code }));

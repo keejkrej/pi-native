@@ -87,7 +87,7 @@ export interface BashOperations {
 			onData: (data: Buffer) => void;
 			signal?: AbortSignal;
 			timeout?: number;
-			env?: NodeJS.ProcessEnv;
+			env?: Record<string, string | undefined>;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -141,7 +141,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			});
 			let timedOut = false;
 			let exitedBeforeDeadlineAfterMs: number | undefined;
-			let timeoutHandle: NodeJS.Timeout | undefined;
+			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 			const onAbort = () => {
 				if (child.pid) killProcessTree(child.pid);
 			};
@@ -158,8 +158,10 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
-				child.stdout?.on("data", onData);
-				child.stderr?.on("data", onData);
+				const childStdout = child.stdout;
+				if (childStdout) childStdout.on("data", onData);
+				const childStderr = child.stderr;
+				if (childStderr) childStderr.on("data", onData);
 				// Handle abort signal by killing the entire process tree.
 				if (signal) {
 					if (signal.aborted) onAbort();
@@ -174,7 +176,8 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				// A signal-killed shell has no exit code. Use the standard shell convention so
 				// callers do not mistake the termination for a successful command.
 				const signalCode = child.signalCode;
-				const resolvedExitCode = exitCode ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1);
+				const signalTable = osConstants.signals as Record<string, number | undefined>;
+				const resolvedExitCode = exitCode ?? (signalCode ? 128 + (signalTable[signalCode] ?? 0) : 1);
 				if (timedOut) {
 					throw new ShellTimeoutError(
 						timeout,
@@ -206,7 +209,7 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 export interface BashSpawnContext {
 	command: string;
 	cwd: string;
-	env: NodeJS.ProcessEnv;
+	env: Record<string, string | undefined>;
 }
 
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
@@ -255,7 +258,7 @@ export interface BashToolOptions {
 export type BashRenderState = {
 	startedAt: number | undefined;
 	endedAt: number | undefined;
-	interval: NodeJS.Timeout | undefined;
+	interval: ReturnType<typeof setInterval> | undefined;
 };
 
 export interface ShellToolConfig {
@@ -303,7 +306,7 @@ export function createShellToolDefinition(
 			);
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
-			let updateTimer: NodeJS.Timeout | undefined;
+			let updateTimer: ReturnType<typeof setTimeout> | undefined;
 			let updateDirty = false;
 			let lastUpdateAt = 0;
 

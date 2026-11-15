@@ -216,7 +216,7 @@ async function startDeviceFlow(domain: string, signal: AbortSignal): Promise<Dev
 		body: new URLSearchParams({
 			client_id: CLIENT_ID,
 			scope: "read:user",
-		}),
+		}).toString(),
 		signal,
 	});
 
@@ -277,7 +277,7 @@ async function pollForGitHubAccessToken(
 					client_id: CLIENT_ID,
 					device_code: device.device_code,
 					grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-				}),
+				}).toString(),
 				signal,
 			});
 

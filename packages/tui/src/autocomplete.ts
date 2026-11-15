@@ -208,10 +208,12 @@ async function walkDirectoryWithFd(
 		};
 
 		signal.addEventListener("abort", onAbort, { once: true });
-		child.stdout.setEncoding("utf-8");
-		child.stdout.on("data", (chunk: string) => {
-			stdout += chunk;
-		});
+		if (child.stdout) {
+			child.stdout.setEncoding("utf-8");
+			child.stdout.on("data", (chunk: string) => {
+				stdout += chunk;
+			});
+		}
 		child.on("error", () => {
 			finish([]);
 		});

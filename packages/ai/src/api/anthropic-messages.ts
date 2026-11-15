@@ -1,5 +1,8 @@
-import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
-import type { MessageCreateParamsStreaming as SdkMessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import {
+	AnthropicAPIError,
+	type AnthropicClientLike,
+	AnthropicHttpClient,
+} from "./anthropic-http.ts";
 import type {
 	AnthropicFederationConfig,
 	BetaInputTransformation,
@@ -388,7 +391,7 @@ function prepareThreadRequest(
 }
 
 /** The `error_code` Anthropic puts in `error.details` of thread rejections. */
-function getThreadErrorCode(error: InstanceType<typeof Anthropic.APIError>): string | undefined {
+function getThreadErrorCode(error: AnthropicAPIError): string | undefined {
 	const body = error.error as { error?: { details?: { error_code?: unknown } } } | undefined;
 	const code = body?.error?.details?.error_code;
 	return typeof code === "string" ? code : undefined;
@@ -410,7 +413,7 @@ async function sendThreadRequest(
 	try {
 		return { response: await send(thread.body), thread };
 	} catch (error) {
-		if (signal?.aborted || !(error instanceof Anthropic.APIError)) throw error;
+		if (signal?.aborted || !(error instanceof AnthropicAPIError)) throw error;
 		const errorCode = getThreadErrorCode(error);
 		const startNewThread = errorCode !== undefined && NEW_THREAD_ERRORS.has(errorCode);
 		// The endpoint can't use threads: it can't thread this request, or it doesn't know the
@@ -530,7 +533,7 @@ export interface AnthropicOptions extends StreamOptions {
 	 * construction entirely. Use this to inject alternative SDK clients such as
 	 * `AnthropicVertex` that shares the same messaging API.
 	 */
-	client?: Anthropic;
+	client?: AnthropicClientLike;
 }
 
 function mergeHeaders(...headerSources: (ProviderHeaders | undefined)[]): ProviderHeaders {
@@ -571,11 +574,7 @@ function assertRequestAuth(provider: string, apiKey: string | undefined, headers
  * client built with `apiKey: null, authToken: null` for header-owned auth would
  * also resolve and exchange SDK credentials behind pi's auth resolver.
  */
-class PiAnthropic extends Anthropic {
-	protected override _shouldResolveDefaultCredentials(): boolean {
-		return false;
-	}
-}
+
 
 /**
  * Workload identity federation config from the ANTHROPIC_* variables the
@@ -611,7 +610,7 @@ function getAnthropicFederation(
  * per request. Keep one client for the current federation config and fetch, and
  * clone it per request with `withOptions()`, which shares the token cache.
  */
-let federationClient: { key: string; fetch: typeof globalThis.fetch | undefined; client: Anthropic } | undefined;
+let federationClient: { key: string; fetch: typeof globalThis.fetch | undefined; client: AnthropicHttpClient } | undefined;
 
 interface ServerSentEvent {
 	event: string | null;
@@ -840,7 +839,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		};
 
 		try {
-			let client: Anthropic;
+			let client: AnthropicClientLike;
 			let isOAuth: boolean;
 			let usageModel = model;
 			let inputTransformations: BetaInputTransformation[] | undefined;
@@ -888,7 +887,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			};
 			const send = (body: ThreadedParams) =>
 				retryProviderRequest(
-					() => client.beta.messages.create(body as unknown as SdkMessageCreateParamsStreaming, requestOptions).asResponse(),
+					() => client.beta.messages.create(body, requestOptions).asResponse(),
 					{
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
@@ -928,7 +927,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						options?.signal?.aborted ||
 						disablePreferredStrictTools ||
 						!built.hasPreferredStrictTools ||
-						!(error instanceof Anthropic.APIError) ||
+						!(error instanceof AnthropicAPIError) ||
 						error.status !== 400 ||
 						error.type !== "invalid_request_error" ||
 						!isStrictToolLimitErrorMessage(error.message)
@@ -1271,10 +1270,10 @@ function createClient(
 	sessionId?: string,
 	federation?: AnthropicFederationConfig,
 	identity?: ClientIdentity,
-): { client: Anthropic; isOAuthToken: boolean } {
+): { client: AnthropicClientLike; isOAuthToken: boolean } {
 	// Copilot: Bearer auth.
 	if (model.provider === "github-copilot") {
-		const client = new PiAnthropic({
+		const client = new AnthropicHttpClient({
 			apiKey: null,
 			authToken: apiKey ?? null,
 			baseURL: model.baseUrl,
@@ -1297,7 +1296,7 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers instead of the client identity.
 	if (apiKey && isOAuthToken(apiKey)) {
-		const client = new PiAnthropic({
+		const client = new AnthropicHttpClient({
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: model.baseUrl,
@@ -1338,10 +1337,10 @@ function createClient(
 	if (federation) {
 		const key = JSON.stringify([model.baseUrl, federation]);
 		if (federationClient?.key !== key || federationClient.fetch !== fetch) {
-			const client = new PiAnthropic({
+			const client = new AnthropicHttpClient({
 				apiKey: null,
 				authToken: null,
-				config: federation as ClientOptions["config"],
+				config: federation,
 				baseURL: model.baseUrl,
 				dangerouslyAllowBrowser: true,
 				fetch,
@@ -1351,7 +1350,7 @@ function createClient(
 		return { client: federationClient.client.withOptions({ defaultHeaders }), isOAuthToken: false };
 	}
 
-	const client = new PiAnthropic({
+	const client = new AnthropicHttpClient({
 		apiKey: apiKey ?? null,
 		authToken: null,
 		baseURL: model.baseUrl,

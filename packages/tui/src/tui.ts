@@ -167,7 +167,7 @@ type PendingTerminalColorQuery = {
 	 * query completed (on the DA1 reply or once every color replied); later replies are ignored.
 	 */
 	deliver: ((colors: TerminalColors) => void) | undefined;
-	timer: NodeJS.Timeout | undefined;
+	timer: ReturnType<typeof setTimeout> | undefined;
 };
 
 const TERMINAL_PALETTE_SIZE = 16;
@@ -553,7 +553,7 @@ export abstract class TuiBase extends Container implements TUI {
 	public onDebug?: () => void;
 	private renderRequested = false;
 	private immediateRenderScheduled = false;
-	private renderTimer: NodeJS.Timeout | undefined;
+	private renderTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = false;

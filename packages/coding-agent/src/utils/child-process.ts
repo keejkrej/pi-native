@@ -1,24 +1,13 @@
 import {
 	type ChildProcess,
-	type ChildProcessByStdio,
 	type SpawnOptions,
-	type SpawnOptionsWithStdioTuple,
 	type SpawnSyncOptionsWithStringEncoding,
 	type SpawnSyncReturns,
-	type StdioNull,
-	type StdioPipe,
 } from "node:child_process";
-import type { Readable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
 const EXIT_STDIO_GRACE_MS = 100;
 
-export function spawnProcess(
-	command: string,
-	args: string[],
-	options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioPipe>,
-): ChildProcessByStdio<null, Readable, Readable>;
-export function spawnProcess(command: string, args: string[], options: SpawnOptions): ChildProcess;
 export function spawnProcess(command: string, args: string[], options: SpawnOptions): ChildProcess {
 	return crossSpawn(command, args, options);
 }
@@ -47,7 +36,7 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
-		let postExitTimer: NodeJS.Timeout | undefined;
+		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
 
@@ -59,18 +48,26 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			child.removeListener("error", onError);
 			child.removeListener("exit", onExit);
 			child.removeListener("close", onClose);
-			child.stdout?.removeListener("end", onStdoutEnd);
-			child.stderr?.removeListener("end", onStderrEnd);
-			child.stdout?.removeListener("data", onData);
-			child.stderr?.removeListener("data", onData);
+			const childStdoutCleanup = child.stdout;
+			if (childStdoutCleanup) {
+				childStdoutCleanup.removeListener("end", onStdoutEnd);
+				childStdoutCleanup.removeListener("data", onData);
+			}
+			const childStderrCleanup = child.stderr;
+			if (childStderrCleanup) {
+				childStderrCleanup.removeListener("end", onStderrEnd);
+				childStderrCleanup.removeListener("data", onData);
+			}
 		};
 
 		const finalize = (code: number | null) => {
 			if (settled) return;
 			settled = true;
 			cleanup();
-			child.stdout?.destroy();
-			child.stderr?.destroy();
+			const childStdoutFinalize = child.stdout;
+			if (childStdoutFinalize) childStdoutFinalize.destroy();
+			const childStderrFinalize = child.stderr;
+			if (childStderrFinalize) childStderrFinalize.destroy();
 			resolve(code);
 		};
 
@@ -122,10 +119,16 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			finalize(code);
 		};
 
-		child.stdout?.once("end", onStdoutEnd);
-		child.stderr?.once("end", onStderrEnd);
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
+		const childStdoutListen = child.stdout;
+		if (childStdoutListen) {
+			childStdoutListen.once("end", onStdoutEnd);
+			childStdoutListen.on("data", onData);
+		}
+		const childStderrListen = child.stderr;
+		if (childStderrListen) {
+			childStderrListen.once("end", onStderrEnd);
+			childStderrListen.on("data", onData);
+		}
 		child.once("error", onError);
 		child.once("exit", onExit);
 		child.once("close", onClose);

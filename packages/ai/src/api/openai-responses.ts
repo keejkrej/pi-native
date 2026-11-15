@@ -1,5 +1,4 @@
-import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming as SdkResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import { createOpenAIClient } from "./openai-http.ts";
 import type { ResponseCreateParamsStreaming, ResponseStreamEvent } from "./openai-responses-types.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {
@@ -220,7 +219,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				maxRetries: 0,
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.responses.create(params as unknown as SdkResponseCreateParamsStreaming, requestOptions).withResponse(),
+				() => client.responses.create(params, requestOptions).withResponse(),
 				{
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
@@ -329,10 +328,9 @@ function createClient(
 		Object.assign(headers, optionsHeaders);
 	}
 
-	return new OpenAI({
+	return createOpenAIClient({
 		apiKey,
 		baseURL: model.baseUrl,
-		dangerouslyAllowBrowser: true,
 		fetch,
 		defaultHeaders: headers,
 	});

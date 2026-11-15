@@ -1,4 +1,4 @@
-import { getCapabilities, Marked, type Token } from "@earendil-works/pi-tui";
+import { getCapabilities, Marked, type Token, type Tokens } from "@earendil-works/pi-tui";
 import { type AnsiTheme, type MermaidArt, render, toAnsi } from "lovely-mermaid";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { MermaidRenderingMode } from "../../../core/settings-manager.ts";
@@ -13,8 +13,10 @@ interface MermaidTransformerOptions {
 	theme?: MermaidTheme;
 }
 
-function isMermaid(token: Token): token is Token & { type: "code"; text: string; lang?: string } {
-	return token.type === "code" && token.lang?.trim().split(/\s+/, 1)[0]?.toLowerCase() === "mermaid";
+function isMermaid(token: Token): boolean {
+	if (token.type !== "code") return false;
+	const codeToken = token as Tokens.Code;
+	return codeToken.lang?.trim().split(/\s+/, 1)[0]?.toLowerCase() === "mermaid";
 }
 
 function codeSpan(line: string): string {
@@ -79,7 +81,7 @@ export function createMermaidMarkdownTransformer(options: MermaidTransformerOpti
 			.lexer(markdown)
 			.map((token) => {
 				if (!isMermaid(token)) return token.raw;
-				const art = render(token.text);
+				const art = render((token as Tokens.Code).text);
 				if (!art || art.width > context.availableWidth) return token.raw;
 				if (!context.isStreaming && art.warnings.length > 0) {
 					const suffix = art.warnings.length > 1 ? ` (+${art.warnings.length - 1} more)` : "";

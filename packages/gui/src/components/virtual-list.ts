@@ -41,8 +41,8 @@ export interface VirtualRange {
 	readonly endIndex: number;
 }
 
-export class VirtualList<T> extends GuiComponent {
-	private items: T[];
+class VirtualListImpl extends GuiComponent {
+	private items: unknown[];
 	private readonly estimatedItemHeight: number;
 	private readonly gap: number;
 	private readonly overscan: number;
@@ -52,8 +52,8 @@ export class VirtualList<T> extends GuiComponent {
 	private readonly scrollbarWidth: number;
 	private readonly padding: Edges;
 	private readonly background: Color | undefined;
-	private readonly renderItem: (item: T, index: number, existing?: GuiComponent) => GuiComponent;
-	private readonly keyFn: ((item: T, index: number) => string) | undefined;
+	private readonly renderItem: (item: unknown, index: number, existing?: GuiComponent) => GuiComponent;
+	private readonly keyFn: ((item: unknown, index: number) => string) | undefined;
 
 	private heightCache: number[];
 	private prefixOffsets: number[];
@@ -70,7 +70,7 @@ export class VirtualList<T> extends GuiComponent {
 	private dragStartY: number;
 	private dragStartScrollY: number;
 
-	constructor(options: VirtualListOptions<T>) {
+	constructor(options: VirtualListOptions<unknown>) {
 		super();
 		this.items = options.items ? options.items.slice() : [];
 		this.estimatedItemHeight = Math.max(8, options.estimatedItemHeight ?? 48);
@@ -109,7 +109,7 @@ export class VirtualList<T> extends GuiComponent {
 		}
 	}
 
-	private itemKey(item: T, index: number): string {
+	private itemKey(item: unknown, index: number): string {
 		return this.keyFn !== undefined ? this.keyFn(item, index) : String(index);
 	}
 
@@ -132,7 +132,7 @@ export class VirtualList<T> extends GuiComponent {
 		this.totalHeightValue = y;
 	}
 
-	setItems(items: readonly T[]): void {
+	setItems(items: readonly unknown[]): void {
 		const prevLen = this.items.length;
 		const nextItems = items.slice();
 		const nextHeights = new Array<number>(nextItems.length);
@@ -542,3 +542,22 @@ export class VirtualList<T> extends GuiComponent {
 		return undefined;
 	}
 }
+
+export interface VirtualList<T = unknown> extends GuiComponent {
+	setItems(items: readonly T[]): void;
+	getItemCount(): number;
+	getVisibleRange(): VirtualRange;
+	getRenderedCount(): number;
+	getScrollY(): number;
+	scrollTo(y: number): void;
+	scrollToIndex(index: number, align?: "start" | "center" | "end"): void;
+	scrollBy(deltaY: number): boolean;
+}
+
+export interface VirtualListConstructor {
+	new <T = unknown>(options: VirtualListOptions<T>): VirtualList<T>;
+	readonly prototype: VirtualList<unknown>;
+}
+
+// Keep the GuiComponent subclass non-generic so scriptc retains virtual/dynamic dispatch on upcasts.
+export const VirtualList: VirtualListConstructor = VirtualListImpl as unknown as VirtualListConstructor;

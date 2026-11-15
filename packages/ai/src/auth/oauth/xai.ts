@@ -70,7 +70,7 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 				Accept: "application/json",
 				"Content-Type": "application/x-www-form-urlencoded",
 			},
-			body: new URLSearchParams(fields),
+			body: new URLSearchParams(fields).toString(),
 			signal,
 		});
 	} catch (error) {

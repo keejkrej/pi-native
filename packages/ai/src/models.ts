@@ -911,7 +911,8 @@ class ModelsImpl implements MutableModels {
 			mergeHeaders(getOpenCodeSessionHeaders(requestModel, sessionId), auth.headers),
 			options?.headers,
 		);
-		if (options?.transformHeaders) headers = await options.transformHeaders(headers ?? {});
+		const transformHeaders = options?.transformHeaders;
+		if (transformHeaders) headers = await transformHeaders(headers ?? {});
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
 		const identity = mergeClientIdentity(this.identity, options?.identity);
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};

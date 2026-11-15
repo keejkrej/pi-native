@@ -138,7 +138,7 @@ async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise
 			accept: "application/json",
 			"content-type": "application/x-www-form-urlencoded",
 		},
-		body,
+		body: body.toString(),
 		signal,
 	});
 	if (!response.ok) {

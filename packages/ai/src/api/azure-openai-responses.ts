@@ -1,5 +1,4 @@
-import { AzureOpenAI } from "openai";
-import type { ResponseCreateParamsStreaming as SdkResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import { createAzureOpenAIClient } from "./openai-http.ts";
 import type { ResponseCreateParamsStreaming, ResponseStreamEvent } from "./openai-responses-types.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type { Api, AssistantMessage, Model, SimpleStreamOptions, StreamFunction, TranscriptContext } from "../types.ts";
@@ -90,7 +89,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				maxRetries: 0,
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.responses.create(params as unknown as SdkResponseCreateParamsStreaming, requestOptions).withResponse(),
+				() => client.responses.create(params, requestOptions).withResponse(),
 				{
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
@@ -161,10 +160,9 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 
 	const { baseUrl, apiVersion } = resolveAzureConfig(model, options);
 
-	return new AzureOpenAI({
+	return createAzureOpenAIClient({
 		apiKey,
 		apiVersion,
-		dangerouslyAllowBrowser: true,
 		fetch: options?.fetch,
 		defaultHeaders: headers,
 		baseURL: baseUrl,

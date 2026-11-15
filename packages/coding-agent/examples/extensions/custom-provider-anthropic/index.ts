@@ -21,8 +21,76 @@
  * Then use /model to select custom-anthropic/claude-sonnet-4-5
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import type { ContentBlockParam, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages.js";
+type ContentBlockParam =
+	| { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
+	| { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+	| { type: "thinking"; thinking: string; signature: string }
+	| { type: "tool_use"; id: string; name: string; input: unknown }
+	| { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean; cache_control?: { type: "ephemeral" } };
+
+interface MessageCreateParamsStreaming {
+	model: string;
+	messages: any[];
+	max_tokens: number;
+	stream: true;
+	system?: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
+	tools?: any[];
+	thinking?: { type: "enabled"; budget_tokens: number };
+}
+
+async function* streamAnthropicMessages(
+	url: string,
+	headers: Record<string, string>,
+	body: MessageCreateParamsStreaming,
+	signal?: AbortSignal,
+): AsyncGenerator<any> {
+	const response = await fetch(url, {
+		method: "POST",
+		headers,
+		body: JSON.stringify(body),
+		signal,
+	});
+	if (!response.ok) {
+		const errorText = await response.text().catch(() => response.statusText);
+		throw new Error(`${response.status} ${errorText || response.statusText}`);
+	}
+	if (!response.body) {
+		throw new Error("Attempted to iterate over an Anthropic response with no body");
+	}
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	try {
+		while (true) {
+			if (signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+			const { value, done } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+			let separatorIdx = buffer.indexOf("\n\n");
+			while (separatorIdx !== -1) {
+				const rawEvent = buffer.slice(0, separatorIdx);
+				buffer = buffer.slice(separatorIdx + 2);
+				const dataLines: string[] = [];
+				for (const line of rawEvent.split("\n")) {
+					if (line.startsWith("data:")) {
+						const content = line.slice(5);
+						dataLines.push(content.startsWith(" ") ? content.slice(1) : content);
+					}
+				}
+				const data = dataLines.join("\n").trim();
+				if (data && data !== "[DONE]") {
+					yield JSON.parse(data);
+				}
+				separatorIdx = buffer.indexOf("\n\n");
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
 import {
 	type Api,
 	type AssistantMessage,
@@ -370,33 +438,28 @@ function streamCustomAnthropic(
 			const apiKey = options?.apiKey ?? "";
 			const isOAuth = isOAuthToken(apiKey);
 
-			// Configure client based on auth type
+			// Configure request headers based on auth type
 			const betaFeatures = ["fine-grained-tool-streaming-2025-05-14", "interleaved-thinking-2025-05-14"];
-			const clientOptions: any = {
-				baseURL: model.baseUrl,
-				dangerouslyAllowBrowser: true,
-			};
-
-			if (isOAuth) {
-				clientOptions.apiKey = null;
-				clientOptions.authToken = apiKey;
-				clientOptions.defaultHeaders = {
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}`,
-					"user-agent": "claude-cli/2.1.2 (external, cli)",
-					"x-app": "cli",
-				};
-			} else {
-				clientOptions.apiKey = apiKey;
-				clientOptions.defaultHeaders = {
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": betaFeatures.join(","),
-				};
-			}
-
-			const client = new Anthropic(clientOptions);
+			const baseUrl = (model.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+			const headers: Record<string, string> = isOAuth
+				? {
+						accept: "application/json",
+						"content-type": "application/json",
+						"anthropic-version": "2023-06-01",
+						"anthropic-dangerous-direct-browser-access": "true",
+						"anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}`,
+						"user-agent": "claude-cli/2.1.2 (external, cli)",
+						"x-app": "cli",
+						authorization: `Bearer ${apiKey}`,
+					}
+				: {
+						accept: "application/json",
+						"content-type": "application/json",
+						"anthropic-version": "2023-06-01",
+						"anthropic-dangerous-direct-browser-access": "true",
+						"anthropic-beta": betaFeatures.join(","),
+						"x-api-key": apiKey,
+					};
 
 			// Build request params
 			const params: MessageCreateParamsStreaming = {
@@ -451,7 +514,7 @@ function streamCustomAnthropic(
 				};
 			}
 
-			const anthropicStream = client.messages.stream({ ...params }, { signal: options?.signal });
+			const anthropicStream = streamAnthropicMessages(`${baseUrl}/v1/messages`, headers, params, options?.signal);
 			stream.push({ type: "start", partial: output });
 
 			// Stream state per Anthropic block index, kept off the content blocks so it never reaches partial messages.

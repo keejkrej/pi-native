@@ -68,7 +68,7 @@ export function createToolDefinitionFromAgentTool(tool: AgentTool<any>): ToolDef
 		label: tool.label,
 		description: tool.description,
 		parameters: tool.parameters as any,
-		outputSchema: tool.outputSchema,
+		outputSchema: tool.outputSchema as TSchema | undefined,
 		constrainedSampling: tool.constrainedSampling,
 		prepareArguments: tool.prepareArguments,
 		executionMode: tool.executionMode,

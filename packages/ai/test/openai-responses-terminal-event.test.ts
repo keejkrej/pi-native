@@ -1,55 +1,50 @@
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
+import type { ResponseStreamEvent } from "../src/api/openai-responses-types.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
-vi.mock("openai", () => {
-	async function* createMockResponsesStream(): AsyncIterable<ResponseStreamEvent> {
-		yield {
+function createEarlyEofMockSseFetch(): typeof globalThis.fetch {
+	const events: ResponseStreamEvent[] = [
+		{
 			type: "response.created",
 			sequence_number: 0,
 			response: { id: "resp_wrapper_early_eof" },
-		} as ResponseStreamEvent;
-		yield {
+		} as ResponseStreamEvent,
+		{
 			type: "response.output_item.added",
 			sequence_number: 1,
 			output_index: 0,
 			item: { type: "reasoning", id: "rs_wrapper_early_eof", summary: [] },
-		} as ResponseStreamEvent;
-		yield {
+		} as ResponseStreamEvent,
+		{
 			type: "response.reasoning_text.delta",
 			sequence_number: 2,
 			output_index: 0,
 			content_index: 0,
 			item_id: "rs_wrapper_early_eof",
 			delta: "partial reasoning before the wrapper stream ends",
-		} as ResponseStreamEvent;
-	}
+		} as ResponseStreamEvent,
+	];
 
-	class FakeOpenAI {
-		responses = {
-			create: () => {
-				const responseStream = createMockResponsesStream();
-				const promise = Promise.resolve(responseStream) as Promise<AsyncIterable<ResponseStreamEvent>> & {
-					withResponse: () => Promise<{
-						data: AsyncIterable<ResponseStreamEvent>;
-						response: { status: number; headers: Headers };
-					}>;
-				};
-				promise.withResponse = async () => ({
-					data: responseStream,
-					response: { status: 200, headers: new Headers() },
-				});
-				return promise;
+	return async () => {
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const event of events) {
+					controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+				}
+				controller.close();
 			},
-		};
-	}
-
-	return { default: FakeOpenAI };
-});
+		});
+		return new Response(body, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+	};
+}
 
 function createModel(): Model<"openai-responses"> {
 	return {
@@ -289,6 +284,7 @@ describe("OpenAI Responses terminal event handling", () => {
 		const eventModels: Model<Api>[] = [];
 		const stream = streamOpenAIResponses(model, context, {
 			apiKey: "test",
+			fetch: createEarlyEofMockSseFetch(),
 			onProviderStreamEvent: async (event, eventModel) => {
 				await Promise.resolve();
 				providerEvents.push(event);
@@ -314,7 +310,7 @@ describe("OpenAI Responses terminal event handling", () => {
 			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 			tools: [],
 		});
-		const stream = streamOpenAIResponses(model, context, { apiKey: "test" });
+		const stream = streamOpenAIResponses(model, context, { apiKey: "test", fetch: createEarlyEofMockSseFetch() });
 		const events: AssistantMessageEvent[] = [];
 		let initialStopReason: AssistantMessage["stopReason"] | undefined;
 

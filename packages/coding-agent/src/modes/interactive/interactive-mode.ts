@@ -1360,9 +1360,12 @@ export class InteractiveMode {
 					resolve(undefined);
 				}, 2000);
 
-				proc.stdout?.on("data", (data) => {
-					stdout += data.toString();
-				});
+				const procStdout = proc.stdout;
+				if (procStdout) {
+					procStdout.on("data", (data) => {
+						stdout += data.toString();
+					});
+				}
 				proc.on("error", () => {
 					clearTimeout(timer);
 					resolve(undefined);
@@ -4599,17 +4602,11 @@ export class InteractiveMode {
 	private registerSignalHandlers(): void {
 		this.unregisterSignalHandlers();
 
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		// scriptc's process fallback lowers SIGINT/SIGTERM without SIGHUP.
+		const signals: ("SIGINT" | "SIGTERM")[] = ["SIGTERM"];
 
 		for (const signal of signals) {
 			const handler = () => {
-				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
-				// first, then attempts terminal restore. A genuinely dead terminal
-				// surfaces as an EIO on the restore writes, which the stdout/stderr
-				// error handler converts into emergencyTerminalExit (see #4144, #5080).
 				killTrackedDetachedChildren();
 				void this.shutdown({ fromSignal: true });
 			};
@@ -4617,7 +4614,9 @@ export class InteractiveMode {
 			this.signalCleanupHandlers.push(() => process.off(signal, handler));
 		}
 
+		let handlersActive = true;
 		const terminalErrorHandler = (error: Error) => {
+			if (!handlersActive) return;
 			if (isDeadTerminalError(error)) {
 				this.emergencyTerminalExit();
 			}
@@ -4626,15 +4625,23 @@ export class InteractiveMode {
 		// stdin needs the handler too: once the terminal is gone, reads and setRawMode
 		// fail with EIO (orphaned background process group) or ENOTTY (revoked tty).
 		// Node emits these as stream errors, which are uncaught without a listener.
-		for (const stream of [process.stdin, process.stdout, process.stderr]) {
-			stream.on("error", terminalErrorHandler);
-			this.signalCleanupHandlers.push(() => stream.off("error", terminalErrorHandler));
-		}
+		process.stdin.on("error", terminalErrorHandler);
+		this.signalCleanupHandlers.push(() => {
+			handlersActive = false;
+		});
+		process.stdout.on("error", terminalErrorHandler);
+		process.stderr.on("error", terminalErrorHandler);
+		this.signalCleanupHandlers.push(() => {
+			process.stdout.off("error", terminalErrorHandler);
+			process.stderr.off("error", terminalErrorHandler);
+		});
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere
 		// in pi) leaves the terminal in raw mode with no cursor.
-		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
+		const uncaughtExceptionHandler = (error: unknown) => {
+			this.uncaughtCrash(error instanceof Error ? error : new Error(String(error)));
+		};
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 	}
@@ -4647,40 +4654,8 @@ export class InteractiveMode {
 	}
 
 	private handleCtrlZ(): void {
-		if (process.platform === "win32") {
-			this.showStatus("Suspend to background is not supported on Windows");
-			return;
-		}
-
-		// Keep the event loop alive while suspended. Without this, stopping the TUI
-		// can leave Node with no ref'ed handles, causing the process to exit on fg
-		// before the SIGCONT handler gets a chance to restore the terminal.
-		const suspendKeepAlive = setInterval(() => {}, 2 ** 30);
-
-		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
-		// kill the backgrounded process. The handler is removed on resume.
-		const ignoreSigint = () => {};
-		process.on("SIGINT", ignoreSigint);
-
-		// Set up handler to restore TUI when resumed
-		process.once("SIGCONT", () => {
-			clearInterval(suspendKeepAlive);
-			process.removeListener("SIGINT", ignoreSigint);
-			this.ui.start();
-			this.ui.requestRender(true);
-		});
-
-		try {
-			// Stop the TUI (restore terminal to normal mode)
-			this.ui.stop();
-
-			// Send SIGTSTP to process group (pid=0 means all processes in group)
-			process.kill(0, "SIGTSTP");
-		} catch (error) {
-			clearInterval(suspendKeepAlive);
-			process.removeListener("SIGINT", ignoreSigint);
-			throw error;
-		}
+		// scriptc's process signal fallback does not implement SIGCONT resume handling.
+		this.showStatus("Suspend to background is not supported in native builds");
 	}
 
 	private async handleFollowUp(): Promise<void> {

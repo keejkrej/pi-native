@@ -10,16 +10,26 @@ import { findRenderers } from "./renderers/find.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
+export interface FindPathModule {
+	readonly sep: string;
+	isAbsolute(p: string): boolean;
+	relative(from: string, to: string): string;
+}
+
 /** Relativize a find result against the search root and normalize it to posix separators. */
 export function relativizeFindResultPath(
 	resultPath: string,
 	searchPath: string,
-	pathModule: path.PlatformPath = path,
+	pathModule?: FindPathModule,
 ): string {
-	const hadTrailingSeparator =
-		resultPath.endsWith(pathModule.sep) || (pathModule.sep === "\\" && resultPath.endsWith("/"));
-	const relativePath = pathModule.isAbsolute(resultPath) ? pathModule.relative(searchPath, resultPath) : resultPath;
-	const posixPath = relativePath.split(pathModule.sep).join("/");
+	const sep = pathModule ? pathModule.sep : path.sep;
+	const hadTrailingSeparator = resultPath.endsWith(sep) || (sep === "\\" && resultPath.endsWith("/"));
+	const relativePath = (pathModule ? pathModule.isAbsolute(resultPath) : path.isAbsolute(resultPath))
+		? pathModule
+			? pathModule.relative(searchPath, resultPath)
+			: path.relative(searchPath, resultPath)
+		: resultPath;
+	const posixPath = relativePath.split(sep).join("/");
 	return hadTrailingSeparator && !posixPath.endsWith("/") ? `${posixPath}/` : posixPath;
 }
 
@@ -272,9 +282,12 @@ export function createFindToolDefinition(
 							rl.close();
 						};
 
-						child.stderr?.on("data", (chunk) => {
-							stderr += chunk.toString();
-						});
+						const childStderr = child.stderr;
+						if (childStderr) {
+							childStderr.on("data", (chunk) => {
+								stderr += chunk.toString();
+							});
+						}
 
 						rl.on("line", (rawLine) => {
 							const line = rawLine.replace(/\r$/, "").trim();

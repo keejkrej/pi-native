@@ -23,9 +23,31 @@
 			"@earendil-works/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@earendil-works/pi-coding-agent/*": ["./packages/coding-agent/src/*.ts"],
 			"scriptc-ui": ["./packages/gui/src/index.ts"],
-			"scriptc-ui/native": ["./packages/gui/src/native.ts"]
+			"scriptc-ui/native": ["./packages/gui/src/native.ts"],
+			"chalk": ["./vendor/chalk/index.ts"],
+			"typebox": ["./vendor/typebox/index.ts"],
+			"typebox/compile": ["./vendor/typebox/compile.ts"],
+			"typebox/error": ["./vendor/typebox/error.ts"],
+			"proper-lockfile": ["./vendor/proper-lockfile/index.ts"],
+			"cross-spawn": ["./vendor/cross-spawn/index.ts"],
+			"hosted-git-info": ["./vendor/hosted-git-info/index.ts"],
+			"ignore": ["./vendor/ignore/index.ts"],
+			"yaml": ["./vendor/yaml/index.ts"],
+			"highlight.js": ["./vendor/highlight-js/index.ts"],
+			"highlight.js/lib/core.js": ["./vendor/highlight-js/core.ts"],
+			"highlight.js/lib/index.js": ["./vendor/highlight-js/index.ts"],
+			"highlight.js/lib/languages/*.js": ["./vendor/highlight-js/languages/*.ts"],
+			"marked": ["./vendor/marked/index.ts"],
+			"marked-cjk-friendly": ["./vendor/marked-cjk-friendly/index.ts"],
+			"get-east-asian-width": ["./vendor/get-east-asian-width/index.ts"],
+			"diff": ["./vendor/diff/index.ts"],
+			"minimatch": ["./vendor/minimatch/index.ts"],
+			"brace-expansion": ["./vendor/brace-expansion/index.ts"],
+			"semver": ["./vendor/semver/index.ts"],
+			"lovely-mermaid": ["./vendor/lovely-mermaid/index.ts"],
+			"partial-json": ["./vendor/partial-json/index.ts"]
 		}
 	},
 	"include": ["packages/*/src/**/*"],
-	"exclude": ["**/dist/**", "node_modules"]
+	"exclude": ["**/dist/**"]
 }

@@ -1,4 +1,4 @@
-import { FinishReason } from "@google/genai";
+import { FinishReason } from "../src/api/google-wire-types.ts";
 import { describe, expect, it, vi } from "vitest";
 import { streamSimple as streamGoogleGenerativeAI } from "../src/api/google-generative-ai.ts";
 import { mapStopReason } from "../src/api/google-shared.ts";

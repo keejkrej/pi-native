@@ -19,7 +19,7 @@ const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "im
 const DEFAULT_LIST_TIMEOUT_MS = 1000;
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 5000;
 
-export function isWaylandSession(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isWaylandSession(env: Record<string, string | undefined> = process.env): boolean {
 	return Boolean(env.WAYLAND_DISPLAY) || env.XDG_SESSION_TYPE === "wayland";
 }
 
@@ -198,8 +198,8 @@ async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | 
 }
 
 export async function readClipboardImage(options?: {
-	env?: NodeJS.ProcessEnv;
-	platform?: NodeJS.Platform;
+	env?: Record<string, string | undefined>;
+	platform?: string;
 }): Promise<ClipboardImage | null> {
 	const env = options?.env ?? process.env;
 	const platform = options?.platform ?? process.platform;

@@ -1,5 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-import type { BetaTool, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
+import { AnthropicAPIError } from "../src/api/anthropic-http.ts";
+import type { BetaTool, MessageCreateParamsStreaming } from "../src/api/anthropic-wire-types.ts";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AnthropicOptions, stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
@@ -211,7 +211,7 @@ describe("Anthropic preferred strict tool fallback", () => {
 		const result = await streamAnthropic(model, context([tool("lookup", "prefer")]), {
 			...options,
 			onPayload: () => {
-				throw Anthropic.APIError.generate(
+				throw AnthropicAPIError.generate(
 					400,
 					{ error: { type: "invalid_request_error", message: grammarError } },
 					grammarError,

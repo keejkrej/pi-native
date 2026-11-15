@@ -50,7 +50,7 @@ export function getPathComparisonKey(path: string): string {
 }
 
 /** `node:path` rules for the current platform, read at call time so tests can simulate Windows. */
-function getPlatformPathApi(): typeof win32 {
+function getPlatformPathApi(): typeof win32 | typeof posix {
 	return process.platform === "win32" ? win32 : posix;
 }
 

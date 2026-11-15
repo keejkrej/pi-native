@@ -4,7 +4,7 @@ import {
 	GoogleGenAI,
 	type HttpOptions,
 	type ThinkingConfig,
-} from "@google/genai";
+} from "./google-wire-types.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -384,14 +384,18 @@ function buildParams(
 			: undefined;
 	const systemInstruction = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const config: GenerateContentConfig = {
-		...(Object.keys(generationConfig).length > 0 && generationConfig),
-		...(systemInstruction && { systemInstruction: sanitizeSurrogates(systemInstruction) }),
-		...(currentTools.length > 0 && {
-			tools: convertTools(currentTools, false, supportsStrictMode),
-		}),
-		...(functionCallingMode !== undefined && {
-			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
-		}),
+		...(Object.keys(generationConfig).length > 0 ? generationConfig : {}),
+		...(systemInstruction ? { systemInstruction: sanitizeSurrogates(systemInstruction) } : {}),
+		...(currentTools.length > 0
+			? {
+					tools: convertTools(currentTools, false, supportsStrictMode),
+				}
+			: {}),
+		...(functionCallingMode !== undefined
+			? {
+					toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
+				}
+			: {}),
 		// Off for now, until we have evaluated the implications of the SDK's automatic continuation
 		// (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
 		automaticContinuation: false,

@@ -8,8 +8,8 @@
 import type { AddressInfo } from "node:net";
 import { createServer } from "node:net";
 import { getHeapStatistics } from "node:v8";
-import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
+import { createOpenAIClient } from "../src/api/openai-http.ts";
 import {
 	formatProviderError,
 	MAX_PROVIDER_ERROR_BODY_CHARS,
@@ -275,15 +275,16 @@ describe("connection error cause detail", () => {
 		expect(withCauseDetail(new Error("Connection error."))).toBe("Connection error.");
 	});
 
-	it("surfaces the reason from a real openai SDK connection failure", async () => {
+	it("surfaces the reason from a real HTTP client connection failure", async () => {
 		const server = createServer();
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const port = (server.address() as AddressInfo).port;
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 
-		const client = new OpenAI({ apiKey: "test", baseURL: `http://127.0.0.1:${port}/v1`, maxRetries: 0 });
+		const client = createOpenAIClient({ apiKey: "test", baseURL: `http://127.0.0.1:${port}/v1` });
 		const error = await client.chat.completions
-			.create({ model: "m", messages: [{ role: "user", content: "hi" }] })
+			.createNonStreaming({ model: "m", messages: [{ role: "user", content: "hi" }] })
+			.withResponse()
 			.catch((e: unknown) => e);
 
 		expect(formatProviderError(normalizeProviderError(error))).toBe(

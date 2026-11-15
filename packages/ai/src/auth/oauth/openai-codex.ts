@@ -147,7 +147,7 @@ async function exchangeAuthorizationCode(
 			code,
 			code_verifier: verifier,
 			redirect_uri: redirectUri,
-		}),
+		}).toString(),
 		signal,
 	});
 
@@ -164,7 +164,7 @@ async function refreshAccessToken(refreshToken: string, signal: AbortSignal): Pr
 				grant_type: "refresh_token",
 				refresh_token: refreshToken,
 				client_id: CLIENT_ID,
-			}),
+			}).toString(),
 			signal,
 		});
 	} catch (error) {

@@ -754,27 +754,11 @@ function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: stripSymbolKeys(getJsonSchemaToolParameters(tool, strict)) as Record<string, unknown>,
+				parameters: getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>,
 				strict: strict ?? false,
 			},
 		};
 	});
-}
-
-function stripSymbolKeys(value: unknown): unknown {
-	if (Array.isArray(value)) {
-		return value.map((item) => stripSymbolKeys(item));
-	}
-
-	if (value && typeof value === "object") {
-		const result: Record<string, unknown> = {};
-		for (const [key, entry] of Object.entries(value)) {
-			result[key] = stripSymbolKeys(entry);
-		}
-		return result;
-	}
-
-	return value;
 }
 
 function toChatMessages(messages: Message[], supportsImages: boolean): MistralChatMessage[] {

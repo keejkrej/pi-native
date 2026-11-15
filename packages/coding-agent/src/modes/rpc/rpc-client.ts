@@ -542,7 +542,7 @@ export class RpcClient {
 		}
 	}
 
-	private createProcessExitError(code: number | null, signal: NodeJS.Signals | null): Error {
+	private createProcessExitError(code: number | null, signal: string | null): Error {
 		return new Error(`Agent process exited (code=${code} signal=${signal}). Stderr: ${this.stderr}`);
 	}
 

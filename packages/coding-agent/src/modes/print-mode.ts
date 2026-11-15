@@ -52,13 +52,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		const signals: ("SIGINT" | "SIGTERM")[] = ["SIGTERM"];
 
 		for (const signal of signals) {
-			const exitCode = signal === "SIGHUP" ? 129 : 143;
+			const exitCode = 143;
 			const handler = () => {
 				signalCount++;
 				killTrackedDetachedChildren();

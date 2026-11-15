@@ -1,52 +1,75 @@
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const bedrockMock = vi.hoisted(() => ({
-	inputs: [] as unknown[],
-	respond: undefined as ((attempt: number) => Promise<unknown>) | undefined,
-}));
-
-vi.mock("@aws-sdk/client-bedrock-runtime", () => {
-	class BedrockRuntimeServiceException extends Error {
-		constructor(options: { name: string; message: string }) {
-			super(options.message);
-			this.name = options.name;
-		}
-	}
-
-	class BedrockRuntimeClient {
-		send(command: { input: unknown }): Promise<unknown> {
-			bedrockMock.inputs.push(structuredClone(command.input));
-			return bedrockMock.respond!(bedrockMock.inputs.length);
-		}
-	}
-
-	class ConverseStreamCommand {
-		readonly input: unknown;
-
-		constructor(input: unknown) {
-			this.input = input;
-		}
-	}
-
-	return {
-		BedrockRuntimeClient,
-		BedrockRuntimeServiceException,
-		ConverseStreamCommand,
-		StopReason: { END_TURN: "end_turn" },
-		CachePointType: { DEFAULT: "default" },
-		CacheTTL: { ONE_HOUR: "ONE_HOUR" },
-		ConversationRole: { ASSISTANT: "assistant", USER: "user" },
-		ImageFormat: { JPEG: "jpeg", PNG: "png", GIF: "gif", WEBP: "webp" },
-		ToolResultStatus: { ERROR: "error", SUCCESS: "success" },
-	};
-});
-
-import { BedrockRuntimeServiceException } from "@aws-sdk/client-bedrock-runtime";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model, Tool } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+
+const bedrockMock = {
+	inputs: [] as unknown[],
+	respond: undefined as ((attempt: number) => Promise<Response>) | undefined,
+};
+
+const CRC32_TABLE = (() => {
+	const table = new Uint32Array(256);
+	for (let i = 0; i < 256; i++) {
+		let c = i;
+		for (let j = 0; j < 8; j++) c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		table[i] = c >>> 0;
+	}
+	return table;
+})();
+
+function crc32(bytes: Uint8Array): number {
+	let crc = 0xffffffff;
+	for (let i = 0; i < bytes.length; i++) crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+	return (crc ^ 0xffffffff) >>> 0;
+}
+
+function encodeEventFrame(eventType: string, payload: unknown): Uint8Array {
+	const encoder = new TextEncoder();
+	const headerEntries: Array<[string, string]> = [
+		[":message-type", "event"],
+		[":event-type", eventType],
+		[":content-type", "application/json"],
+	];
+	const headerChunks: Uint8Array[] = [];
+	for (const [k, v] of headerEntries) {
+		const kb = encoder.encode(k);
+		const vb = encoder.encode(v);
+		const chunk = new Uint8Array(1 + kb.length + 1 + 2 + vb.length);
+		const dv = new DataView(chunk.buffer);
+		dv.setUint8(0, kb.length);
+		chunk.set(kb, 1);
+		dv.setUint8(1 + kb.length, 7);
+		dv.setUint16(1 + kb.length + 1, vb.length, false);
+		chunk.set(vb, 1 + kb.length + 3);
+		headerChunks.push(chunk);
+	}
+	const headersLen = headerChunks.reduce((n, c) => n + c.length, 0);
+	const payloadBytes = encoder.encode(JSON.stringify(payload));
+	const totalLen = 12 + headersLen + payloadBytes.length + 4;
+	const frame = new Uint8Array(totalLen);
+	const dv = new DataView(frame.buffer);
+	dv.setUint32(0, totalLen, false);
+	dv.setUint32(4, headersLen, false);
+	dv.setUint32(8, crc32(frame.subarray(0, 8)), false);
+	let pos = 12;
+	for (const c of headerChunks) {
+		frame.set(c, pos);
+		pos += c.length;
+	}
+	frame.set(payloadBytes, pos);
+	dv.setUint32(totalLen - 4, crc32(frame.subarray(0, totalLen - 4)), false);
+	return frame;
+}
+
+const bedrockMockFetch: typeof globalThis.fetch = async (_input, init) => {
+	if (typeof init?.body === "string") {
+		bedrockMock.inputs.push(JSON.parse(init.body));
+	}
+	return bedrockMock.respond!(bedrockMock.inputs.length);
+};
 
 const model: Model<"bedrock-converse-stream"> = {
 	id: "us.anthropic.claude-opus-5-5",
@@ -78,25 +101,46 @@ function tool(name: string, strict?: "prefer" | "require"): Tool {
 	};
 }
 
-function sdkError(name: string, message: string): Error {
-	return new BedrockRuntimeServiceException({ name, message, $fault: "client", $metadata: { httpStatusCode: 400 } });
+function sdkError(name: string, message: string): Response {
+	return new Response(JSON.stringify({ message }), {
+		status: 400,
+		headers: {
+			"content-type": "application/json",
+			"x-amzn-errortype": name,
+		},
+	});
 }
 
-function successResponse(): Promise<unknown> {
-	return Promise.resolve({
-		$metadata: { httpStatusCode: 200 },
-		stream: (async function* () {
-			yield { messageStart: { role: "assistant" } };
-			yield { messageStop: { stopReason: "end_turn" } };
-		})(),
-	});
+function successResponse(): Promise<Response> {
+	const frames = [
+		encodeEventFrame("messageStart", { role: "assistant" }),
+		encodeEventFrame("messageStop", { stopReason: "end_turn" }),
+	];
+	const combined = new Uint8Array(frames.reduce((n, f) => n + f.length, 0));
+	let offset = 0;
+	for (const frame of frames) {
+		combined.set(frame, offset);
+		offset += frame.length;
+	}
+	return Promise.resolve(
+		new Response(combined, {
+			status: 200,
+			headers: { "content-type": "application/vnd.amazon.eventstream" },
+		}),
+	);
 }
 
 function run(tools: Tool[], onPayload?: (payload: unknown) => unknown, sessionId?: string) {
 	return streamBedrock(
 		model,
 		normalizeContext({ tools, messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
-		{ cacheRetention: "none", onPayload, sessionId },
+		{
+			cacheRetention: "none",
+			onPayload,
+			sessionId,
+			fetch: bedrockMockFetch,
+			env: { AWS_BEDROCK_SKIP_AUTH: "1" },
+		},
 	).result();
 }
 
@@ -116,7 +160,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 
 	it("retries a strict tool limit rejection with preferred tools non-strict and keeps required tools strict", async () => {
 		bedrockMock.respond = (attempt) =>
-			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+			attempt === 1 ? Promise.resolve(sdkError("ValidationException", unionLimitMessage)) : successResponse();
 		const onPayload = vi.fn((payload: unknown) => ({ ...(payload as object), requestMetadata: { team: "a" } }));
 
 		const result = await run([tool("preferred", "prefer"), tool("required", "require"), tool("ordinary")], onPayload);
@@ -153,7 +197,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 	});
 
 	it("does not retry without preferred strict tools", async () => {
-		bedrockMock.respond = () => Promise.reject(sdkError("ValidationException", unionLimitMessage));
+		bedrockMock.respond = () => Promise.resolve(sdkError("ValidationException", unionLimitMessage));
 
 		const result = await run([tool("required", "require"), tool("ordinary")]);
 
@@ -163,7 +207,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 	});
 
 	it("does not retry other validation errors", async () => {
-		bedrockMock.respond = () => Promise.reject(sdkError("ValidationException", "messages: field required"));
+		bedrockMock.respond = () => Promise.resolve(sdkError("ValidationException", "messages: field required"));
 
 		const result = await run([tool("preferred", "prefer")]);
 
@@ -172,7 +216,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 	});
 
 	it("retries only once", async () => {
-		bedrockMock.respond = () => Promise.reject(sdkError("ValidationException", unionLimitMessage));
+		bedrockMock.respond = () => Promise.resolve(sdkError("ValidationException", unionLimitMessage));
 
 		const result = await run([tool("preferred", "prefer")]);
 
@@ -182,7 +226,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 
 	it("does not remember a rejection without a session", async () => {
 		bedrockMock.respond = (attempt) =>
-			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+			attempt === 1 ? Promise.resolve(sdkError("ValidationException", unionLimitMessage)) : successResponse();
 
 		await run([tool("preferred", "prefer")]);
 		await run([tool("preferred", "prefer")]);
@@ -193,7 +237,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 	// Regression tests for https://github.com/earendil-works/pi/issues/11626.
 	it("sends preferred tools non-strict right away on later requests of a rejected session", async () => {
 		bedrockMock.respond = (attempt) =>
-			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+			attempt === 1 ? Promise.resolve(sdkError("ValidationException", unionLimitMessage)) : successResponse();
 		const tools = [tool("preferred", "prefer"), tool("required", "require")];
 
 		await run(tools, undefined, "rejected");
@@ -212,7 +256,7 @@ describe("Bedrock preferred strict tool fallback", () => {
 
 	it("tries strict sampling again after the session's resources are cleaned up", async () => {
 		bedrockMock.respond = (attempt) =>
-			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+			attempt === 1 ? Promise.resolve(sdkError("ValidationException", unionLimitMessage)) : successResponse();
 
 		await run([tool("preferred", "prefer")], undefined, "cleaned");
 		cleanupSessionResources("cleaned");

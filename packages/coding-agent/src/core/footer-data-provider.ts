@@ -1,4 +1,4 @@
-import { type ExecFileException, execFile, spawnSync } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
@@ -68,7 +68,7 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 				cwd: repoDir,
 				encoding: "utf8",
 			},
-			(error: ExecFileException | null, stdout: string) => {
+			(error: Error | null, stdout: string) => {
 				if (error) {
 					resolvePromise(null);
 					return;

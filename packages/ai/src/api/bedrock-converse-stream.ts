@@ -1,33 +1,3 @@
-import type { Agent as HttpsAgent } from "node:https";
-import {
-	BedrockRuntimeClient,
-	type BedrockRuntimeClientConfig,
-	BedrockRuntimeServiceException,
-	StopReason as BedrockStopReason,
-	type Tool as BedrockTool,
-	CachePointType,
-	CacheTTL,
-	type ContentBlock,
-	type ContentBlockDeltaEvent,
-	type ContentBlockStartEvent,
-	type ContentBlockStopEvent,
-	ConversationRole,
-	ConverseStreamCommand,
-	type ConverseStreamCommandInput,
-	type ConverseStreamCommandOutput,
-	type ConverseStreamMetadataEvent,
-	ImageFormat,
-	type Message,
-	type SystemContentBlock,
-	type ToolChoice,
-	type ToolConfiguration,
-	type ToolResultContentBlock,
-	ToolResultStatus,
-} from "@aws-sdk/client-bedrock-runtime";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
-import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
-import { HttpProxyAgent } from "http-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -38,7 +8,6 @@ import type {
 	JsonValue,
 	Model,
 	ProviderEnv,
-	ProviderResponse,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -52,8 +21,8 @@ import type {
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
-import { providerHeadersToRecord } from "../utils/headers.ts";
-import { type ClientIdentity, getClientVersion } from "../utils/identity.ts";
+import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, formatUserAgent } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -66,6 +35,35 @@ import {
 	type TranscriptContext,
 	withoutInitialSystemMessage,
 } from "../utils/transcript.ts";
+import {
+	type BedrockCredentials,
+	BedrockRuntimeServiceException,
+	BedrockStopReason,
+	type BedrockTool,
+	CachePointType,
+	CacheTTL,
+	type ContentBlock,
+	type ContentBlockDeltaEvent,
+	type ContentBlockStartEvent,
+	type ContentBlockStopEvent,
+	ConversationRole,
+	type ConverseStreamCommandInput,
+	type ConverseStreamCommandOutput,
+	type ConverseStreamMetadataEvent,
+	type DocumentType,
+	ImageFormat,
+	type BedrockMessage as Message,
+	resolveBedrockCredentials,
+	resolveBedrockProfileRegion,
+	sendBedrockConverseStream,
+	type SystemContentBlock,
+	type ToolChoice,
+	type ToolConfiguration,
+	type ToolResultContentBlock,
+	ToolResultStatus,
+} from "./bedrock-eventstream.ts";
+
+export { BedrockRuntimeServiceException };
 import {
 	getJsonSchemaToolParameters,
 	prefersJsonSchemaStrictSampling,
@@ -140,13 +138,9 @@ const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
 /** Matches the placeholder the Anthropic API path uses for redacted thinking. */
 const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
-// Erase ConverseStreamCommand's overloaded constructor/CommandImpl union types from scriptc analysis
-// while preserving the runtime class and BedrockRuntimeClient.send binding for the AWS SDK and test mocks.
-const ConverseStreamCommandCtor = ConverseStreamCommand as unknown as new (input: ConverseStreamCommandInput) => object;
-type SendConverseStream = (
-	command: object,
-	options: { abortSignal?: AbortSignal },
-) => Promise<ConverseStreamCommandOutput>;
+function buildDefaultBedrockEndpoint(region: string): string {
+	return `https://bedrock-runtime.${region}.amazonaws.com${region.startsWith("cn-") ? ".cn" : ""}`;
+}
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -180,14 +174,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 		// A profile explicitly configured through pi's auth flow (the `profile`
 		// option or scoped `AWS_PROFILE` on the stored credential's env) must win
-		// over ambient AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. The SDK default
-		// chain already prefers a configured profile over env keys, but only when
-		// `credentials` is not set on the client config. See #6957.
+		// over ambient AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. See #6957.
 		const optionsProfile = options.profile || options.env?.AWS_PROFILE;
-		const config: BedrockRuntimeClientConfig = {
-			profile: optionsProfile || getProviderEnvValue("AWS_PROFILE", options.env),
-			customUserAgent: bedrockUserAgent(options.identity),
-		};
+		const ambientProfile = getProviderEnvValue("AWS_PROFILE", options.env);
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
 		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
@@ -196,13 +185,6 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			configuredRegion,
 			hasAmbientConfiguredProfile,
 		);
-
-		// Only pin standard AWS Bedrock runtime endpoints when no region or ambient AWS_PROFILE is configured.
-		// This preserves custom endpoints (VPC/proxy) from #3402 without forcing built-in
-		// catalog defaults such as us-east-1 to override AWS_REGION/AWS_PROFILE.
-		if (useExplicitEndpoint) {
-			config.endpoint = model.baseUrl;
-		}
 
 		// Resolve bearer token for Bedrock API key auth.
 		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
@@ -213,77 +195,45 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			undefined;
 		const useBearerToken = bearerToken !== undefined && !skipAuth;
 
-		// in Node.js/Bun environment only
-		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-			// Region resolution: ARN-embedded > explicit option > env vars > SDK default chain.
-			// When the model ID is an inference profile ARN, extract the region from it.
-			// This avoids conflicts with AWS_REGION set for other services.
-			const arnRegionMatch = model.id.match(/^arn:aws(?:-[a-z0-9-]+)?:bedrock:([a-z0-9-]+):/);
-			if (arnRegionMatch) {
-				config.region = arnRegionMatch[1];
-			} else if (configuredRegion) {
-				config.region = configuredRegion;
-			} else if (endpointRegion && useExplicitEndpoint) {
-				config.region = endpointRegion;
-			} else if (!hasAmbientConfiguredProfile) {
-				config.region = "us-east-1";
-			}
-
-			// Support proxies that don't need authentication
-			if (skipAuth) {
-				config.credentials = {
-					accessKeyId: "dummy-access-key",
-					secretAccessKey: "dummy-secret-key",
-				};
-			}
-
-			const credentials = getConfiguredBedrockCredentials(options.env);
-			if (!skipAuth && credentials && !optionsProfile) {
-				config.credentials = credentials;
-			}
-
-			const proxyUrl = resolveHttpProxyUrlForTarget(model.baseUrl, options.env);
-			if (proxyUrl) {
-				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
-				// on `http2` module and has no support for http agent.
-				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler({
-					httpAgent: new HttpProxyAgent(proxyUrl),
-					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
-				});
-			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
-				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
-				config.requestHandler = new NodeHttpHandler();
-			}
+		const arnRegionMatch = model.id.match(/^arn:aws(?:-[a-z0-9-]+)?:bedrock:([a-z0-9-]+):/);
+		const activeProfile = optionsProfile || ambientProfile;
+		let region: string;
+		if (arnRegionMatch) {
+			region = arnRegionMatch[1];
+		} else if (configuredRegion) {
+			region = configuredRegion;
+		} else if (endpointRegion && useExplicitEndpoint) {
+			region = endpointRegion;
+		} else if (activeProfile) {
+			region = resolveBedrockProfileRegion(activeProfile, options.env) || "us-east-1";
 		} else {
-			// Non-Node environment (browser): fall back to us-east-1 since
-			// there's no config file resolution available.
-			config.region =
-				configuredRegion || (endpointRegion && useExplicitEndpoint ? endpointRegion : undefined) || "us-east-1";
+			region = "us-east-1";
 		}
 
-		if (useBearerToken) {
-			config.token = { token: bearerToken };
-			config.authSchemePreference = ["httpBearerAuth"];
-		}
+		// Only pin standard AWS Bedrock runtime endpoints when no region or ambient AWS_PROFILE is configured.
+		// This preserves custom endpoints (VPC/proxy) from #3402 without forcing built-in
+		// catalog defaults such as us-east-1 to override AWS_REGION/AWS_PROFILE.
+		const endpoint = useExplicitEndpoint && model.baseUrl ? model.baseUrl : buildDefaultBedrockEndpoint(region);
 
 		// Kept outside the try so the catch can still correlate a mid-stream failure:
 		// exceptions delivered as stream events carry no HTTP metadata of their own.
 		let responseRequestId: string | undefined;
 
 		try {
+			const credentials: BedrockCredentials | undefined = useBearerToken
+				? undefined
+				: resolveBedrockCredentials({
+						optionsProfile,
+						ambientProfile,
+						envCredentials: getConfiguredBedrockCredentials(options.env),
+						skipAuth,
+						env: options.env,
+					});
+			const proxyUrl = resolveHttpProxyUrlForTarget(endpoint, options.env);
 			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
-			const client = new BedrockRuntimeClient(config);
 			let observedRawResponse = false;
-			if (options.onResponse) {
-				addResponseHeadersMiddleware(client, options.onResponse, model, () => {
-					observedRawResponse = true;
-				});
-			}
-			const customHeaders = providerHeadersToRecord(options.headers);
-			if (customHeaders) {
-				addCustomHeadersMiddleware(client, customHeaders);
-			}
+			const customHeaders = providerHeadersToRecord(model.headers, options.headers);
+			const userAgent = formatUserAgent(options.identity);
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
@@ -297,7 +247,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					supportsStrictMode,
 					disablePreferredStrictTools,
 				);
-				let commandInput = {
+				let commandInput: ConverseStreamCommandInput = {
 					modelId: model.id,
 					messages: convertMessages(normalizedContext, model, cacheRetention, options.env),
 					system: buildSystemPrompt(initialSystemPrompt, model, cacheRetention, options.env),
@@ -311,12 +261,29 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				};
 				const nextCommandInput = await options?.onPayload?.(commandInput, model);
 				if (nextCommandInput !== undefined) {
-					commandInput = nextCommandInput as typeof commandInput;
+					commandInput = nextCommandInput as ConverseStreamCommandInput;
 				}
 				try {
-					const command = new ConverseStreamCommandCtor(commandInput);
-					response = await (client as unknown as { send: SendConverseStream }).send(command, {
-						abortSignal: options.signal,
+					response = await sendBedrockConverseStream({
+						endpoint,
+						region,
+						commandInput,
+						customHeaders,
+						userAgent,
+						bearerToken: useBearerToken ? bearerToken : undefined,
+						credentials,
+						proxyUrl,
+						fetch: options.fetch,
+						signal: options.signal,
+						onRawResponse: options.onResponse
+							? async (rawResponse) => {
+									observedRawResponse = true;
+									await options.onResponse?.(
+										{ status: rawResponse.status, headers: headersToRecord(rawResponse.headers) },
+										model,
+									);
+								}
+							: undefined,
 					});
 					break;
 				} catch (error) {
@@ -350,7 +317,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
 			}
 
-			for await (const item of response.stream!) {
+			for await (const item of response.stream) {
 				await options.onProviderStreamEvent?.(item, model);
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
@@ -510,86 +477,7 @@ function appendBedrockFailureDiagnostic(
 	appendAssistantMessageDiagnostic(output, { type: "bedrock_response_failure", timestamp: Date.now(), details });
 }
 
-/**
- * Header keys that must never be overwritten by caller-supplied headers.
- * `host` and `x-amz-*` participate in the SigV4 canonical request; `authorization`
- * is owned by SigV4 or the bearer-token path (config.token + authSchemePreference).
- * Compared case-insensitively (caller key is lower-cased before lookup).
- */
-const RESERVED_HEADER_EXACT = new Set(["authorization", "host"]);
-
-function isReservedHeader(key: string): boolean {
-	const lower = key.toLowerCase();
-	return lower.startsWith("x-amz-") || RESERVED_HEADER_EXACT.has(lower);
-}
-
-/**
- * The client identity as AWS SDK user agent pairs. The SDK appends them to its own `User-Agent` and escapes characters
- * that are not valid in a user agent token, so the detailed form is reduced to name and version.
- */
-function bedrockUserAgent(identity: ClientIdentity | undefined): string | [string, string?][] {
-	const mode = identity?.userAgent ?? "detailed";
-	if (typeof mode === "object") return mode.custom;
-	return mode === "short" ? [["pi"]] : [["pi", getClientVersion(identity)]];
-}
-
-/**
- * Attach caller-supplied headers to the outgoing Bedrock request via a Smithy
- * `build`-step middleware. The `build` step runs after request serialisation but
- * before SigV4 signing, so injected headers are covered by the signature. Reserved
- * SigV4 / auth headers (`x-amz-*`, `authorization`, `host`) are silently skipped;
- * all other caller headers override any existing same-named header on the request.
- */
-function addCustomHeadersMiddleware(client: BedrockRuntimeClient, headers: Record<string, string>): void {
-	const middleware: BuildMiddleware<object, MetadataBearer> = (next) => async (args) => {
-		const request = args.request;
-		if (request && typeof request === "object" && "headers" in request) {
-			const requestHeaders = (request as { headers: Record<string, string> }).headers;
-			for (const [key, value] of Object.entries(headers)) {
-				if (!isReservedHeader(key)) {
-					requestHeaders[key] = value;
-				}
-			}
-		}
-		return next(args);
-	};
-	client.middlewareStack.add(middleware, { step: "build", name: "pi-ai-custom-headers", priority: "low" });
-}
-
-function isSmithyHttpResponse(response: unknown): response is HttpResponse {
-	if (!response || typeof response !== "object") return false;
-	const candidate = response as Partial<HttpResponse>;
-	return typeof candidate.statusCode === "number" && !!candidate.headers && typeof candidate.headers === "object";
-}
-
-function toProviderResponse(response: unknown): ProviderResponse | undefined {
-	if (!isSmithyHttpResponse(response)) return undefined;
-	return { status: response.statusCode, headers: { ...response.headers } };
-}
-
-/**
- * Bedrock's modeled `$metadata` only preserves selected HTTP metadata (for example
- * requestId), so custom gateway headers are otherwise lost before callers see
- * `onResponse`. Capture the raw Smithy HTTP response at the deserialize step,
- * after the SDK receives the response but before the event stream is consumed.
- */
-function addResponseHeadersMiddleware(
-	client: BedrockRuntimeClient,
-	onResponse: NonNullable<BedrockOptions["onResponse"]>,
-	model: Model<"bedrock-converse-stream">,
-	onObserved: () => void,
-): void {
-	const middleware: DeserializeMiddleware<object, MetadataBearer> = (next) => async (args) => {
-		const result = await next(args);
-		const providerResponse = toProviderResponse(result.response);
-		if (providerResponse) {
-			onObserved();
-			await onResponse(providerResponse, model);
-		}
-		return result;
-	};
-	client.middlewareStack.add(middleware, { step: "deserialize", name: "pi-ai-response-headers" });
-}
+// Unused middleware helpers removed: custom headers, User-Agent, and raw response observation live in bedrock-eventstream.ts.
 
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -992,12 +880,12 @@ function normalizeToolCallId(id: string): string {
 	return sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
 }
 
-function createNonBlankTextBlock(text: string): ContentBlock.TextMember | undefined {
+function createNonBlankTextBlock(text: string): { text: string } | undefined {
 	const sanitized = sanitizeSurrogates(text);
 	return sanitized.trim().length === 0 ? undefined : { text: sanitized };
 }
 
-function createRequiredTextBlock(text: string): ContentBlock.TextMember {
+function createRequiredTextBlock(text: string): { text: string } {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
@@ -1274,7 +1162,7 @@ function getConfiguredBedrockRegion(options: BedrockOptions): string | undefined
 	);
 }
 
-function getConfiguredBedrockCredentials(env?: ProviderEnv): BedrockRuntimeClientConfig["credentials"] | undefined {
+function getConfiguredBedrockCredentials(env?: ProviderEnv): BedrockCredentials | undefined {
 	const accessKeyId = getProviderEnvValue("AWS_ACCESS_KEY_ID", env);
 	const secretAccessKey = getProviderEnvValue("AWS_SECRET_ACCESS_KEY", env);
 	if (!accessKeyId || !secretAccessKey) {

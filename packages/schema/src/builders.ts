@@ -224,10 +224,11 @@ export function obj<const P extends Properties>(
 	properties: P,
 	options: ObjectOptions = {},
 ): Schema<StaticObject<P>> {
+	const propMap: Properties = properties;
 	const props: Record<string, Schema> = {};
 	const required: string[] = [];
-	for (const name of Object.keys(properties)) {
-		const property = properties[name]!;
+	for (const name of Object.keys(propMap)) {
+		const property = propMap[name]!;
 		if (property instanceof Optional) props[name] = property.schema;
 		else {
 			props[name] = property;

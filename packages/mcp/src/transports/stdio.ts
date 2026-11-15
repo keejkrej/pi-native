@@ -14,7 +14,7 @@ const USE_PROCESS_GROUPS = process.platform !== "win32";
 const liveProcessGroups = new Set<number>();
 let exitHookInstalled = false;
 
-function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+function killProcessTree(child: ChildProcess, signal: string): void {
 	const pid = child.pid;
 	if (process.platform === "win32" && pid !== undefined) {
 		if (child.exitCode !== null) return;
@@ -114,13 +114,22 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 			// Not on "exit": children of the server can outlive it while still holding its pipes.
 			child.once("close", () => liveProcessGroups.delete(pid));
 		}
-		child.stdout?.on("data", (chunk: Buffer) => this.lines.readStdout(chunk));
-		child.stdout?.on("error", (error) => this.emitError(error));
-		child.stdin?.on("error", (error) => {
-			if (!this.closed) this.emitError(error);
-		});
-		child.stderr?.on("data", (chunk: Buffer) => this.lines.readStderr(chunk));
-		child.stderr?.on("error", (error) => this.emitError(error));
+		const childStdout = child.stdout;
+		const childStdin = child.stdin;
+		const childStderr = child.stderr;
+		if (childStdout) {
+			childStdout.on("data", (chunk: Buffer) => this.lines.readStdout(chunk));
+			childStdout.on("error", (error: Error) => this.emitError(error));
+		}
+		if (childStdin) {
+			childStdin.on("error", (error: Error) => {
+				if (!this.closed) this.emitError(error);
+			});
+		}
+		if (childStderr) {
+			childStderr.on("data", (chunk: Buffer) => this.lines.readStderr(chunk));
+			childStderr.on("error", (error: Error) => this.emitError(error));
+		}
 		child.on("close", () => {
 			this.child = undefined;
 			this.lines.end();
@@ -139,7 +148,7 @@ export class StdioTransport extends TransportEvents implements McpTransport {
 			child.once("spawn", onSpawn);
 			child.once("error", onError);
 		});
-		child.on("error", (error) => {
+		child.on("error", (error: Error) => {
 			if (!this.closed) this.emitError(error);
 		});
 	}

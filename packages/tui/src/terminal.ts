@@ -147,7 +147,7 @@ const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
  * dispatching a lone ESC as the Escape key. Legacy Alt+key input is ESC plus
  * another byte, so high-latency transports need a longer reassembly window.
  */
-export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+export function resolveEscapeTimeoutMs(env: Record<string, string | undefined> = process.env): number {
 	const configured = Number(env.PI_TUI_ESC_TIMEOUT);
 	if (Number.isFinite(configured) && configured > 0) {
 		return configured;
@@ -173,7 +173,9 @@ export class ProcessTerminal implements Terminal {
 	private keyboardProtocolNegotiationBuffer = "";
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
-	private stdinDataHandler?: (data: string) => void;
+	private stdinDataHandler?: (chunk: Uint8Array) => void;
+	private activeStdinListener?: (chunk: Uint8Array) => void;
+	private stdinListenerRegistered = false;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	/** Latest program status, kept across stop() so start() can report it again. */
 	private programStatus?: ProgramStatus;
@@ -278,9 +280,21 @@ export class ProcessTerminal implements Terminal {
 		});
 
 		// Handler that pipes stdin data through the buffer
-		this.stdinDataHandler = (data: string) => {
-			this.stdinBuffer!.process(data);
+		this.stdinDataHandler = (chunk: Uint8Array) => {
+			// Accept both raw Uint8Array and decoded utf8 strings in case runtime setEncoding converts chunks.
+			const text = typeof (chunk as unknown) === "string" ? (chunk as unknown as string) : Buffer.from(chunk).toString("utf8");
+			this.stdinBuffer!.process(text);
 		};
+	}
+
+	private attachStdinListener(listener: (chunk: Uint8Array) => void): void {
+		this.activeStdinListener = listener;
+		if (!this.stdinListenerRegistered) {
+			this.stdinListenerRegistered = true;
+			process.stdin.on("data", (chunk: Uint8Array) => {
+				this.activeStdinListener?.(chunk);
+			});
+		}
 	}
 
 	/**
@@ -301,7 +315,7 @@ export class ProcessTerminal implements Terminal {
 	 */
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
-		process.stdin.on("data", this.stdinDataHandler!);
+		this.attachStdinListener(this.stdinDataHandler!);
 		this.keyboardProtocolPushed = true;
 		this.pendingKeyboardProtocolDeviceAttributes += 1;
 		this.clearKeyboardProtocolNegotiationBuffer();
@@ -457,11 +471,10 @@ export class ProcessTerminal implements Terminal {
 		this.inputHandler = undefined;
 
 		let lastDataTime = Date.now();
-		const onData = () => {
+		const previousActiveListener = this.activeStdinListener;
+		this.attachStdinListener(() => {
 			lastDataTime = Date.now();
-		};
-
-		process.stdin.on("data", onData);
+		});
 		const endTime = Date.now() + maxMs;
 
 		try {
@@ -473,7 +486,7 @@ export class ProcessTerminal implements Terminal {
 				await new Promise((resolve) => setTimeout(resolve, Math.min(idleMs, timeLeft)));
 			}
 		} finally {
-			process.stdin.removeListener("data", onData);
+			this.activeStdinListener = previousActiveListener;
 			this.inputHandler = previousHandler;
 		}
 	}
@@ -511,10 +524,8 @@ export class ProcessTerminal implements Terminal {
 		}
 
 		// Remove event handlers
-		if (this.stdinDataHandler) {
-			process.stdin.removeListener("data", this.stdinDataHandler);
-			this.stdinDataHandler = undefined;
-		}
+		this.activeStdinListener = undefined;
+		this.stdinDataHandler = undefined;
 		this.inputHandler = undefined;
 		if (this.resizeHandler) {
 			process.stdout.removeListener("resize", this.resizeHandler);

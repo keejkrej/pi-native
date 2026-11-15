@@ -1,4 +1,4 @@
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import type { ResponseStreamEvent } from "../src/api/openai-responses-types.ts";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {

@@ -36,7 +36,7 @@ export class ScrollView extends Container {
 	private requestRenderCallback: (() => void) | undefined;
 	private transientScrollbarVisible = false;
 	private scrollbarActive = false;
-	private scrollbarHideTimer: NodeJS.Timeout | undefined;
+	private scrollbarHideTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(component: Component, options: ScrollViewOptions = {}) {
 		super();

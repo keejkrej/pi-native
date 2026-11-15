@@ -114,7 +114,7 @@ async function runManagedNpmCi(stageDir: string): Promise<void> {
  * Node without changing PATH, so the release's `node_modules/.bin` shim may otherwise
  * run an older system Node that cannot load the new release.
  */
-function getManagedReleaseVerifyEnv(): NodeJS.ProcessEnv {
+function getManagedReleaseVerifyEnv(): Record<string, string | undefined> {
 	const nodeDir = dirname(process.execPath);
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const currentPath = process.env[pathKey] ?? "";
@@ -752,10 +752,10 @@ async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
 			const child = spawnProcess(step.command, step.args, {
 				stdio: "inherit",
 			});
-			child.on("error", (error) => {
+			child.on("error", (error: Error) => {
 				reject(error);
 			});
-			child.on("close", (code, signal) => {
+			child.on("close", (code: number | null, signal: string | null) => {
 				if (code === 0) {
 					resolve();
 				} else if (signal) {

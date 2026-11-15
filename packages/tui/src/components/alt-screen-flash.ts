@@ -6,7 +6,7 @@ const DEFAULT_DURATION_MS = 1000;
 interface FlashEntry {
 	id: number;
 	message: string;
-	timer: NodeJS.Timeout;
+	timer: ReturnType<typeof setTimeout>;
 }
 
 /** Transient messages composited by the alternate-screen renderer. */

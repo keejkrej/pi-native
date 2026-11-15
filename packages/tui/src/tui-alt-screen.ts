@@ -223,7 +223,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private lastClick?: ClickTarget;
 	private selectionDragPointer?: { x: number; y: number };
 	private selectionAutoScrollDirection: -1 | 0 | 1 = 0;
-	private selectionAutoScrollTimer?: NodeJS.Timeout;
+	private selectionAutoScrollTimer?: ReturnType<typeof setTimeout>;
 	private selectionPressActive = false;
 	private scrollbarDrag?: ScrollbarDrag;
 	private scrollbarHover?: ScrollView;

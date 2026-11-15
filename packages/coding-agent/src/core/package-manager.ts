@@ -1,4 +1,4 @@
-import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
@@ -14,13 +14,13 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 
-function getEnv(): NodeJS.ProcessEnv {
+function getEnv(): Record<string, string | undefined> {
 	if (process.platform !== "linux" || Object.keys(process.env).length > 0) {
 		return process.env;
 	}
 	try {
 		const data = readFileSync("/proc/self/environ", "utf-8");
-		const env: NodeJS.ProcessEnv = {};
+		const env: Record<string, string | undefined> = {};
 		for (const entry of data.split("\0")) {
 			const idx = entry.indexOf("=");
 			if (idx > 0) {
@@ -2882,7 +2882,7 @@ export class DefaultPackageManager implements PackageManager {
 		command: string,
 		args: string[],
 		options?: { cwd?: string; env?: Record<string, string> },
-	): ChildProcessByStdio<null, Readable, Readable> {
+	): ChildProcess {
 		const baseEnv = getEnv();
 		const env = options?.env ? { ...baseEnv, ...options.env } : baseEnv;
 		return spawnProcess(command, args, {
@@ -2910,17 +2910,23 @@ export class DefaultPackageManager implements PackageManager {
 						}, options.timeoutMs)
 					: undefined;
 
-			child.stdout?.on("data", (data) => {
-				stdout += data.toString();
-			});
-			child.stderr?.on("data", (data) => {
-				stderr += data.toString();
-			});
-			child.once("error", (error) => {
+			const childStdout = child.stdout;
+			if (childStdout) {
+				childStdout.on("data", (data: Buffer) => {
+					stdout += data.toString();
+				});
+			}
+			const childStderr = child.stderr;
+			if (childStderr) {
+				childStderr.on("data", (data: Buffer) => {
+					stderr += data.toString();
+				});
+			}
+			child.once("error", (error: Error) => {
 				if (timeout) clearTimeout(timeout);
 				reject(error);
 			});
-			child.once("close", (code, signal) => {
+			child.once("close", (code: number | null, signal: string | null) => {
 				if (timeout) clearTimeout(timeout);
 				if (timedOut) {
 					reject(new Error(`${command} ${args.join(" ")} timed out after ${options?.timeoutMs}ms`));

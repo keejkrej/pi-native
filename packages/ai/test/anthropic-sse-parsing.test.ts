@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClientLike } from "../src/api/anthropic-http.ts";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
@@ -69,7 +69,7 @@ const minimalAnthropicEvents = [
 	},
 ];
 
-function createFakeAnthropicClient(response: Response): Anthropic {
+function createFakeAnthropicClient(response: Response): AnthropicClientLike {
 	return {
 		beta: {
 			messages: {
@@ -78,7 +78,7 @@ function createFakeAnthropicClient(response: Response): Anthropic {
 				}),
 			},
 		},
-	} as unknown as Anthropic;
+	} as unknown as AnthropicClientLike;
 }
 
 type ResponseContentBlock = { type: "thinking"; thinking: string; signature: string } | { type: "text"; text: string };
@@ -290,7 +290,7 @@ describe("Anthropic raw SSE parsing", () => {
 					},
 				},
 			},
-		} as unknown as Anthropic;
+		} as unknown as AnthropicClientLike;
 
 		await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
@@ -315,7 +315,7 @@ describe("Anthropic raw SSE parsing", () => {
 					},
 				},
 			},
-		} as unknown as Anthropic;
+		} as unknown as AnthropicClientLike;
 
 		await streamAnthropic(
 			getModel("openrouter", "anthropic/claude-haiku-4.5"),
@@ -337,7 +337,7 @@ describe("Anthropic raw SSE parsing", () => {
 					},
 				},
 			},
-		} as unknown as Anthropic;
+		} as unknown as AnthropicClientLike;
 
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),

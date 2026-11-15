@@ -313,21 +313,85 @@ export type UnhandledResponseStreamEventType =
 	| "response.web_search_call.in_progress"
 	| "response.web_search_call.searching";
 
+export type ResponseFunctionCallOutputItemList = Array<
+	ResponseInputText | ResponseInputImage | ResponseInputFile
+>;
+
 export type ResponseStreamEvent =
-	| { type: "response.created"; response: ResponseObjectPayload }
-	| { type: "response.output_item.added"; output_index: number; item: ResponseOutputItem }
-	| { type: "response.output_item.done"; output_index: number; item: ResponseOutputItem }
-	| { type: "response.reasoning_summary_text.delta"; output_index: number; delta: string }
-	| { type: "response.reasoning_summary_part.done"; output_index: number }
-	| { type: "response.reasoning_text.delta"; output_index: number; delta: string }
-	| { type: "response.output_text.delta"; output_index: number; delta: string }
-	| { type: "response.refusal.delta"; output_index: number; delta: string }
-	| { type: "response.function_call_arguments.delta"; output_index: number; delta: string }
-	| { type: "response.function_call_arguments.done"; output_index: number; arguments: string }
-	| { type: "response.custom_tool_call_input.delta"; output_index: number; delta: string }
-	| { type: "response.custom_tool_call_input.done"; output_index: number; input: string }
-	| { type: "response.completed"; response: ResponseObjectPayload }
-	| { type: "response.incomplete"; response: ResponseObjectPayload }
-	| { type: "response.failed"; response?: ResponseObjectPayload }
-	| { type: "error"; code?: string | null; message?: string }
-	| { type: UnhandledResponseStreamEventType };
+	| { type: "response.created"; sequence_number?: number; response: ResponseObjectPayload }
+	| { type: "response.output_item.added"; sequence_number?: number; output_index: number; item: ResponseOutputItem }
+	| { type: "response.output_item.done"; sequence_number?: number; output_index: number; item: ResponseOutputItem }
+	| {
+			type: "response.reasoning_summary_text.delta";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			summary_index?: number;
+			delta: string;
+	  }
+	| {
+			type: "response.reasoning_summary_part.done";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			summary_index?: number;
+			part?: { type?: string; text?: string };
+	  }
+	| {
+			type: "response.reasoning_text.delta";
+			sequence_number?: number;
+			output_index: number;
+			content_index?: number;
+			item_id?: string;
+			delta: string;
+	  }
+	| {
+			type: "response.output_text.delta";
+			sequence_number?: number;
+			output_index: number;
+			content_index?: number;
+			item_id?: string;
+			delta: string;
+	  }
+	| {
+			type: "response.refusal.delta";
+			sequence_number?: number;
+			output_index: number;
+			content_index?: number;
+			item_id?: string;
+			delta: string;
+	  }
+	| {
+			type: "response.function_call_arguments.delta";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			delta: string;
+	  }
+	| {
+			type: "response.function_call_arguments.done";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			name?: string;
+			arguments: string;
+	  }
+	| {
+			type: "response.custom_tool_call_input.delta";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			delta: string;
+	  }
+	| {
+			type: "response.custom_tool_call_input.done";
+			sequence_number?: number;
+			output_index: number;
+			item_id?: string;
+			input: string;
+	  }
+	| { type: "response.completed"; sequence_number?: number; response: ResponseObjectPayload }
+	| { type: "response.incomplete"; sequence_number?: number; response: ResponseObjectPayload }
+	| { type: "response.failed"; sequence_number?: number; response?: ResponseObjectPayload }
+	| { type: "error"; sequence_number?: number; code?: string | null; message?: string; param?: string | null }
+	| { type: UnhandledResponseStreamEventType; sequence_number?: number };

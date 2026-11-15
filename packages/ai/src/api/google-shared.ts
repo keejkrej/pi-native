@@ -9,7 +9,7 @@ import {
 	ThinkingLevel as GoogleSdkThinkingLevel,
 	type Part,
 	type ThinkingConfig,
-} from "@google/genai";
+} from "./google-wire-types.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,

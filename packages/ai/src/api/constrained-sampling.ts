@@ -1,4 +1,5 @@
 import type { Tool } from "../types.ts";
+import { stripSchemaMetaKeys } from "../utils/json-schema.ts";
 
 interface JsonSchemaObject {
 	[key: string]: unknown;
@@ -133,7 +134,7 @@ export function makeStrictJsonSchema(
 	schema: Tool["parameters"],
 	isUnsupportedKeyword?: UnsupportedStrictSchemaKeywordCheck,
 ): Record<string, unknown> {
-	const cloned: unknown = structuredClone(schema);
+	const cloned: unknown = stripSchemaMetaKeys(schema);
 	if (!isJsonSchemaObject(cloned)) {
 		throw new UnsupportedStrictJsonSchemaError("root schema must have type object");
 	}
@@ -151,7 +152,7 @@ export function prefersJsonSchemaStrictSampling(tool: Tool): boolean {
 }
 
 export function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"] {
-	return (strict === true ? makeStrictJsonSchema(tool.parameters) : tool.parameters) as Tool["parameters"];
+	return (strict === true ? makeStrictJsonSchema(tool.parameters) : stripSchemaMetaKeys(tool.parameters)) as Tool["parameters"];
 }
 
 export interface GrammarConstrainedSampling {

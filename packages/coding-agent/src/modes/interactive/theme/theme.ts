@@ -620,7 +620,7 @@ export function resolveThemeSetting(
  * whose colors are unknown here, so it is classified by index like Vim does: 0-6 and 8 (bright black, e.g.
  * Solarized Dark's background) are dark, 7 and 9-15 are light.
  */
-export function detectColorFgBgTheme(env: NodeJS.ProcessEnv = process.env): TerminalTheme | undefined {
+export function detectColorFgBgTheme(env: Record<string, string | undefined> = process.env): TerminalTheme | undefined {
 	const bg = env.COLORFGBG?.split(";").at(-1)?.trim();
 	if (!bg || !/^\d{1,2}$/.test(bg)) return undefined;
 	const index = Number(bg);
@@ -636,7 +636,7 @@ export function detectColorFgBgTheme(env: NodeJS.ProcessEnv = process.env): Term
 export function detectTerminalTheme(
 	colors: TerminalColors = {},
 	reportedScheme?: TerminalTheme,
-	env: NodeJS.ProcessEnv = process.env,
+	env: Record<string, string | undefined> = process.env,
 ): TerminalTheme {
 	const { background, foreground } = colors;
 	if (background) return terminalAppearance(background, foreground);
@@ -665,7 +665,7 @@ function setGlobalTheme(t: Theme): void {
 
 let currentThemeName: string | undefined;
 let themeWatcher: fs.FSWatcher | undefined;
-let themeReloadTimer: NodeJS.Timeout | undefined;
+let themeReloadTimer: ReturnType<typeof setTimeout> | undefined;
 let onThemeChangeCallback: (() => void) | undefined;
 const registeredThemes = new Map<string, Theme>();
 

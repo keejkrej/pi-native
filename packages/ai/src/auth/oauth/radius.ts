@@ -103,7 +103,7 @@ async function requestOAuthToken(
 		response = await fetch(new URL("/v1/oauth/token", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-			body,
+			body: body.toString(),
 			signal,
 		});
 	} catch (error) {
@@ -194,7 +194,7 @@ async function requestDeviceAuthorization(gateway: string, signal: AbortSignal):
 		response = await fetch(new URL("/v1/oauth/device", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-			body: new URLSearchParams({ client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE }),
+			body: new URLSearchParams({ client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE }).toString(),
 			signal,
 		});
 	} catch (error) {

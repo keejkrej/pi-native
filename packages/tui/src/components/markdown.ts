@@ -1,4 +1,12 @@
-import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens, type TokensList } from "marked";
+import {
+	getTokensLinks,
+	Marked,
+	type Token,
+	Tokenizer,
+	type TokenizerExtension,
+	type Tokens,
+	type TokensList,
+} from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
@@ -7,10 +15,47 @@ import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth,
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
-interface LatexToken extends Tokens.Generic {
-	type: "latex" | "latexBlock";
-	text: string;
-	pending?: boolean;
+function extractTokenText(token: Token): string | undefined {
+	switch (token.type) {
+		case "space":
+		case "br":
+		case "hr":
+		case "checkbox":
+		case "def":
+		case "list":
+		case "table":
+			return undefined;
+		case "heading":
+			return (token as Tokens.Heading).text;
+		case "paragraph":
+			return (token as Tokens.Paragraph).text;
+		case "text":
+			return (token as Tokens.Text).text;
+		case "code":
+			return (token as Tokens.Code).text;
+		case "blockquote":
+			return (token as Tokens.Blockquote).text;
+		case "list_item":
+			return (token as Tokens.ListItem).text;
+		case "html":
+			return (token as Tokens.HTML | Tokens.Tag).text;
+		case "image":
+			return (token as Tokens.Image).text;
+		case "escape":
+			return (token as Tokens.Escape).text;
+		case "codespan":
+			return (token as Tokens.Codespan).text;
+		case "strong":
+			return (token as Tokens.Strong).text;
+		case "em":
+			return (token as Tokens.Em).text;
+		case "del":
+			return (token as Tokens.Del).text;
+		case "link":
+			return (token as Tokens.Link).text;
+		default:
+			return typeof (token as Tokens.Generic).text === "string" ? (token as Tokens.Generic).text : undefined;
+	}
 }
 
 function isEscaped(source: string, index: number): boolean {
@@ -33,7 +78,7 @@ function looksLikePendingDollarMath(source: string): boolean {
 	return /\\[A-Za-z]+|[_^=+*/<>()[\]|±≤≥≠≈∈→⇒∞∫∑√-]/.test(source);
 }
 
-function tokenizeInlineLatex(source: string): LatexToken | undefined {
+function tokenizeInlineLatex(source: string): Tokens.Generic | undefined {
 	let opening = "";
 	let closing = "";
 	if (source.startsWith("$$")) {
@@ -98,7 +143,7 @@ function containsTableStart(source: string): boolean {
 	return false;
 }
 
-function tokenizeBlockLatex(source: string): LatexToken | undefined {
+function tokenizeBlockLatex(source: string): Tokens.Generic | undefined {
 	// Display math never spans a table. Without this check, an unclosed "$$" or "\[" pairs with a later
 	// opener or stays pending, swallowing the table. See https://github.com/earendil-works/pi/issues/11159.
 	const dollarMatch = /^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*?)\$\$[ \t]*(?:\n|$)/.exec(source);
@@ -148,26 +193,28 @@ const LATEX_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
 function trimPartialClosingFences(tokens: readonly Token[]): void {
 	const token = tokens[tokens.length - 1];
 	if (token?.type === "list") {
-		trimPartialClosingFences(token.items[token.items.length - 1]?.tokens ?? []);
+		const listToken = token as Tokens.List;
+		trimPartialClosingFences(listToken.items[listToken.items.length - 1]?.tokens ?? []);
 		return;
 	}
 	if (token?.type === "blockquote") {
-		trimPartialClosingFences(token.tokens ?? []);
+		trimPartialClosingFences((token as Tokens.Blockquote).tokens ?? []);
 		return;
 	}
 	if (token?.type !== "code") {
 		return;
 	}
 
+	const codeToken = token as Tokens.Code;
 	// Trim streamed partial closing fences so code blocks do not shrink/flicker
 	// when the final fence character arrives. See https://github.com/earendil-works/pi/issues/5825.
-	const marker = /^(`{3,}|~{3,})/.exec(token.raw)?.[1];
-	const lastLine = token.raw.split("\n").pop();
+	const marker = /^(`{3,}|~{3,})/.exec(codeToken.raw)?.[1];
+	const lastLine = codeToken.raw.split("\n").pop();
 	if (!marker || !lastLine || lastLine.length >= marker.length || lastLine !== marker[0]?.repeat(lastLine.length)) {
 		return;
 	}
 
-	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
+	codeToken.text = codeToken.text.slice(0, -lastLine.length).replace(/\n$/, "");
 }
 
 // An unclosed comment runs to the end of an HTML block, as in CommonMark, so streamed comments stay hidden.
@@ -186,9 +233,9 @@ function removeHtmlCommentBlocks(tokens: Token[]): void {
 	for (let i = tokens.length - 1; i >= 0; i--) {
 		const token = tokens[i];
 		if (token.type === "list") {
-			for (const item of token.items) removeHtmlCommentBlocks(item.tokens);
+			for (const item of (token as Tokens.List).items) removeHtmlCommentBlocks(item.tokens);
 		} else if (token.type === "blockquote") {
-			removeHtmlCommentBlocks(token.tokens ?? []);
+			removeHtmlCommentBlocks((token as Tokens.Blockquote).tokens ?? []);
 		} else if (token.type === "html" && stripHtmlComments(token.raw).trim() === "") {
 			tokens.splice(i, 1);
 			if (tokens[i]?.type === "space" && (i === 0 || tokens[i - 1]?.type === "space")) {
@@ -208,6 +255,7 @@ markdownParser.use({
 		url(src: string): Tokens.Link | undefined {
 			defaultTokenizer.lexer = this.lexer;
 			defaultTokenizer.options = this.options;
+			defaultTokenizer.rules = this.rules;
 			const token = defaultTokenizer.url(src);
 			if (!token) return undefined;
 			// Bare URLs stop at CJK punctuation; explicit links and angle autolinks
@@ -215,7 +263,7 @@ markdownParser.use({
 			const punctuationIndex = token.raw.search(cjkPunctuationRegex);
 			return punctuationIndex < 0 ? token : defaultTokenizer.url(token.raw.slice(0, punctuationIndex));
 		},
-		del(src: string): Tokens.Del | undefined {
+		del(src: string, _maskedSrc: string, _prevChar: string): Tokens.Del | undefined {
 			const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
 			if (!match) return undefined;
 			const text = match[2];
@@ -394,7 +442,7 @@ export class Markdown implements Component {
 
 		// A reference link resolves through a definition anywhere in the text, so blocks with the same source can render
 		// differently; such texts are rare in practice and render without reusing blocks.
-		const reuseBlocks = Object.keys(tokens.links).length === 0;
+		const reuseBlocks = Object.keys(getTokensLinks(tokens)).length === 0;
 		const previousBlocks = this.blocks;
 		const blocks = new Map<string, RenderedBlock>();
 		this.blocks = blocks;
@@ -572,7 +620,8 @@ export class Markdown implements Component {
 
 		switch (token.type) {
 			case "heading": {
-				const headingLevel = token.depth;
+				const headingToken = token as Tokens.Heading;
+				const headingLevel = headingToken.depth;
 				const headingPrefix = `${"#".repeat(headingLevel)} `;
 
 				// Build a heading-specific style context so inline tokens (codespan, bold, etc.)
@@ -590,7 +639,7 @@ export class Markdown implements Component {
 					stylePrefix: this.getStylePrefix(headingStyleFn),
 				};
 
-				const headingText = this.renderInlineTokens(token.tokens || [], headingStyleContext);
+				const headingText = this.renderInlineTokens(headingToken.tokens || [], headingStyleContext);
 				const styledHeading = headingLevel >= 3 ? headingStyleFn(headingPrefix) + headingText : headingText;
 				lines.push(styledHeading);
 				if (nextTokenType && nextTokenType !== "space") {
@@ -600,7 +649,7 @@ export class Markdown implements Component {
 			}
 
 			case "paragraph": {
-				const paragraphText = this.renderInlineTokens(token.tokens || [], styleContext);
+				const paragraphText = this.renderInlineTokens((token as Tokens.Paragraph).tokens || [], styleContext);
 				lines.push(paragraphText);
 				// Don't add spacing if next token is space or list
 				if (nextTokenType && nextTokenType !== "list" && nextTokenType !== "space") {
@@ -614,10 +663,11 @@ export class Markdown implements Component {
 				break;
 
 			case "latexBlock": {
-				const latexToken = token as LatexToken;
+				const latexToken = token as Tokens.Generic;
+				const latexText = typeof latexToken.text === "string" ? latexToken.text : "";
 				let rendered =
 					!latexToken.pending && this.options.renderLatex !== false
-						? renderLatex(latexToken.text, { display: true })
+						? renderLatex(latexText, { display: true })
 						: undefined;
 				// A 2D layout cannot be wrapped row by row; fall back to the raw source when it does not fit.
 				if (rendered === undefined || rendered.split("\n").some((line) => visibleWidth(line) > width)) {
@@ -633,13 +683,14 @@ export class Markdown implements Component {
 			}
 
 			case "code": {
+				const codeToken = token as Tokens.Code;
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
+				lines.push(this.theme.codeBlockBorder(`\`\`\`${codeToken.lang || ""}`));
 				if (this.theme.highlightCode) {
-					const key = `${token.lang ?? ""}\0${token.text}`;
+					const key = `${codeToken.lang ?? ""}\0${codeToken.text}`;
 					let highlighted = this.blockHighlightedCode?.get(key);
 					if (!highlighted) {
-						highlighted = this.theme.highlightCode(token.text, token.lang);
+						highlighted = this.theme.highlightCode(codeToken.text, codeToken.lang);
 						this.blockHighlightedCode?.set(key, highlighted);
 					}
 					for (const hlLine of highlighted) {
@@ -647,7 +698,7 @@ export class Markdown implements Component {
 					}
 				} else {
 					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
+					const codeLines = codeToken.text.split("\n");
 					for (const codeLine of codeLines) {
 						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
 					}
@@ -674,6 +725,7 @@ export class Markdown implements Component {
 			}
 
 			case "blockquote": {
+				const quoteTokens = (token as Tokens.Blockquote).tokens || [];
 				const quoteStyle = (text: string) => this.theme.quote(this.theme.italic(text));
 				const quoteStylePrefix = this.getStylePrefix(quoteStyle);
 				const applyQuoteStyle = (line: string): string => {
@@ -688,7 +740,6 @@ export class Markdown implements Component {
 				// nested content without one. Otherwise each extra level re-wraps every child line at
 				// width 1 and the output grows exponentially with nesting depth.
 				if (width < 3) {
-					const quoteTokens = token.tokens || [];
 					for (let i = 0; i < quoteTokens.length; i++) {
 						for (const line of this.renderToken(quoteTokens[i], width, quoteTokens[i + 1]?.type, styleContext)) {
 							lines.push(line);
@@ -707,7 +758,6 @@ export class Markdown implements Component {
 					applyText: (text: string) => text,
 					stylePrefix: quoteStylePrefix,
 				};
-				const quoteTokens = token.tokens || [];
 				const renderedQuoteLines: string[] = [];
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i];
@@ -749,9 +799,7 @@ export class Markdown implements Component {
 
 			case "html":
 				// Render HTML as plain text (escaped for terminal), without its comments
-				if ("raw" in token && typeof token.raw === "string") {
-					lines.push(this.applyDefaultStyle(stripHtmlComments(token.raw).trim()));
-				}
+				lines.push(this.applyDefaultStyle(stripHtmlComments(token.raw).trim()));
 				break;
 
 			case "space":
@@ -759,11 +807,13 @@ export class Markdown implements Component {
 				lines.push("");
 				break;
 
-			default:
+			default: {
 				// Handle any other token types as plain text
-				if ("text" in token && typeof token.text === "string") {
-					lines.push(token.text);
+				const plainText = extractTokenText(token);
+				if (plainText !== undefined) {
+					lines.push(plainText);
 				}
+			}
 		}
 
 		return lines;
@@ -783,72 +833,89 @@ export class Markdown implements Component {
 		let dropLeadingSpace = false;
 		for (let i = 0; i < tokens.length; i++) {
 			let token = tokens[i];
-			if (dropLeadingSpace && token.type === "text" && !token.tokens?.length && /^[ \t]/.test(token.text)) {
-				token = { ...token, text: token.text.replace(/^[ \t]+/, "") };
+			if (dropLeadingSpace && token.type === "text") {
+				const textToken = token as Tokens.Text;
+				if (!textToken.tokens?.length && /^[ \t]/.test(textToken.text)) {
+					token = { ...textToken, text: textToken.text.replace(/^[ \t]+/, "") };
+				}
 			}
 			dropLeadingSpace = false;
 			switch (token.type) {
 				case "latex": {
-					const latexToken = token as LatexToken;
+					const latexToken = token as Tokens.Generic;
+					const latexText = typeof latexToken.text === "string" ? latexToken.text : "";
 					const rendered =
 						!latexToken.pending && this.options.renderLatex !== false
-							? (renderLatex(latexToken.text) ?? latexToken.raw)
+							? (renderLatex(latexText) ?? latexToken.raw)
 							: latexToken.raw;
 					result += applyTextWithNewlines(rendered);
 					break;
 				}
 
-				case "escape":
-					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
+				case "escape": {
+					const escToken = token as Tokens.Escape;
+					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? escToken.raw : escToken.text);
 					break;
+				}
 
-				case "text":
+				case "text": {
+					const textToken = token as Tokens.Text;
 					// Text tokens in list items can have nested tokens for inline formatting
-					if (token.tokens && token.tokens.length > 0) {
-						result += this.renderInlineTokens(token.tokens, resolvedStyleContext);
+					if (textToken.tokens && textToken.tokens.length > 0) {
+						result += this.renderInlineTokens(textToken.tokens, resolvedStyleContext);
 					} else {
-						result += applyTextWithNewlines(token.text);
+						result += applyTextWithNewlines(textToken.text);
 					}
 					break;
+				}
 
 				case "paragraph":
 					// Paragraph tokens contain nested inline tokens
-					result += this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					result += this.renderInlineTokens((token as Tokens.Paragraph).tokens || [], resolvedStyleContext);
 					break;
 
 				case "strong": {
-					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const boldContent = this.renderInlineTokens(
+						(token as Tokens.Strong).tokens || [],
+						resolvedStyleContext,
+					);
 					result += this.theme.bold(boldContent) + stylePrefix;
 					break;
 				}
 
 				case "em": {
-					const italicContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const italicContent = this.renderInlineTokens(
+						(token as Tokens.Em).tokens || [],
+						resolvedStyleContext,
+					);
 					result += this.theme.italic(italicContent) + stylePrefix;
 					break;
 				}
 
 				case "codespan":
-					result += this.theme.code(token.text) + stylePrefix;
+					result += this.theme.code((token as Tokens.Codespan).text) + stylePrefix;
 					break;
 
 				case "link": {
-					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const linkToken = token as Tokens.Link;
+					const linkText = this.renderInlineTokens(linkToken.tokens || [], resolvedStyleContext);
 					const styledLink = this.theme.link(this.theme.underline(linkText));
 					if (getCapabilities().hyperlinks) {
 						// OSC 8: render as a clickable hyperlink. The URL is not printed inline,
 						// so we always show only the link text regardless of whether it matches href.
-						result += hyperlink(styledLink, token.href) + stylePrefix;
+						result += hyperlink(styledLink, linkToken.href) + stylePrefix;
 					} else {
 						// Fallback: print URL in parentheses when text differs from href.
 						// Compare raw token.text (not styled) against href for the equality check.
 						// For mailto: links strip the prefix (autolinked emails use text="foo@bar.com"
 						// but href="mailto:foo@bar.com").
-						const hrefForComparison = token.href.startsWith("mailto:") ? token.href.slice(7) : token.href;
-						if (token.text === token.href || token.text === hrefForComparison) {
+						const hrefForComparison = linkToken.href.startsWith("mailto:")
+							? linkToken.href.slice(7)
+							: linkToken.href;
+						if (linkToken.text === linkToken.href || linkToken.text === hrefForComparison) {
 							result += styledLink + stylePrefix;
 						} else {
-							result += styledLink + this.theme.linkUrl(` (${token.href})`) + stylePrefix;
+							result += styledLink + this.theme.linkUrl(` (${linkToken.href})`) + stylePrefix;
 						}
 					}
 					break;
@@ -859,7 +926,7 @@ export class Markdown implements Component {
 					break;
 
 				case "del": {
-					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const delContent = this.renderInlineTokens((token as Tokens.Del).tokens || [], resolvedStyleContext);
 					result += this.theme.strikethrough(delContent) + stylePrefix;
 					break;
 				}
@@ -873,11 +940,13 @@ export class Markdown implements Component {
 					}
 					break;
 
-				default:
+				default: {
 					// Handle any other inline token types as plain text
-					if ("text" in token && typeof token.text === "string") {
-						result += applyTextWithNewlines(token.text);
+					const plainText = extractTokenText(token);
+					if (plainText !== undefined) {
+						result += applyTextWithNewlines(plainText);
 					}
+				}
 			}
 		}
 

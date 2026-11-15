@@ -13,7 +13,7 @@ const MAX_OSC52_ENCODED_LENGTH = 100_000;
  * covers remote clients that leave no SSH markers, such as multiplexer attaches (#10114, #10835)
  * or IDE daemons (#10826).
  */
-function isRemoteSession(env: NodeJS.ProcessEnv): boolean {
+function isRemoteSession(env: Record<string, string | undefined>): boolean {
 	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.MOSH_CONNECTION || env.PI_CLIPBOARD_OSC52 === "1");
 }
 

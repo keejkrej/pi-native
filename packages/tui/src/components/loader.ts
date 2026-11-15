@@ -18,7 +18,7 @@ export class Loader extends Text {
 	private frames = [...DEFAULT_FRAMES];
 	private intervalMs = DEFAULT_INTERVAL_MS;
 	private currentFrame = 0;
-	private intervalId: NodeJS.Timeout | null = null;
+	private intervalId: ReturnType<typeof setInterval> | null = null;
 	private ui: TUI | null = null;
 	private renderIndicatorVerbatim = false;
 	private spinnerColorFn: (str: string) => string;

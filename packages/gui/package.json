@@ -1,0 +1,53 @@
+{
+	"name": "scriptc-ui",
+	"version": "0.1.0",
+	"description": "Cross-platform native 2D desktop GUI toolkit in TypeScript for scriptc",
+	"private": true,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"scriptc": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./native": {
+			"scriptc": "./src/native.ts",
+			"types": "./dist/native.d.ts",
+			"import": "./dist/native.js"
+		}
+	},
+	"scripts": {
+		"clean": "node ../../scripts/package-files.mjs clean dist",
+		"build": "tsc -p tsconfig.build.json",
+		"build:native:darwin": "bash native/darwin/build.sh",
+		"build:native:linux": "bash native/linux/build.sh",
+		"build:native:win32": "node native/win32/build.mjs",
+		"test": "node --test --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts"
+	},
+	"files": [
+		"dist/**/*",
+		"ffi/**/*",
+		"native/include/**/*",
+		"native/darwin/src/**/*",
+		"native/darwin/build.sh",
+		"native/darwin/build/**/*",
+		"native/linux/src/**/*",
+		"native/linux/build.sh",
+		"native/win32/src/**/*",
+		"native/win32/build.mjs",
+		"README.md"
+	],
+	"keywords": [
+		"gui",
+		"native",
+		"desktop",
+		"scriptc",
+		"typescript"
+	],
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

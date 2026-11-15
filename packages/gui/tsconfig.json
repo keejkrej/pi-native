@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"paths": {
+			"scriptc-ui": ["./src/index.ts"],
+			"scriptc-ui/native": ["./src/native.ts"]
+		}
+	},
+	"include": ["src/**/*", "test/**/*", "examples/**/*"]
+}

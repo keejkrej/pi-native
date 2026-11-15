@@ -1,4 +1,5 @@
 import { eastAsianWidth } from "get-east-asian-width";
+import { isNativeDarwinAvailable, nativeWordSegment } from "../../pi-native-ffi/src/index.ts";
 
 export interface WordSegmenter {
 	segment(input: string): Iterable<Intl.SegmentData>;
@@ -20,9 +21,23 @@ function pushGapGraphemes(result: Intl.SegmentData[], input: string, start: numb
 	}
 }
 
-// Engine-free word segmenter avoids ICU (scr_intl.c), which is absent on macos-arm64.
 const wordSegmenter: WordSegmenter = {
 	segment(input: string): Iterable<Intl.SegmentData> {
+		if (isNativeDarwinAvailable()) {
+			const nativeSegments = nativeWordSegment(input);
+			if (nativeSegments !== null) {
+				const nativeResult: Intl.SegmentData[] = [];
+				for (const seg of nativeSegments) {
+					nativeResult.push({
+						segment: seg.segment,
+						index: seg.index,
+						input,
+						isWordLike: seg.isWordLike,
+					});
+				}
+				return nativeResult;
+			}
+		}
 		const result: Intl.SegmentData[] = [];
 		let lastIndex = 0;
 		wordSegmentPattern.lastIndex = 0;

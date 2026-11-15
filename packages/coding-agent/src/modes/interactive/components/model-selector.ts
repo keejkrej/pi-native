@@ -41,15 +41,23 @@ const MAX_VISIBLE = 10;
  * Component that renders a model selector with search
  */
 export class ModelSelectorComponent extends Container implements Focusable {
-	readonly capturesViewportInput: boolean = true;
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -209,7 +217,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					this.refreshStatusSuccess = true;
 				}
 			}
-			const selectedModel = this.filteredModels[this.selectedIndex]?.model;
+			const selectedModel =
+				this.selectedIndex >= 0 && this.selectedIndex < this.filteredModels.length
+					? this.filteredModels[this.selectedIndex]!.model
+					: undefined;
 			this.loadModelsFromSnapshot();
 			// The user may have moved while the refresh was in flight, and the refresh can shift rows.
 			this.filterModels(this.searchInput.getValue(), selectedModel);
@@ -358,9 +369,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		} else if (this.filteredModels.length === 0) {
 			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
 		} else {
-			const selected = this.filteredModels[this.selectedIndex];
-			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			const selected =
+				this.selectedIndex >= 0 && this.selectedIndex < this.filteredModels.length
+					? this.filteredModels[this.selectedIndex]
+					: undefined;
+			if (selected) {
+				this.listContainer.addChild(new Spacer(1));
+				this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			}
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));
@@ -370,7 +386,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		const pageIndex = getSelectPageIndex(kb, keyData, this.selectedIndex, this.filteredModels.length, MAX_VISIBLE);
 		if (kb.matches(keyData, "tui.input.tab")) {

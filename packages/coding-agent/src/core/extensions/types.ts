@@ -47,7 +47,9 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	Component,
+	ComponentLike,
 	EditorComponent,
+	EditorComponentLike,
 	EditorTheme,
 	Keybinding,
 	KeyId,
@@ -142,7 +144,11 @@ export interface WorkingIndicatorOptions {
 
 /** Wrap the current autocomplete provider with additional behavior. */
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
-export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
+export type EditorFactory = (
+	tui: TUI,
+	theme: EditorTheme,
+	keybindings: KeybindingsManager,
+) => EditorComponent | EditorComponentLike;
 
 /**
  * Formats the host's configured keybindings for display.
@@ -203,7 +209,7 @@ export interface ExtensionUIContext {
 	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
 	setWidget(
 		key: string,
-		content: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
+		content: ((tui: TUI, theme: Theme) => (Component | ComponentLike) & { dispose?(): void }) | undefined,
 		options?: ExtensionWidgetOptions,
 	): void;
 
@@ -215,12 +221,18 @@ export interface ExtensionUIContext {
 	 */
 	setFooter(
 		factory:
-			| ((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
+			| ((
+					tui: TUI,
+					theme: Theme,
+					footerData: ReadonlyFooterDataProvider,
+			  ) => (Component | ComponentLike) & { dispose?(): void })
 			| undefined,
 	): void;
 
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
-	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+	setHeader(
+		factory: ((tui: TUI, theme: Theme) => (Component | ComponentLike) & { dispose?(): void }) | undefined,
+	): void;
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
@@ -232,7 +244,7 @@ export interface ExtensionUIContext {
 			theme: Theme,
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
-		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
+		) => ((Component | ComponentLike) & { dispose?(): void }) | Promise<(Component | ComponentLike) & { dispose?(): void }>,
 		options?: {
 			overlay?: boolean;
 			/** Overlay positioning/sizing options. Can be static or a function for dynamic updates. */
@@ -677,7 +689,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
-	renderCall?: (args: Static<TParams>, theme: Theme, context: ToolRenderContext<TState, Static<TParams>>) => Component;
+	renderCall?: (
+		args: Static<TParams>,
+		theme: Theme,
+		context: ToolRenderContext<TState, Static<TParams>>,
+	) => Component | ComponentLike;
 
 	/** Custom rendering for tool result display */
 	renderResult?: (
@@ -685,7 +701,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		options: ToolRenderResultOptions,
 		theme: Theme,
 		context: ToolRenderContext<TState, Static<TParams>>,
-	) => Component;
+	) => Component | ComponentLike;
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -1600,13 +1616,13 @@ export type MessageRenderer<T = unknown> = (
 	message: CustomMessage<T>,
 	options: MessageRenderOptions,
 	theme: Theme,
-) => Component | undefined;
+) => Component | ComponentLike | undefined;
 
 export type EntryRenderer<T = unknown> = (
 	entry: CustomEntry<T>,
 	options: EntryRenderOptions,
 	theme: Theme,
-) => Component | undefined;
+) => Component | ComponentLike | undefined;
 
 // ============================================================================
 // Command Registration

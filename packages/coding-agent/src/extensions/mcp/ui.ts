@@ -4,7 +4,8 @@
  */
 
 import {
-	type Component,
+	Component,
+	type ComponentLike,
 	Container,
 	type Focusable,
 	Input,
@@ -70,9 +71,9 @@ function frame(theme: Theme, title: string, body: Component[], footer?: string):
 
 const MAX_VISIBLE_ITEMS = 12;
 
-type InputHandler = Pick<Component, "handleInput" | "capturesViewportInput">;
+type InputHandler = Pick<ComponentLike, "handleInput" | "capturesViewportInput">;
 
-export class McpManagerView implements McpUi, Component, Focusable {
+export class McpManagerView extends Component implements McpUi, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
@@ -82,22 +83,31 @@ export class McpManagerView implements McpUi, Component, Focusable {
 	private _focused = false;
 
 	constructor(tui: TUI, theme: Theme, keybindings: KeybindingsManager) {
+		super();
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
 		this.content = frame(theme, "MCP servers", [new Text(theme.fg("muted", "Loading…"), 1, 1)]);
 	}
 
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get focused(): boolean {
 		return this._focused;
 	}
 
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		if (this.inputTarget) this.inputTarget.focused = value;
 	}
 
-	get capturesViewportInput(): boolean {
+	override get capturesViewportInput(): boolean {
 		return this.inputHandler?.capturesViewportInput === true;
 	}
 
@@ -162,7 +172,7 @@ export class McpManagerView implements McpUi, Component, Focusable {
 	}
 
 	status(title: string, message: string, onCancel?: () => void): void {
-		const body = [new Spacer(1), new Text(this.theme.fg("muted", message), 1, 0)];
+		const body: Component[] = [new Spacer(1), new Text(this.theme.fg("muted", message), 1, 0)];
 		if (!onCancel) {
 			this.setContent(frame(this.theme, title, body));
 			return;
@@ -233,18 +243,18 @@ export class McpManagerView implements McpUi, Component, Focusable {
 		});
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		this.inputHandler?.handleInput?.(data);
 		this.tui.requestRender();
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		return this.content
 			.render(width)
 			.map((line) => (visibleWidth(line) > width ? truncateToWidth(line, width, "") : line));
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.content.invalidate();
 	}
 }

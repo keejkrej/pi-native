@@ -63,7 +63,7 @@ export type McpExposure = "codemode" | "deferred" | "direct" | "hidden";
 const MCP_EXPOSURES: readonly string[] = ["codemode", "deferred", "direct", "hidden"] satisfies McpExposure[];
 
 /** Older exposure names, accepted in configs and replaced by their current name when validated. */
-const MCP_EXPOSURE_ALIASES: Readonly<Record<string, McpExposure>> = { "codemode-deferred": "codemode" };
+const MCP_EXPOSURE_ALIASES: Readonly<Record<string, McpExposure | undefined>> = { "codemode-deferred": "codemode" };
 
 /**
  * pi's fields of every server entry, beside the shared `mcpServers` fields of pi-mcp. `description`

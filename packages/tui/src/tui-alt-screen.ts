@@ -33,12 +33,14 @@ import {
 } from "./terminal-image.ts";
 import {
 	type Component,
-	Container,
+	type ComponentLike,
 	CURSOR_MARKER,
 	compositeTuiLine,
 	dispatchMouseEvent,
+	FunctionalComponent,
 	type OverlayHandle,
 	retargetMouseEvent,
+	toComponent,
 	TuiBase,
 	type TuiMouseButton,
 	type TuiMouseDispatchResult,
@@ -201,8 +203,14 @@ export interface TuiAltScreenOptions {
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
 export class TuiAltScreen extends TuiBase implements ViewportTUI {
-	readonly mode = "fullscreen" as const;
+	override get mode(): "fullscreen" {
+		return "fullscreen";
+	}
 	readonly [VIEWPORT_TUI] = true as const;
+
+	override isViewport(): boolean {
+		return true;
+	}
 	private previousScreen: string[] = [];
 	private lastDocument: string[] = [];
 	private previousScreenWidth = 0;
@@ -260,13 +268,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		options: TuiAltScreenOptions = {},
 	) {
 		super(terminal, showHardwareCursor, logDirectory);
-		this.implicitDocument = {
+		this.implicitDocument = new FunctionalComponent({
 			render: (width) => super.render(width),
 			handleMouse: (event) => super.handleMouse(event),
 			invalidate: () => {
 				for (const child of this.children) child.invalidate();
 			},
-		};
+		});
 		this.implicitScrollView = new ScrollView(this.implicitDocument, { follow: "end", primary: true });
 		this.flashes = new AltScreenFlashContainer(() => this.requestRender());
 		this.wheelScroll = new WheelScrollAccelerator(options.wheelScrollLines ?? 1);
@@ -325,9 +333,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return [...this.previousScreen];
 	}
 
-	setLayoutRoot(component: Component | undefined): void {
-		if (this.layoutRoot === component) return;
-		this.layoutRoot = component;
+	override setLayoutRoot(component: Component | ComponentLike | undefined): void {
+		const resolved = component === undefined ? undefined : toComponent(component);
+		if (this.layoutRoot === resolved) return;
+		this.layoutRoot = resolved;
 		this.currentLayout = undefined;
 		this.requestRender();
 	}
@@ -567,8 +576,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private updateSearchQuery(query: string): void {
 		const search = this.activeSearch;
 		if (!search || query === search.query) return;
-		const selected = search.matches[search.selectedIndex];
-		search.anchorRow = selected?.segments[0]?.row ?? this.getPrimaryScrollView().scrollTop;
+		const selected =
+			search.selectedIndex >= 0 && search.selectedIndex < search.matches.length
+				? search.matches[search.selectedIndex]
+				: undefined;
+		search.anchorRow =
+			selected && selected.segments.length > 0 ? selected.segments[0]!.row : this.getPrimaryScrollView().scrollTop;
 		search.query = query;
 		search.selectionMode = "query";
 		search.component.setResult(-1, 0);
@@ -637,7 +650,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				let high = matches.length;
 				while (low < high) {
 					const middle = low + Math.floor((high - low) / 2);
-					if ((matches[middle]!.segments[0]?.row ?? 0) < search.anchorRow) low = middle + 1;
+					const midMatch = matches[middle]!;
+					if ((midMatch.segments.length > 0 ? midMatch.segments[0]!.row : 0) < search.anchorRow) low = middle + 1;
 					else high = middle;
 				}
 				selectedIndex = low < matches.length ? low : 0;
@@ -659,9 +673,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		search.component.setResult(selectedIndex, matches.length);
 		if (!shouldRevealSelection) return false;
 
-		const selected = matches[selectedIndex];
-		const firstSegment = selected?.segments[0];
-		const lastSegment = selected?.segments[selected.segments.length - 1];
+		const selected = selectedIndex >= 0 && selectedIndex < matches.length ? matches[selectedIndex] : undefined;
+		const firstSegment = selected && selected.segments.length > 0 ? selected.segments[0] : undefined;
+		const lastSegment =
+			selected && selected.segments.length > 0 ? selected.segments[selected.segments.length - 1] : undefined;
 		if (!box || !firstSegment || !lastSegment || scrollView.viewportHeight <= 0) return false;
 		const before = scrollView.scrollTop;
 		const visibleBottom = before + scrollView.viewportHeight - 1;
@@ -850,7 +865,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const boxes = getLayoutBoxesAt(this.currentLayout, event.screenX, event.screenY);
 		for (const box of boxes) {
 			if (visited.has(box.component)) continue;
-			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
+			if (box.component.getLayoutNode() && box.component.isLayoutContainerDefaultMouse()) continue;
 			visited.add(box.component);
 			const result = dispatchMouseEvent(box.component, {
 				...event,
@@ -1544,13 +1559,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		while (low < high) {
 			const middle = low + Math.floor((high - low) / 2);
 			const match = search.matches[middle]!;
-			const lastRow = match.segments[match.segments.length - 1]?.row ?? -1;
+			const lastRow = match.segments.length > 0 ? match.segments[match.segments.length - 1]!.row : -1;
 			if (lastRow < minContentRow) low = middle + 1;
 			else high = middle;
 		}
 		for (let matchIndex = low; matchIndex < search.matches.length; matchIndex++) {
 			const match = search.matches[matchIndex]!;
-			if ((match.segments[0]?.row ?? 0) > maxContentRow) break;
+			const firstRow = match.segments.length > 0 ? match.segments[0]!.row : 0;
+			if (firstRow > maxContentRow) break;
 			for (const segment of match.segments) {
 				const row = box.rect.y + segment.row - scrollView.scrollTop;
 				if (row < minRow || row >= maxRow) continue;

@@ -1710,7 +1710,7 @@ export class SessionManager {
 
 		if (this.persist) {
 			// Build label entries
-			const lastEntryId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
+			const lastEntryId = pathWithoutLabels.length > 0 ? pathWithoutLabels[pathWithoutLabels.length - 1]!.id : null;
 			let parentId = lastEntryId;
 			const labelEntries: LabelEntry[] = [];
 			for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
@@ -1746,7 +1746,7 @@ export class SessionManager {
 
 		// In-memory mode: replace current session with the path + labels
 		const labelEntries: LabelEntry[] = [];
-		let parentId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
+		let parentId = pathWithoutLabels.length > 0 ? pathWithoutLabels[pathWithoutLabels.length - 1]!.id : null;
 		for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
 			const labelEntry: LabelEntry = {
 				type: "label",
@@ -1793,7 +1793,7 @@ export class SessionManager {
 				// The bounded scan is only a discovery optimization. A full load remains
 				// authoritative for legacy files with very large headers or prefixes.
 				preloadedFileEntries = loadEntriesFromFile(resolvedPath);
-				const firstEntry = preloadedFileEntries[0];
+				const firstEntry = preloadedFileEntries.length > 0 ? preloadedFileEntries[0] : undefined;
 				header = firstEntry?.type === "session" ? firstEntry : null;
 			}
 		}

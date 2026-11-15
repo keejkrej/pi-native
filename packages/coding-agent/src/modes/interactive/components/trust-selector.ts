@@ -58,7 +58,7 @@ export class TrustSelectorComponent extends Container {
 			new Text(
 				theme.fg(
 					"muted",
-					`Saved decision: ${formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision)}`,
+					`Saved decision: ${formatDecision(this.trustOptions.length > 0 ? this.trustOptions[0]!.savedPath : undefined, options.savedDecision)}`,
 				),
 				1,
 				0,
@@ -114,7 +114,11 @@ export class TrustSelectorComponent extends Container {
 		}
 	}
 
-	handleInput(keyData: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
 			this.selectedIndex = Math.max(0, this.selectedIndex - 1);

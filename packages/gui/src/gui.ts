@@ -475,7 +475,7 @@ export class GuiApp {
 	private topmostModalOverlay(visibleList: readonly OverlayEntry[]): OverlayEntry | undefined {
 		for (let i = visibleList.length - 1; i >= 0; i--) {
 			const entry = visibleList[i];
-			if (entry?.options.modal) {
+			if (entry !== undefined && entry.options.modal) {
 				return entry;
 			}
 		}

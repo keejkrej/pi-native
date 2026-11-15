@@ -20,6 +20,7 @@ import {
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
+	ComponentLike,
 	EditorComponent,
 	Keybinding,
 	KeyId,
@@ -32,9 +33,10 @@ import type {
 import * as TuiLayouts from "@earendil-works/pi-tui";
 import {
 	CombinedAutocompleteProvider,
-	type Component,
+	Component,
 	Container,
 	type DefaultTextStyle,
+	FunctionalEditorComponent,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -45,6 +47,8 @@ import {
 	setKeybindings,
 	type Terminal,
 	Text,
+	toComponent,
+	toEditorComponent,
 	TruncatedText,
 	type TUI,
 	TuiAltScreen,
@@ -242,34 +246,15 @@ function truncatedMarker(content = ""): TruncationResult {
 	};
 }
 
-/** Interface for components that can be expanded/collapsed */
-interface Expandable {
-	setExpanded(expanded: boolean): void;
+function isEmbeddedStatus(editor: EditorComponent): editor is CustomEditor {
+	return editor instanceof CustomEditor && editor.embedWorkingStatus === true;
 }
 
-interface ActiveEditor extends EditorComponent {
-	getCursor?(): { line: number; col: number };
+function isExpandable(obj: unknown): obj is Component {
+	return obj instanceof Component && obj.isExpandableComponent();
 }
 
-interface WorkingStatusEditor extends EditorComponent {
-	readonly embedWorkingStatus: boolean;
-	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
-}
-
-function isEmbeddedStatus(editor: EditorComponent): editor is WorkingStatusEditor {
-	return (
-		"embedWorkingStatus" in editor &&
-		editor.embedWorkingStatus === true &&
-		"setWorkingStatusIndicator" in editor &&
-		typeof editor.setWorkingStatusIndicator === "function"
-	);
-}
-
-function isExpandable(obj: unknown): obj is Expandable {
-	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
-}
-
-class ExpandableText extends ThemedText implements Expandable {
+class ExpandableText extends ThemedText {
 	private readonly state: { expanded: boolean };
 
 	constructor(
@@ -284,9 +269,21 @@ class ExpandableText extends ThemedText implements Expandable {
 		this.state = state;
 	}
 
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		this.state.expanded = expanded;
 		this.invalidate();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
 	}
 }
 
@@ -294,10 +291,26 @@ class ExpandableText extends ThemedText implements Expandable {
 class BuiltInHeader extends ExpandableText {
 	onLogoClick: ((column: number, row: number) => void) | undefined;
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+	override isExpandableComponent(): boolean {
+		return super.isExpandableComponent();
+	}
+
+	override setExpanded(expanded: boolean): void {
+		super.setExpanded(expanded);
+	}
+
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "click" || event.y > 1 || event.x < 1 || event.x > 4 || !this.onLogoClick) return undefined;
 		this.onLogoClick(event.screenX - event.x + 1, event.screenY - event.y);
 		return { handled: true };
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
 	}
 }
 
@@ -506,7 +519,7 @@ export class InteractiveMode {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
-	private editor: ActiveEditor;
+	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
@@ -683,7 +696,7 @@ export class InteractiveMode {
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
-		this.ui = createInteractiveTuiReference(() => this.renderer);
+		this.ui = createInteractiveTuiReference((): TUI => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
@@ -953,12 +966,12 @@ export class InteractiveMode {
 	}
 
 	private stopInteractiveTui(fullscreenExitOutput: FullscreenExitOutput): void {
-		if (this.renderer.mode === "fullscreen" && fullscreenExitOutput === "transcript") {
+		if (this.ui.mode === "fullscreen" && fullscreenExitOutput === "transcript") {
 			while (this.renderer.hasOverlayEntries) this.renderer.hideOverlay();
 			this.switchTuiMode("regular", false, false);
-			this.renderer.renderNow();
+			this.ui.renderNow();
 		}
-		this.ui.stop({ preserveScreen: this.renderer.mode === "fullscreen" });
+		this.ui.stop({ preserveScreen: this.ui.mode === "fullscreen" });
 	}
 
 	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true): boolean {
@@ -991,7 +1004,8 @@ export class InteractiveMode {
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
-		nextUi.onDebug = onDebug;
+		const nextRenderer: TUI = nextUi;
+		nextRenderer.onDebug = onDebug;
 		if (nextUi instanceof TuiMainScreen && this.mainScreenRenderState) {
 			nextUi.restoreRenderState(this.mainScreenRenderState);
 		}
@@ -1683,7 +1697,7 @@ export class InteractiveMode {
 		index: number,
 		allPaths: Array<{ path: string; segments: string[] }>,
 	): string {
-		const segments = allPaths[index]?.segments;
+		const segments = index >= 0 && index < allPaths.length ? allPaths[index]!.segments : undefined;
 		if (!segments || segments.length === 0) {
 			return this.getCompactPathLabel(resourcePath);
 		}
@@ -1892,7 +1906,7 @@ export class InteractiveMode {
 
 		// Format collision diagnostics grouped by name
 		for (const [name, collisionList] of collisions) {
-			const first = collisionList[0]?.collision;
+			const first = collisionList.length > 0 ? collisionList[0]!.collision : undefined;
 			if (!first) continue;
 			lines.push(theme.fg("warning", `  "${name}" collision:`));
 			lines.push(
@@ -2567,7 +2581,7 @@ export class InteractiveMode {
 	 */
 	private setExtensionWidget(
 		key: string,
-		content: string[] | ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined,
+		content: string[] | ((tui: TUI, thm: Theme) => (Component | ComponentLike) & { dispose?(): void }) | undefined,
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
@@ -2599,7 +2613,7 @@ export class InteractiveMode {
 			component = container;
 		} else {
 			// Factory function - create component
-			component = content(this.ui, theme);
+			component = toComponent(content(this.ui, theme));
 		}
 
 		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
@@ -2693,7 +2707,11 @@ export class InteractiveMode {
 	 */
 	private setExtensionFooter(
 		factory:
-			| ((tui: TUI, thm: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
+			| ((
+					tui: TUI,
+					thm: Theme,
+					footerData: ReadonlyFooterDataProvider,
+			  ) => (Component | ComponentLike) & { dispose?(): void })
 			| undefined,
 	): void {
 		// Dispose existing custom footer
@@ -2704,7 +2722,7 @@ export class InteractiveMode {
 		this.footerContainer.clear();
 		if (factory) {
 			// Create and add custom footer, passing the data provider
-			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
+			this.customFooter = toComponent(factory(this.ui, theme, this.footerDataProvider));
 			this.footerContainer.addChild(this.customFooter);
 		} else {
 			// Restore built-in footer
@@ -2718,7 +2736,9 @@ export class InteractiveMode {
 	/**
 	 * Set a custom header component, or restore the built-in header.
 	 */
-	private setExtensionHeader(factory: ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined): void {
+	private setExtensionHeader(
+		factory: ((tui: TUI, thm: Theme) => (Component | ComponentLike) & { dispose?(): void }) | undefined,
+	): void {
 		// Header may not be initialized yet if called during early initialization
 		if (!this.builtInHeader) {
 			return;
@@ -2735,7 +2755,7 @@ export class InteractiveMode {
 
 		if (factory) {
 			// Create and add custom header
-			this.customHeader = factory(this.ui, theme);
+			this.customHeader = toComponent(factory(this.ui, theme));
 			if (isExpandable(this.customHeader)) {
 				this.customHeader.setExpanded(this.toolOutputExpanded);
 			}
@@ -3021,7 +3041,7 @@ export class InteractiveMode {
 
 		if (factory) {
 			// Create the custom editor with tui, theme, and keybindings
-			const newEditor = factory(this.ui, getEditorTheme(), this.keybindings);
+			const newEditor = toEditorComponent(factory(this.ui, getEditorTheme(), this.keybindings));
 
 			// Wire up callbacks from the default editor
 			newEditor.onSubmit = this.defaultEditor.onSubmit;
@@ -3031,40 +3051,35 @@ export class InteractiveMode {
 			newEditor.setText(currentText);
 
 			// Copy appearance settings if supported
-			if (newEditor.borderColor !== undefined) {
+			if (!(newEditor instanceof FunctionalEditorComponent) || newEditor.raw.borderColor !== undefined) {
 				newEditor.borderColor = this.defaultEditor.borderColor;
 			}
-			if (newEditor.setPaddingX !== undefined) {
-				newEditor.setPaddingX(this.defaultEditor.getPaddingX());
-			}
-			if (newEditor.setAutocompleteMaxVisible !== undefined) {
-				newEditor.setAutocompleteMaxVisible(this.defaultEditor.getAutocompleteMaxVisible());
-			}
+			newEditor.setPaddingX(this.defaultEditor.getPaddingX());
+			newEditor.setAutocompleteMaxVisible(this.defaultEditor.getAutocompleteMaxVisible());
 
 			// Set autocomplete if supported
-			if (newEditor.setAutocompleteProvider && this.autocompleteProvider) {
+			if (this.autocompleteProvider) {
 				newEditor.setAutocompleteProvider(this.autocompleteProvider);
 			}
 
-			// If extending CustomEditor, copy app-level handlers
-			// Use duck typing since instanceof fails across jiti module boundaries
-			const customEditor = newEditor as unknown as Record<string, unknown>;
-			if ("actionHandlers" in customEditor && customEditor.actionHandlers instanceof Map) {
-				if (!customEditor.onEscape) {
-					customEditor.onEscape = () => this.defaultEditor.onEscape?.();
+			// If extending CustomEditor, copy app-level handlers cleanly.
+			if (newEditor instanceof CustomEditor) {
+				if (!newEditor.onEscape) {
+					newEditor.onEscape = () => this.defaultEditor.onEscape?.();
 				}
-				if (!customEditor.onCtrlD) {
-					customEditor.onCtrlD = () => this.defaultEditor.onCtrlD?.();
+				if (!newEditor.onCtrlD) {
+					newEditor.onCtrlD = () => this.defaultEditor.onCtrlD?.();
 				}
-				if (!customEditor.onPasteImage) {
-					customEditor.onPasteImage = () => this.defaultEditor.onPasteImage?.();
+				if (!newEditor.onPasteImage) {
+					newEditor.onPasteImage = () => this.defaultEditor.onPasteImage?.();
 				}
-				if (!customEditor.onExtensionShortcut) {
-					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
+				if (!newEditor.onExtensionShortcut) {
+					newEditor.onExtensionShortcut = (data: string) =>
+						this.defaultEditor.onExtensionShortcut?.(data) ?? false;
 				}
 				// Copy action handlers (clear, suspend, model switching, etc.)
 				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
+					newEditor.actionHandlers.set(action, handler);
 				}
 			}
 
@@ -3075,7 +3090,7 @@ export class InteractiveMode {
 			this.editor = this.defaultEditor;
 		}
 
-		if (!dialogOpen) this.editorContainer.addChild(this.editor as Component);
+		if (!dialogOpen) this.editorContainer.addChild(this.editor);
 		if (this.activeStatusIndicator) {
 			this.statusContainer.clear();
 			this.activeWorkingIndicatorEmbedded = this.setEditorWorkingStatusIndicator(this.activeStatusIndicator);
@@ -3083,7 +3098,7 @@ export class InteractiveMode {
 				this.statusContainer.addChild(this.activeStatusIndicator);
 			}
 		}
-		if (!dialogOpen) this.ui.setFocus(this.editor as Component);
+		if (!dialogOpen) this.ui.setFocus(this.editor);
 		this.ui.requestRender();
 	}
 
@@ -3107,7 +3122,7 @@ export class InteractiveMode {
 			theme: Theme,
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
-		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
+		) => ((Component | ComponentLike) & { dispose?(): void }) | Promise<(Component | ComponentLike) & { dispose?(): void }>,
 		options?: {
 			overlay?: boolean;
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
@@ -3165,7 +3180,8 @@ export class InteractiveMode {
 			Promise.resolve(factory(this.ui, theme, this.keybindings, close))
 				.then((c) => {
 					if (closed) return;
-					component = c;
+					const resolved = toComponent(c);
+					component = resolved;
 					if (isOverlay) {
 						// Resolve overlay options - can be static or dynamic function
 						const resolveOptions = (): OverlayOptions | undefined => {
@@ -3180,13 +3196,13 @@ export class InteractiveMode {
 							const w = (c as { width?: number }).width;
 							return w ? { width: w } : undefined;
 						};
-						overlayHandle = this.ui.showOverlay(c, resolveOptions());
+						overlayHandle = this.ui.showOverlay(resolved, resolveOptions());
 						this.extensionOverlays.set(overlayHandle, removeOverlay);
 						if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, options?.blocked);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
-						this.pushExtensionDialog(c, options?.blocked);
+						this.pushExtensionDialog(resolved, options?.blocked);
 					}
 				})
 				.catch((err) => {
@@ -3292,12 +3308,11 @@ export class InteractiveMode {
 
 	private async handleRightClickPaste(): Promise<void> {
 		const target = this.renderer.getFocusedComponent();
-		const handleInput = target?.handleInput;
-		if (!target || !handleInput) return;
+		if (!target || !target.canHandleInput()) return;
 		try {
 			const text = await readClipboardText();
 			if (!text || this.renderer.getFocusedComponent() !== target) return;
-			handleInput.call(target, `\x1b[200~${text}\x1b[201~`);
+			target.handleInput(`\x1b[200~${text}\x1b[201~`);
 			this.ui.requestRender();
 		} catch {
 			// Silently ignore clipboard errors (may not have permission, etc.)
@@ -3617,7 +3632,7 @@ export class InteractiveMode {
 					this.ui.requestRender();
 				} else if (event.entry.type === "compaction") {
 					const entries = this.sessionManager.buildContextEntries();
-					if (entries[0]?.id !== event.entry.id) break;
+					if (entries.length === 0 || entries[0]!.id !== event.entry.id) break;
 					this.chatContainer.clear();
 					const branch = this.sessionManager.getBranch();
 					const compactionIndex = branch.findIndex((entry) => entry.id === event.entry.id);
@@ -3864,7 +3879,7 @@ export class InteractiveMode {
 					}
 				} else if (event.result) {
 					const entries = this.sessionManager.buildContextEntries();
-					if (entries[0]?.type !== "compaction") {
+					if (entries.length === 0 || entries[0]!.type !== "compaction") {
 						throw new Error("Completed compaction is missing from the session context");
 					}
 					this.chatContainer.clear();
@@ -4684,9 +4699,12 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		}
 		// If not streaming, Alt+Enter acts like regular Enter (trigger onSubmit)
-		else if (this.editor.onSubmit) {
-			this.editor.setText("");
-			this.editor.onSubmit(text);
+		else {
+			const onSubmit = this.editor.onSubmit;
+			if (onSubmit) {
+				this.editor.setText("");
+				onSubmit(text);
+			}
 		}
 	}
 
@@ -5274,7 +5292,7 @@ export class InteractiveMode {
 						this.outputPad = padding;
 						for (const container of [this.chatContainer, this.pendingMessagesContainer]) {
 							for (const child of container.children) {
-								if ("setOutputPad" in child && typeof child.setOutputPad === "function") {
+								if (child instanceof Component && child.hasOutputPad()) {
 									child.setOutputPad(padding);
 								}
 							}
@@ -5699,7 +5717,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		const initialSelectedId = userMessages[userMessages.length - 1]?.entryId;
+		const initialSelectedId = userMessages.length > 0 ? userMessages[userMessages.length - 1]!.entryId : undefined;
 
 		this.showSelector((done) => {
 			const selector = new UserMessageSelectorComponent(
@@ -6942,7 +6960,7 @@ export class InteractiveMode {
 				info += `\n${theme.bold("Cost")}\n`;
 				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.
-				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
+				if (usageBreakdown.length > 1 || (usageBreakdown.length > 0 && usageBreakdown[0]!.key !== selectedModelKey)) {
 					for (const entry of usageBreakdown) {
 						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}

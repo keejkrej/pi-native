@@ -1,5 +1,4 @@
-import type { Component } from "@earendil-works/pi-tui";
-import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Spacer, Text, toComponent } from "@earendil-works/pi-tui";
 import type { EntryRenderer } from "../../../core/extensions/types.ts";
 import type { CustomEntry } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
@@ -28,14 +27,22 @@ export class CustomEntryComponent extends Container {
 		return this.customComponent !== undefined;
 	}
 
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		if (this._expanded !== expanded) {
 			this._expanded = expanded;
 			this.rebuild();
 		}
 	}
 
-	setOutputPad(outputPad: number): void {
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.rebuild();
 	}
@@ -51,7 +58,8 @@ export class CustomEntryComponent extends Container {
 
 		let component: Component | undefined;
 		try {
-			component = this.renderer(this.entry, { expanded: this._expanded, keyText, keyHint }, theme);
+			const rendered = this.renderer(this.entry, { expanded: this._expanded, keyText, keyHint }, theme);
+			component = rendered ? toComponent(rendered) : undefined;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const box = new Box(this.outputPad, 1, (text) => theme.bg("customMessageBg", text));

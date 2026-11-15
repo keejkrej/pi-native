@@ -1,5 +1,5 @@
 import {
-	type Component,
+	Component,
 	Container,
 	CURSOR_MARKER,
 	type Focusable,
@@ -106,7 +106,7 @@ interface ToolCallInfo {
 	arguments: Record<string, unknown>;
 }
 
-class TreeList implements Component {
+class TreeList extends Component {
 	private flatNodes: FlatNode[] = [];
 	private filteredNodes: FlatNode[] = [];
 	private selectedIndex = 0;
@@ -135,6 +135,7 @@ class TreeList implements Component {
 		initialSelectedId?: string,
 		initialFilterMode?: FilterMode,
 	) {
+		super();
 		this.currentLeafId = currentLeafId;
 		this.maxVisibleLines = maxVisibleLines;
 		this.filterMode = initialFilterMode ?? "default";
@@ -146,7 +147,13 @@ class TreeList implements Component {
 		// Start with initialSelectedId if provided, otherwise current leaf
 		const targetId = initialSelectedId ?? currentLeafId;
 		this.selectedIndex = this.findNearestVisibleIndex(targetId);
-		this.lastSelectedId = this.filteredNodes[this.selectedIndex]?.node.entry.id ?? null;
+		this.lastSelectedId = this.selectedFlatNode()?.node.entry.id ?? null;
+	}
+
+	private selectedFlatNode(): FlatNode | undefined {
+		return this.selectedIndex >= 0 && this.selectedIndex < this.filteredNodes.length
+			? this.filteredNodes[this.selectedIndex]
+			: undefined;
 	}
 
 	/**
@@ -334,7 +341,7 @@ class TreeList implements Component {
 		// Update lastSelectedId only when we have a valid selection (non-empty list)
 		// This preserves the selection when switching through empty filter results
 		if (this.filteredNodes.length > 0) {
-			this.lastSelectedId = this.filteredNodes[this.selectedIndex]?.node.entry.id ?? this.lastSelectedId;
+			this.lastSelectedId = this.selectedFlatNode()?.node.entry.id ?? this.lastSelectedId;
 		}
 
 		const searchTokens = this.searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
@@ -426,7 +433,7 @@ class TreeList implements Component {
 
 		// Update lastSelectedId to the actual selection (may have changed due to parent walk)
 		if (this.filteredNodes.length > 0) {
-			this.lastSelectedId = this.filteredNodes[this.selectedIndex]?.node.entry.id ?? this.lastSelectedId;
+			this.lastSelectedId = this.selectedFlatNode()?.node.entry.id ?? this.lastSelectedId;
 		}
 	}
 
@@ -622,14 +629,14 @@ class TreeList implements Component {
 		return parts.join(" ");
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
 	getSearchQuery(): string {
 		return this.searchQuery;
 	}
 
 	getSelectedNode(): SessionTreeNode | undefined {
-		return this.filteredNodes[this.selectedIndex]?.node;
+		return this.selectedFlatNode()?.node;
 	}
 
 	copySelected(): void {
@@ -669,7 +676,7 @@ class TreeList implements Component {
 		return labels;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 
 		if (this.filteredNodes.length === 0) {
@@ -992,14 +999,18 @@ class TreeList implements Component {
 		}
 	}
 
-	handleInput(keyData: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredNodes.length - 1 : this.selectedIndex - 1;
 		} else if (kb.matches(keyData, "tui.select.down")) {
 			this.selectedIndex = this.selectedIndex === this.filteredNodes.length - 1 ? 0 : this.selectedIndex + 1;
 		} else if (kb.matches(keyData, "app.tree.foldOrUp")) {
-			const currentId = this.filteredNodes[this.selectedIndex]?.node.entry.id;
+			const currentId = this.selectedFlatNode()?.node.entry.id;
 			if (currentId && this.isFoldable(currentId) && !this.foldedNodes.has(currentId)) {
 				this.foldedNodes.add(currentId);
 				this.applyFilter();
@@ -1007,7 +1018,7 @@ class TreeList implements Component {
 				this.selectedIndex = this.findBranchSegmentStart("up");
 			}
 		} else if (kb.matches(keyData, "app.tree.unfoldOrDown")) {
-			const currentId = this.filteredNodes[this.selectedIndex]?.node.entry.id;
+			const currentId = this.selectedFlatNode()?.node.entry.id;
 			if (currentId && this.foldedNodes.has(currentId)) {
 				this.foldedNodes.delete(currentId);
 				this.applyFilter();
@@ -1021,7 +1032,7 @@ class TreeList implements Component {
 			// Page down
 			this.selectedIndex = Math.min(this.filteredNodes.length - 1, this.selectedIndex + this.maxVisibleLines);
 		} else if (kb.matches(keyData, "tui.select.confirm")) {
-			const selected = this.filteredNodes[this.selectedIndex];
+			const selected = this.selectedFlatNode();
 			if (selected && this.onSelect) {
 				this.onSelect(selected.node.entry.id);
 			}
@@ -1122,7 +1133,7 @@ class TreeList implements Component {
 	 * (always following the first child).
 	 */
 	private findBranchSegmentStart(direction: "up" | "down"): number {
-		const selectedId = this.filteredNodes[this.selectedIndex]?.node.entry.id;
+		const selectedId = this.selectedFlatNode()?.node.entry.id;
 		if (!selectedId) return this.selectedIndex;
 
 		const indexByEntryId = new Map(this.filteredNodes.map((node, i) => [node.node.entry.id, i]));
@@ -1153,17 +1164,21 @@ class TreeList implements Component {
 }
 
 /** Component that displays the current search query */
-class SearchLine implements Component, Focusable {
-	focused = false;
+class SearchLine extends Component implements Focusable {
 	private treeList: TreeList;
 
 	constructor(treeList: TreeList) {
+		super();
 		this.treeList = treeList;
 	}
 
-	invalidate(): void {}
+	override isFocusableComponent(): boolean {
+		return true;
+	}
 
-	render(width: number): string[] {
+	override invalidate(): void {}
+
+	override render(width: number): string[] {
 		if (width <= 0) return [""];
 
 		const query = this.treeList.getSearchQuery();
@@ -1176,14 +1191,14 @@ class SearchLine implements Component, Focusable {
 		return [`${content}${CURSOR_MARKER}\x1b[7m \x1b[27m`];
 	}
 
-	handleInput(_keyData: string): void {}
+	override handleInput(_keyData: string): void {}
 }
 
 /** Component that renders tree help as semantic rows with chunk-aware wrapping */
-class TreeHelp implements Component {
-	invalidate(): void {}
+class TreeHelp extends Component {
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const items = TREE_HELP_ITEMS.map(({ keys, label, labelFirst }) => {
 			const text = formatHelpKeys(keys);
 			if (!text) return label;
@@ -1273,7 +1288,7 @@ function compactRawKeys(keys: string[]): string {
 }
 
 /** Label input component shown when editing a label */
-class LabelInput implements Component, Focusable {
+class LabelInput extends Component implements Focusable {
 	private input: Input;
 	private entryId: string;
 	public onSubmit?: (entryId: string, label: string | undefined) => void;
@@ -1281,15 +1296,19 @@ class LabelInput implements Component, Focusable {
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.input.focused = value;
 	}
 
 	constructor(entryId: string, currentLabel: string | undefined) {
+		super();
 		this.entryId = entryId;
 		this.input = new Input();
 		if (currentLabel) {
@@ -1297,9 +1316,9 @@ class LabelInput implements Component, Focusable {
 		}
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 		const indent = "  ";
 		const availableWidth = width - indent.length;
@@ -1314,7 +1333,11 @@ class LabelInput implements Component, Focusable {
 		return lines;
 	}
 
-	handleInput(keyData: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.confirm")) {
 			const value = this.input.getValue().trim();
@@ -1341,10 +1364,16 @@ export class TreeSelectorComponent extends Container implements Focusable {
 
 	// Focusable implementation - propagate to the active input for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchLine.focused = value && this.labelInput === null;
 		if (this.labelInput) {
@@ -1421,11 +1450,11 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		this.treeContainer.addChild(this.treeList);
 	}
 
-	get capturesViewportInput(): boolean {
+	override get capturesViewportInput(): boolean {
 		return this.labelInput === null;
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		if (this.labelInput) {
 			this.labelInput.handleInput(keyData);
 		} else {

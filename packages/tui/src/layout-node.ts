@@ -1,4 +1,4 @@
-import type { Component } from "./tui.ts";
+import { Component } from "./tui.ts";
 
 export const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
 
@@ -46,6 +46,10 @@ export interface LayoutComponent extends Component {
 }
 
 export function getLayoutNode(component: Component): LayoutNode | undefined {
+	if (component instanceof Component) {
+		const node = component.getLayoutNode();
+		if (node) return node;
+	}
 	const candidate = component as Partial<LayoutComponent>;
 	return typeof candidate[LAYOUT_NODE] === "function" ? candidate[LAYOUT_NODE]() : undefined;
 }

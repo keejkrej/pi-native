@@ -1,6 +1,6 @@
 import { visibleWidth } from "./utils.ts";
 
-const SYMBOLS: Readonly<Record<string, string>> = {
+const SYMBOLS: Readonly<Record<string, string | undefined>> = {
 	alpha: "α",
 	beta: "β",
 	gamma: "γ",
@@ -386,7 +386,7 @@ const RELATION_COMMANDS = new Set([
 	"vdash",
 ]);
 
-const NEGATED_SYMBOLS: Readonly<Record<string, string>> = {
+const NEGATED_SYMBOLS: Readonly<Record<string, string | undefined>> = {
 	"<": "≮",
 	">": "≯",
 	"=": "≠",
@@ -419,7 +419,7 @@ const NEGATED_SYMBOLS: Readonly<Record<string, string>> = {
 	"≽": "⋡",
 };
 
-const BLACKBOARD: Readonly<Record<string, string>> = {
+const BLACKBOARD: Readonly<Record<string, string | undefined>> = {
 	C: "ℂ",
 	H: "ℍ",
 	N: "ℕ",
@@ -429,7 +429,7 @@ const BLACKBOARD: Readonly<Record<string, string>> = {
 	Z: "ℤ",
 };
 
-const SUPERSCRIPTS: Readonly<Record<string, string>> = {
+const SUPERSCRIPTS: Readonly<Record<string, string | undefined>> = {
 	"0": "⁰",
 	"1": "¹",
 	"2": "²",
@@ -472,7 +472,7 @@ const SUPERSCRIPTS: Readonly<Record<string, string>> = {
 	z: "ᶻ",
 };
 
-const SUBSCRIPTS: Readonly<Record<string, string>> = {
+const SUBSCRIPTS: Readonly<Record<string, string | undefined>> = {
 	"0": "₀",
 	"1": "₁",
 	"2": "₂",
@@ -578,7 +578,7 @@ const PLAIN_WRAPPERS = new Set([
 	"bm",
 	"boldsymbol",
 ]);
-const ACCENTS: Readonly<Record<string, string>> = {
+const ACCENTS: Readonly<Record<string, string | undefined>> = {
 	acute: "\u0301",
 	bar: "\u0305",
 	breve: "\u0306",
@@ -599,7 +599,7 @@ const ACCENTS: Readonly<Record<string, string>> = {
 	widetilde: "\u0303",
 };
 
-function replaceCharacters(value: string, replacements: Readonly<Record<string, string>>): string | undefined {
+function replaceCharacters(value: string, replacements: Readonly<Record<string, string | undefined>>): string | undefined {
 	let result = "";
 	for (const character of value) {
 		const replacement = replacements[character];
@@ -1440,7 +1440,7 @@ class LatexParser {
 		if (environment === "array" || environment === "matrix" || environment === "smallmatrix") {
 			lines = rows;
 		} else {
-			const delimiters: Readonly<Record<string, readonly [string, string, string, string, string, string]>> = {
+			const delimiters: Readonly<Record<string, readonly [string, string, string, string, string, string] | undefined>> = {
 				pmatrix: ["⎛", "⎞", "⎜", "⎟", "⎝", "⎠"],
 				bmatrix: ["⎡", "⎤", "⎢", "⎥", "⎣", "⎦"],
 				Bmatrix: ["⎧", "⎫", "⎨", "⎬", "⎩", "⎭"],

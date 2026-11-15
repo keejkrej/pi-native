@@ -52,16 +52,20 @@ export class BorderedLoader extends Container {
 		}
 	}
 
-	handleInput(data: string): void {
-		if (this.cancellable) {
-			(this.loader as CancellableLoader).handleInput(data);
+	override canHandleInput(): boolean {
+		return this.cancellable;
+	}
+
+	override handleInput(data: string): void {
+		if (this.cancellable && this.loader instanceof CancellableLoader) {
+			this.loader.handleInput(data);
 		}
 	}
 
-	dispose(): void {
-		if ("dispose" in this.loader && typeof this.loader.dispose === "function") {
+	override dispose(): void {
+		if (this.loader instanceof CancellableLoader) {
 			this.loader.dispose();
-		} else if ("stop" in this.loader && typeof this.loader.stop === "function") {
+		} else {
 			this.loader.stop();
 		}
 	}

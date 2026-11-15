@@ -1,4 +1,4 @@
-import type { Component } from "@earendil-works/pi-tui";
+import { Component } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -8,18 +8,19 @@ import { theme } from "../theme/theme.ts";
  * because jiti creates a separate module cache. Always pass an explicit color
  * function when using DynamicBorder in components exported for extension use.
  */
-export class DynamicBorder implements Component {
+export class DynamicBorder extends Component {
 	private color: (str: string) => string;
 
 	constructor(color: (str: string) => string = (str) => theme.fg("border", str)) {
+		super();
 		this.color = color;
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		// No cached state to invalidate currently
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		return [this.color("─".repeat(Math.max(1, width)))];
 	}
 }

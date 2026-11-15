@@ -1,6 +1,6 @@
 import { Input } from "./components/input.ts";
 import { getKeybindings } from "./keybindings.ts";
-import type { Component, Focusable } from "./tui.ts";
+import { Component, type Focusable } from "./tui.ts";
 import { getGraphemeSegmenter, stripTerminalSequences, truncateToWidth, visibleWidth } from "./utils.ts";
 
 const segmenter = getGraphemeSegmenter();
@@ -194,7 +194,7 @@ export function getAltScreenSearchMatchKey(match: AltScreenSearchMatch): string 
 	return first && last ? `${first.row}:${first.startCol}:${last.row}:${last.endCol}` : "";
 }
 
-export class AltScreenSearchComponent implements Component, Focusable {
+export class AltScreenSearchComponent extends Component implements Focusable {
 	private readonly input = new Input({
 		prompt: " ",
 		placeholder: "Find in transcript",
@@ -215,15 +215,24 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		onQueryChange: (query: string) => void,
 		navigationButtonStyle: (text: string, hovered: boolean) => string = (text) => text,
 	) {
+		super();
 		this.onQueryChange = onQueryChange;
 		this.navigationButtonStyle = navigationButtonStyle;
 	}
 
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get focused(): boolean {
 		return this._focused;
 	}
 
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.input.focused = value;
 	}
@@ -246,18 +255,18 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		return true;
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		const previous = this.input.getValue();
 		this.input.handleInput(data);
 		const query = this.input.getValue();
 		if (query !== previous) this.onQueryChange(query);
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.input.invalidate();
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
 		const innerWidth = Math.max(0, safeWidth - 2);
 		const formatKey = (key: string | undefined): string =>

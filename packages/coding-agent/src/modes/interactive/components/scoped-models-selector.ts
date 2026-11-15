@@ -96,7 +96,9 @@ export interface ModelsCallbacks {
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
-	readonly capturesViewportInput: boolean = true;
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private modelsById: Map<string, Model<any>> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
@@ -106,10 +108,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -165,7 +173,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	updateModels(models: readonly Model<any>[], enabledModelIds?: string[] | null): void {
-		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
+		const selectedId =
+			this.selectedIndex >= 0 && this.selectedIndex < this.filteredItems.length
+				? this.filteredItems[this.selectedIndex]!.fullId
+				: undefined;
 		if (enabledModelIds !== undefined) this.enabledIds = enabledModelIds === null ? null : [...enabledModelIds];
 		this.modelsById.clear();
 		this.allIds = [];
@@ -281,7 +292,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		}
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		const kb = getKeybindings();
 
 		// Navigation
@@ -361,7 +372,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Toggle provider of current item
 		if (kb.matches(data, "app.models.toggleProvider")) {
-			const item = this.filteredItems[this.selectedIndex];
+			const item =
+				this.selectedIndex >= 0 && this.selectedIndex < this.filteredItems.length
+					? this.filteredItems[this.selectedIndex]
+					: undefined;
 			if (item?.model) {
 				const provider = item.model.provider;
 				const providerIds = this.allIds.filter((id) => this.modelsById.get(id)!.provider === provider);

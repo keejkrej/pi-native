@@ -63,6 +63,18 @@ class RadiusLoginMenuComponent extends ExtensionSelectorComponent {
 		this.animating = false;
 	}
 
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override canHandleInput(): boolean {
+		return super.canHandleInput();
+	}
+
+	override handleInput(keyData: string): void {
+		super.handleInput(keyData);
+	}
+
 	override dispose(): void {
 		this.stopAnimation();
 		super.dispose();

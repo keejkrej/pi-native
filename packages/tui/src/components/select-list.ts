@@ -1,5 +1,5 @@
 import { getKeybindings, getSelectPageIndex } from "../keybindings.ts";
-import type { Component, TuiMouseEvent, TuiMouseEventResult } from "../tui.ts";
+import { Component, type TuiMouseEvent, type TuiMouseEventResult } from "../tui.ts";
 import { truncateToWidth, visibleWidth } from "../utils.ts";
 
 const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
@@ -37,8 +37,10 @@ export interface SelectListLayoutOptions {
 	truncatePrimary?: (context: SelectListTruncatePrimaryContext) => string;
 }
 
-export class SelectList implements Component {
-	readonly capturesViewportInput: boolean = true;
+export class SelectList extends Component {
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private items: SelectItem[] = [];
 	private filteredItems: SelectItem[] = [];
 	private selectedIndex: number = 0;
@@ -52,11 +54,16 @@ export class SelectList implements Component {
 	public onSelectionChange?: (item: SelectItem) => void;
 
 	constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, layout: SelectListLayoutOptions = {}) {
+		super();
 		this.items = items;
 		this.filteredItems = items;
 		this.maxVisible = maxVisible;
 		this.theme = theme;
 		this.layout = layout;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
 	}
 
 	setFilter(filter: string): void {
@@ -69,11 +76,11 @@ export class SelectList implements Component {
 		this.selectedIndex = Math.max(0, Math.min(index, this.filteredItems.length - 1));
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		// No cached state to invalidate currently
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 
 		// If no items match filter, show message
@@ -107,7 +114,7 @@ export class SelectList implements Component {
 		return lines;
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (this.filteredItems.length === 0) return undefined;
 		if (event.type === "wheel" && event.wheelDelta) {
 			const delta = event.wheelDelta < 0 ? -1 : 1;
@@ -136,14 +143,14 @@ export class SelectList implements Component {
 			const changed = this.selectedIndex !== clickedIndex;
 			this.selectedIndex = clickedIndex;
 			if (changed) this.notifySelectionChange();
-			const selectedItem = this.filteredItems[this.selectedIndex];
+			const selectedItem = this.selectedFilteredItem();
 			if (selectedItem) this.onSelect?.(selectedItem);
 			return { handled: true };
 		}
 		return undefined;
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		const pageIndex = getSelectPageIndex(kb, keyData, this.selectedIndex, this.filteredItems.length, this.maxVisible);
 		// Up arrow - wrap to bottom when at top
@@ -164,7 +171,7 @@ export class SelectList implements Component {
 		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
-			const selectedItem = this.filteredItems[this.selectedIndex];
+			const selectedItem = this.selectedFilteredItem();
 			if (selectedItem && this.onSelect) {
 				this.onSelect(selectedItem);
 			}
@@ -267,15 +274,21 @@ export class SelectList implements Component {
 		return item.label || item.value;
 	}
 
+	private selectedFilteredItem(): SelectItem | undefined {
+		return this.selectedIndex >= 0 && this.selectedIndex < this.filteredItems.length
+			? this.filteredItems[this.selectedIndex]
+			: undefined;
+	}
+
 	private notifySelectionChange(): void {
-		const selectedItem = this.filteredItems[this.selectedIndex];
+		const selectedItem = this.selectedFilteredItem();
 		if (selectedItem && this.onSelectionChange) {
 			this.onSelectionChange(selectedItem);
 		}
 	}
 
 	getSelectedItem(): SelectItem | null {
-		const item = this.filteredItems[this.selectedIndex];
+		const item = this.selectedFilteredItem();
 		return item || null;
 	}
 }

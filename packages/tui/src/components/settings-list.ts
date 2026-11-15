@@ -1,6 +1,6 @@
 import { fuzzyFilter } from "../fuzzy.ts";
 import { getKeybindings, getSelectPageIndex } from "../keybindings.ts";
-import type { Component, TuiMouseEvent, TuiMouseEventResult } from "../tui.ts";
+import { Component, type ComponentLike, toComponent, type TuiMouseEvent, type TuiMouseEventResult } from "../tui.ts";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 import { Input } from "./input.ts";
 
@@ -20,7 +20,7 @@ export interface SettingItem {
 	submenu?: (
 		currentValue: string,
 		done: (selectedValue?: string, options?: { navigateTo?: string }) => void,
-	) => Component;
+	) => Component | ComponentLike;
 }
 
 export interface SettingsListTheme {
@@ -35,8 +35,10 @@ export interface SettingsListOptions {
 	enableSearch?: boolean;
 }
 
-export class SettingsList implements Component {
-	readonly capturesViewportInput: boolean = true;
+export class SettingsList extends Component {
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private items: SettingItem[];
 	private filteredItems: SettingItem[];
 	private theme: SettingsListTheme;
@@ -61,6 +63,7 @@ export class SettingsList implements Component {
 		onCancel: () => void,
 		options: SettingsListOptions = {},
 	) {
+		super();
 		this.items = items;
 		this.filteredItems = items;
 		this.maxVisible = maxVisible;
@@ -71,6 +74,10 @@ export class SettingsList implements Component {
 		if (this.searchEnabled) {
 			this.searchInput = new Input();
 		}
+	}
+
+	override canHandleInput(): boolean {
+		return true;
 	}
 
 	/** Update an item's currentValue */
@@ -90,11 +97,11 @@ export class SettingsList implements Component {
 		}
 	}
 
-	invalidate(): void {
-		this.submenuComponent?.invalidate?.();
+	override invalidate(): void {
+		this.submenuComponent?.invalidate();
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		// If submenu is active, render it instead
 		if (this.submenuComponent) {
 			return this.submenuComponent.render(width);
@@ -162,7 +169,10 @@ export class SettingsList implements Component {
 		}
 
 		// Add description for selected item
-		const selectedItem = displayItems[this.selectedIndex];
+		const selectedItem =
+			this.selectedIndex >= 0 && this.selectedIndex < displayItems.length
+				? displayItems[this.selectedIndex]
+				: undefined;
 		if (selectedItem?.description) {
 			lines.push("");
 			const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4);
@@ -177,15 +187,15 @@ export class SettingsList implements Component {
 		return lines;
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (this.submenuComponent) {
-			const result = this.submenuComponent.handleMouse?.(event);
+			const result = this.submenuComponent.handleMouse(event);
 			return result ? { ...result, focus: true } : undefined;
 		}
 
 		if (this.searchEnabled && this.searchInput) {
 			if (event.y === 0) {
-				const result = this.searchInput.handleMouse?.(event);
+				const result = this.searchInput.handleMouse(event);
 				return result ? { ...result, focus: true } : undefined;
 			}
 			if (event.y === 1) return undefined;
@@ -220,11 +230,11 @@ export class SettingsList implements Component {
 		return undefined;
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		// If submenu is active, delegate all input to it
 		// The submenu's onCancel (triggered by escape) will call done() which closes it
 		if (this.submenuComponent) {
-			this.submenuComponent.handleInput?.(data);
+			this.submenuComponent.handleInput(data);
 			return;
 		}
 
@@ -273,18 +283,20 @@ export class SettingsList implements Component {
 		if (item.submenu) {
 			// Open submenu, passing current value so it can pre-select correctly
 			this.submenuItemIndex = this.selectedIndex;
-			this.submenuComponent = item.submenu(
-				item.currentValue,
-				(selectedValue?: string, options?: { navigateTo?: string }) => {
-					if (selectedValue !== undefined) {
-						item.currentValue = selectedValue;
-						this.onChange(item.id, selectedValue);
-					}
-					if (options?.navigateTo) {
-						this.navigateAfterClose = options.navigateTo;
-					}
-					this.closeSubmenu();
-				},
+			this.submenuComponent = toComponent(
+				item.submenu(
+					item.currentValue,
+					(selectedValue?: string, options?: { navigateTo?: string }) => {
+						if (selectedValue !== undefined) {
+							item.currentValue = selectedValue;
+							this.onChange(item.id, selectedValue);
+						}
+						if (options?.navigateTo) {
+							this.navigateAfterClose = options.navigateTo;
+						}
+						this.closeSubmenu();
+					},
+				),
 			);
 		} else if (item.values && item.values.length > 0) {
 			// Cycle through values

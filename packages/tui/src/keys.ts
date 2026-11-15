@@ -451,7 +451,7 @@ const LEGACY_CTRL_SEQUENCES = {
 	end: ["\x1b[8^"],
 } as const;
 
-const LEGACY_SEQUENCE_KEY_IDS: Record<string, KeyId> = {
+const LEGACY_SEQUENCE_KEY_IDS: Record<string, KeyId | undefined> = {
 	"\x1bOA": "up",
 	"\x1bOB": "down",
 	"\x1bOC": "right",
@@ -649,9 +649,12 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	if (arrowMatch) {
 		const modValue = parseInt(arrowMatch[1]!, 10);
 		const eventType = parseEventType(arrowMatch[2]);
-		const arrowCodes: Record<string, number> = { A: -1, B: -2, C: -3, D: -4 };
-		_lastEventType = eventType;
-		return { codepoint: arrowCodes[arrowMatch[3]!]!, modifier: modValue - 1, eventType };
+		const arrowCodes: Record<string, number | undefined> = { A: -1, B: -2, C: -3, D: -4 };
+		const codepoint = arrowCodes[arrowMatch[3]!];
+		if (codepoint !== undefined) {
+			_lastEventType = eventType;
+			return { codepoint, modifier: modValue - 1, eventType };
+		}
 	}
 
 	// Functional keys: \x1b[<num>~ or \x1b[<num>;<mod>~ or \x1b[<num>;<mod>:<event>~
@@ -660,7 +663,7 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 		const keyNum = parseInt(funcMatch[1]!, 10);
 		const modValue = funcMatch[2] ? parseInt(funcMatch[2], 10) : 1;
 		const eventType = parseEventType(funcMatch[3]);
-		const funcCodes: Record<number, number> = {
+		const funcCodes: Record<number, number | undefined> = {
 			2: FUNCTIONAL_CODEPOINTS.insert,
 			3: FUNCTIONAL_CODEPOINTS.delete,
 			5: FUNCTIONAL_CODEPOINTS.pageUp,
@@ -703,13 +706,16 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 	if (fKeyMatch) {
 		const modValue = fKeyMatch[1] ? parseInt(fKeyMatch[1], 10) : 1;
 		const eventType = parseEventType(fKeyMatch[2]);
-		const fKeyCodes: Record<string, number> = {
+		const fKeyCodes: Record<string, number | undefined> = {
 			P: FUNCTIONAL_CODEPOINTS.f1,
 			Q: FUNCTIONAL_CODEPOINTS.f2,
 			S: FUNCTIONAL_CODEPOINTS.f4,
 		};
-		_lastEventType = eventType;
-		return { codepoint: fKeyCodes[fKeyMatch[3]!]!, modifier: modValue - 1, eventType };
+		const codepoint = fKeyCodes[fKeyMatch[3]!];
+		if (codepoint !== undefined) {
+			_lastEventType = eventType;
+			return { codepoint, modifier: modValue - 1, eventType };
+		}
 	}
 
 	return null;

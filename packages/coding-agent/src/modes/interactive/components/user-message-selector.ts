@@ -1,5 +1,5 @@
 import {
-	type Component,
+	Component,
 	Container,
 	getKeybindings,
 	getSelectPageIndex,
@@ -19,8 +19,7 @@ interface UserMessageItem {
 /**
  * Custom user message list component with selection
  */
-class UserMessageList implements Component {
-	readonly capturesViewportInput: boolean = true;
+class UserMessageList extends Component {
 	private messages: UserMessageItem[] = [];
 	private selectedIndex: number = 0;
 	public onSelect?: (entryId: string) => void;
@@ -28,6 +27,7 @@ class UserMessageList implements Component {
 	private maxVisible: number = 10; // Max messages visible
 
 	constructor(messages: UserMessageItem[], initialSelectedId?: string) {
+		super();
 		// Store messages in chronological order (oldest to newest)
 		this.messages = messages;
 		const initialIndex = initialSelectedId ? messages.findIndex((message) => message.id === initialSelectedId) : -1;
@@ -35,11 +35,19 @@ class UserMessageList implements Component {
 		this.selectedIndex = initialIndex >= 0 ? initialIndex : Math.max(0, messages.length - 1);
 	}
 
-	invalidate(): void {
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override invalidate(): void {
 		// No cached state to invalidate currently
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 
 		if (this.messages.length === 0) {
@@ -87,7 +95,7 @@ class UserMessageList implements Component {
 		return lines;
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		const pageIndex = getSelectPageIndex(kb, keyData, this.selectedIndex, this.messages.length, this.maxVisible);
 		// Up arrow - go to previous (older) message, wrap to bottom when at top

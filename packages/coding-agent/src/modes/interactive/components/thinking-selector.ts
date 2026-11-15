@@ -43,11 +43,19 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 	private onSelectAsDefault?: (level: ThinkingLevel) => void;
 	private _focused = false;
 
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get focused(): boolean {
 		return this._focused;
 	}
 
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -126,7 +134,7 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 		this.selectList = newList;
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "app.thinking.save") && this.onSelectAsDefault) {
 			const item = this.selectList.getSelectedItem();

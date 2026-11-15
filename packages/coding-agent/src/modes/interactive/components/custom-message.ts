@@ -1,6 +1,5 @@
 import type { TextContent } from "@earendil-works/pi-ai";
-import type { Component } from "@earendil-works/pi-tui";
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Markdown, type MarkdownTheme, Spacer, Text, toComponent } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer, MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
@@ -49,14 +48,22 @@ export class CustomMessageComponent extends Container {
 		this.rebuild();
 	}
 
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		if (this._expanded !== expanded) {
 			this._expanded = expanded;
 			this.rebuild();
 		}
 	}
 
-	setOutputPad(outputPad: number): void {
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setOutputPad(outputPad: number): void {
 		if (this.outputPad !== outputPad) {
 			this.outputPad = outputPad;
 			this.rebuild();
@@ -79,12 +86,13 @@ export class CustomMessageComponent extends Container {
 		// Try custom renderer first - it handles its own styling
 		if (this.customRenderer) {
 			try {
-				const component = this.customRenderer(
+				const rendered = this.customRenderer(
 					this.message,
 					{ expanded: this._expanded, outputPad: this.outputPad, keyText, keyHint },
 					theme,
 				);
-				if (component) {
+				if (rendered) {
+					const component = toComponent(rendered);
 					// Custom renderer provides its own styled component
 					this.customComponent = component;
 					this.addChild(component);

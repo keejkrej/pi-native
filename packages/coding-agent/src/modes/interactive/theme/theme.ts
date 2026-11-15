@@ -879,7 +879,7 @@ export function getThemeExportColors(themeName?: string): {
 // TUI Helpers
 // ============================================================================
 
-type CliHighlightTheme = Record<string, (s: string) => string>;
+type CliHighlightTheme = Record<string, ((s: string) => string) | undefined>;
 
 let cachedHighlightThemeFor: Theme | undefined;
 let cachedCliHighlightTheme: CliHighlightTheme | undefined;
@@ -989,7 +989,7 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	const ext = filePath.split(".").pop()?.toLowerCase();
 	if (!ext) return undefined;
 
-	const extToLang: Record<string, string> = {
+	const extToLang: Record<string, string | undefined> = {
 		ts: "typescript",
 		tsx: "typescript",
 		js: "javascript",

@@ -117,7 +117,11 @@ export class SelectSubmenu extends Container {
 		this.selectList = newList;
 	}
 
-	handleInput(data: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(data: string): void {
 		if (this.searchInput) {
 			const kb = getKeybindings();
 			const isNav =
@@ -246,15 +250,19 @@ export class SteppedSubmenu extends Container {
 		);
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		return this.activeComponent.render(width);
 	}
 
-	handleInput(data: string): void {
-		this.activeComponent.handleInput?.(data);
+	override canHandleInput(): boolean {
+		return true;
 	}
 
-	invalidate(): void {
-		this.activeComponent.invalidate?.();
+	override handleInput(data: string): void {
+		this.activeComponent.handleInput(data);
+	}
+
+	override invalidate(): void {
+		this.activeComponent.invalidate();
 	}
 }

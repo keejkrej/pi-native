@@ -185,7 +185,11 @@ class WarningSettingsSubmenu extends Container {
 		this.addChild(this.settingsList);
 	}
 
-	handleInput(data: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(data: string): void {
 		this.settingsList.handleInput(data);
 	}
 }
@@ -298,8 +302,12 @@ class ThemeSubmenu extends Container {
 		}
 	}
 
-	handleInput(data: string): void {
-		this.inputComponent?.handleInput?.(data);
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(data: string): void {
+		this.inputComponent?.handleInput(data);
 	}
 
 	private setContent(renderComponent: Component, inputComponent: Component = renderComponent): void {

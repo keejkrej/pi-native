@@ -1,4 +1,13 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	type AutocompleteProvider,
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -27,6 +36,82 @@ export class CustomEditor extends Editor {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
 		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
+	}
+
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get capturesViewportInput(): boolean {
+		return super.capturesViewportInput;
+	}
+
+	override get focused(): boolean {
+		return super.focused;
+	}
+
+	override set focused(value: boolean) {
+		super.focused = value;
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		return super.handleMouse(event);
+	}
+
+	override getText(): string {
+		return super.getText();
+	}
+
+	override setText(text: string): void {
+		super.setText(text);
+	}
+
+	override getExpandedText(): string {
+		return super.getExpandedText();
+	}
+
+	override getCursor(): { line: number; col: number } {
+		return super.getCursor();
+	}
+
+	override insertTextAtCursor(text: string): void {
+		super.insertTextAtCursor(text);
+	}
+
+	override addToHistory(text: string): void {
+		super.addToHistory(text);
+	}
+
+	override setAutocompleteProvider(provider: AutocompleteProvider): void {
+		super.setAutocompleteProvider(provider);
+	}
+
+	override getPaddingX(): number {
+		return super.getPaddingX();
+	}
+
+	override setPaddingX(padding: number): void {
+		super.setPaddingX(padding);
+	}
+
+	override getAutocompleteMaxVisible(): number {
+		return super.getAutocompleteMaxVisible();
+	}
+
+	override setAutocompleteMaxVisible(maxVisible: number): void {
+		super.setAutocompleteMaxVisible(maxVisible);
 	}
 
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void {
@@ -85,7 +170,7 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;

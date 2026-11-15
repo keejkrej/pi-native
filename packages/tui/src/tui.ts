@@ -4,6 +4,7 @@
 
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import type { LayoutNode } from "./layout-node.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	parseOscColorResponse,
@@ -62,6 +63,10 @@ export interface TuiMouseEventResult {
 	 * press, click, drag, and wheel default to true.
 	 */
 	render?: boolean;
+	/** Internal forwarding metadata populated by containers. */
+	target?: TuiMouseDispatchTarget;
+	/** Keyboard focus target, which may be a delegating parent container. */
+	focusTarget?: Component;
 }
 
 /** Internal target metadata used by containers and alternate-screen dispatch. */
@@ -75,7 +80,7 @@ export interface TuiMouseDispatchTarget {
 
 /** Result of dispatching to a concrete component. */
 export interface TuiMouseDispatchResult extends TuiMouseEventResult {
-	handled: true;
+	handled: boolean;
 	target: TuiMouseDispatchTarget;
 	/** Keyboard focus target, which may be a delegating parent container. */
 	focusTarget?: Component;
@@ -85,23 +90,32 @@ export interface TuiMouseDispatchResult extends TuiMouseEventResult {
  * Dispatch an event to a component and retain the exact target and coordinate
  * transform. Containers use this when forwarding events to nested children.
  */
-export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
-	const result = component.handleMouse?.(event);
+export function dispatchMouseEvent(
+	component: Component | ComponentLike,
+	event: TuiMouseEvent,
+): TuiMouseDispatchResult | undefined {
+	const target = toComponent(component);
+	const result = target.handleMouse(event);
 	if (!result) return undefined;
-	if ("target" in result) {
-		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
-		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
-		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
-		const forwarded = result as TuiMouseDispatchResult;
-		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+	if (result.target !== undefined) {
+		return {
+			handled: true,
+			capture: result.capture,
+			focus: result.focus,
+			render: result.render,
+			target: result.target,
+			focusTarget: result.focus && target.canHandleInput() ? target : result.focusTarget,
+		};
 	}
 	if (!result.handled && !result.capture && !result.focus) return undefined;
 	return {
-		...result,
 		handled: true,
-		...(result.focus ? { focusTarget: component } : {}),
+		capture: result.capture,
+		focus: result.focus,
+		render: result.render,
+		...(result.focus ? { focusTarget: target } : {}),
 		target: {
-			component,
+			component: target,
 			originX: event.screenX - event.x,
 			originY: event.screenY - event.y,
 			width: event.width,
@@ -121,7 +135,8 @@ export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatc
 	};
 }
 
-export interface Component {
+/** Structural interface accepted at extension / functional boundaries and wrapped into a native Component. */
+export interface ComponentLike {
 	/**
 	 * Render the component to lines for the given viewport width
 	 * @param width - Current viewport width
@@ -147,11 +162,204 @@ export interface Component {
 	 */
 	capturesViewportInput?: boolean;
 
+	/** Optional focus state flag for functional Focusable objects. */
+	focused?: boolean;
+
+	/** Optional expandable toggle for tool/message detail views. */
+	setExpanded?(expanded: boolean): void;
+
+	/** Optional padding synchronization hook for padded output components. */
+	setOutputPad?(padding: number): void;
+
+	/** Optional cleanup hook when a functional component is disposed. */
+	dispose?(): void;
+
 	/**
 	 * Invalidate any cached rendering state.
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
 	invalidate(): void;
+}
+
+/**
+ * Component base class - all UI components extend this for native virtual dispatch.
+ */
+export abstract class Component {
+	private _componentFocused = false;
+
+	/**
+	 * If true, component receives key release events (Kitty protocol).
+	 * Default is false - release events are filtered out.
+	 */
+	wantsKeyRelease = false;
+
+	/**
+	 * Render the component to lines for the given viewport width
+	 * @param width - Current viewport width
+	 * @returns Array of strings, each representing a line
+	 */
+	abstract render(width: number): string[];
+
+	/** Optional handler for keyboard input when component has focus. */
+	handleInput(_data: string): void {}
+
+	/** Whether this component handles keyboard input when focused. */
+	canHandleInput(): boolean {
+		return false;
+	}
+
+	/** Optional normalized mouse handler. */
+	handleMouse(_event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		return undefined;
+	}
+
+	/**
+	 * If true while focused, fullscreen viewport keys (`tui.altScreen.*` scrolling and prompt jumps) go to this
+	 * component instead of scrolling the transcript, as they do for a focused overlay. Default is false.
+	 */
+	get capturesViewportInput(): boolean {
+		return false;
+	}
+
+	/** Whether this component implements Focusable hardware cursor tracking. */
+	isFocusableComponent(): boolean {
+		return false;
+	}
+
+	/** Set by TUI when focus changes. Component should emit CURSOR_MARKER when true. */
+	get focused(): boolean {
+		return this._componentFocused;
+	}
+
+	set focused(value: boolean) {
+		this._componentFocused = value;
+	}
+
+	/** Whether this component supports expanded/collapsed detail toggling. */
+	isExpandableComponent(): boolean {
+		return false;
+	}
+
+	/** Update expanded detail state on expandable components. */
+	setExpanded(_expanded: boolean): void {}
+
+	/** Whether this component accepts editor gutter output padding updates. */
+	hasOutputPad(): boolean {
+		return false;
+	}
+
+	/** Update horizontal output padding to align with the editor gutter. */
+	setOutputPad(_padding: number): void {}
+
+	/** Return layout node descriptor when this component participates in box layout. */
+	getLayoutNode(): LayoutNode | undefined {
+		return undefined;
+	}
+
+	/** True only for Container subclasses using Container's default mouse hit-testing without overrides. */
+	isLayoutContainerDefaultMouse(): boolean {
+		return false;
+	}
+
+	/**
+	 * Invalidate any cached rendering state.
+	 * Called when theme changes or when component needs to re-render from scratch.
+	 */
+	invalidate(): void {}
+
+	/** Optional lifecycle cleanup hook. */
+	dispose(): void {}
+}
+
+const functionalComponentCache = new WeakMap<ComponentLike, FunctionalComponent>();
+
+/**
+ * Adapter wrapping plain ComponentLike object literals (e.g., extensions) into a native Component subclass.
+ */
+export class FunctionalComponent extends Component {
+	readonly raw: ComponentLike;
+
+	constructor(raw: ComponentLike) {
+		super();
+		this.raw = raw;
+		this.wantsKeyRelease = raw.wantsKeyRelease === true;
+	}
+
+	override render(width: number): string[] {
+		return this.raw.render(width);
+	}
+
+	override handleInput(data: string): void {
+		this.raw.handleInput?.(data);
+	}
+
+	override canHandleInput(): boolean {
+		return typeof this.raw.handleInput === "function";
+	}
+
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		return this.raw.handleMouse?.(event);
+	}
+
+	override get capturesViewportInput(): boolean {
+		return this.raw.capturesViewportInput === true;
+	}
+
+	override isFocusableComponent(): boolean {
+		return "focused" in this.raw;
+	}
+
+	override get focused(): boolean {
+		return (this.raw as Partial<Focusable>).focused === true;
+	}
+
+	override set focused(value: boolean) {
+		if ("focused" in this.raw) {
+			(this.raw as unknown as Focusable).focused = value;
+		}
+	}
+
+	override isExpandableComponent(): boolean {
+		return typeof this.raw.setExpanded === "function";
+	}
+
+	override setExpanded(expanded: boolean): void {
+		this.raw.setExpanded?.(expanded);
+	}
+
+	override hasOutputPad(): boolean {
+		return typeof this.raw.setOutputPad === "function";
+	}
+
+	override setOutputPad(padding: number): void {
+		this.raw.setOutputPad?.(padding);
+	}
+
+	override invalidate(): void {
+		this.raw.invalidate?.();
+	}
+
+	override dispose(): void {
+		this.raw.dispose?.();
+	}
+}
+
+/** Normalize a Component subclass or ComponentLike object literal into a native Component instance. */
+export function toComponent(component: Component | ComponentLike): Component {
+	if (component instanceof Component) {
+		return component;
+	}
+	try {
+		const existing = functionalComponentCache.get(component);
+		if (existing) {
+			return existing;
+		}
+		const wrapped = new FunctionalComponent(component);
+		functionalComponentCache.set(component, wrapped);
+		return wrapped;
+	} catch {
+		return new FunctionalComponent(component);
+	}
 }
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -196,8 +404,12 @@ export interface Focusable {
 }
 
 /** Type guard to check if a component implements Focusable */
-export function isFocusable(component: Component | null): component is Component & Focusable {
-	return component !== null && "focused" in component;
+export function isFocusable(component: Component | ComponentLike | null): component is Component & Focusable {
+	if (component === null) return false;
+	if (component instanceof Component) {
+		return component.isFocusableComponent();
+	}
+	return "focused" in component;
 }
 
 /**
@@ -368,37 +580,52 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
 /**
  * Container - a component that contains other components
  */
-export class Container implements Component {
-	children: Component[] = [];
+export class Container extends Component {
+	private _children: Component[] = [];
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
-	addChild(component: Component): void {
-		this.children.push(component);
+	get children(): Component[] {
+		return this._children;
 	}
 
-	removeChild(component: Component): void {
-		const index = this.children.indexOf(component);
+	set children(value: Component[]) {
+		this._children = value;
+	}
+
+	addChild(component: Component | ComponentLike): void {
+		this._children.push(toComponent(component));
+	}
+
+	removeChild(component: Component | ComponentLike): void {
+		const wrapped = toComponent(component);
+		const index = this._children.findIndex(
+			(child) => child === wrapped || child === component || (child instanceof FunctionalComponent && child.raw === component),
+		);
 		if (index !== -1) {
-			this.children.splice(index, 1);
+			this._children.splice(index, 1);
 		}
 	}
 
 	clear(): void {
-		this.children = [];
+		this._children = [];
 	}
 
-	invalidate(): void {
-		for (const child of this.children) {
-			child.invalidate?.();
+	override invalidate(): void {
+		for (const child of this._children) {
+			child.invalidate();
 		}
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+	override isLayoutContainerDefaultMouse(): boolean {
+		return true;
+	}
+
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.y < 0 || event.y >= event.height) return undefined;
 		const mouseChildren =
 			this.mouseLayout?.width === event.width
 				? this.mouseLayout.children
-				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
+				: this._children.map((component) => ({ component, height: component.render(event.width).length }));
 		let childY = 0;
 		for (const { component: child, height: childHeight } of mouseChildren) {
 			if (event.y >= childY && event.y < childY + childHeight) {
@@ -407,7 +634,8 @@ export class Container implements Component {
 					y: event.y - childY,
 					height: childHeight,
 				});
-				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+				if (!result) return undefined;
+				if (result.focus && this.canHandleInput()) return { ...result, focusTarget: this };
 				return result;
 			}
 			childY += childHeight;
@@ -415,10 +643,10 @@ export class Container implements Component {
 		return undefined;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
-		for (const child of this.children) {
+		for (const child of this._children) {
 			const childLines = child.render(width);
 			mouseChildren.push({ component: child, height: childLines.length });
 			for (const line of childLines) {
@@ -501,56 +729,60 @@ export interface TuiStopOptions {
 	preserveScreen?: boolean;
 }
 
-export interface TUI extends Component {
-	readonly mode: TuiMode;
-	children: Component[];
-	terminal: Terminal;
-	onDebug?: () => void;
-	readonly fullRedraws: number;
-	addChild(component: Component): void;
-	removeChild(component: Component): void;
-	clear(): void;
-	getShowHardwareCursor(): boolean;
-	setShowHardwareCursor(enabled: boolean): void;
-	getClearOnShrink(): boolean;
-	setClearOnShrink(enabled: boolean): void;
-	setFocus(component: Component | null): void;
-	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle;
-	hideOverlay(): void;
-	hasOverlay(): boolean;
-	start(): void;
-	stop(options?: TuiStopOptions): void;
-	renderNow(force?: boolean): void;
-	requestRender(force?: boolean): void;
-	addInputListener(listener: TuiInputListener): () => void;
-	removeInputListener(listener: TuiInputListener): void;
-	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
-	setTerminalColorSchemeNotifications(enabled: boolean): void;
-	queryTerminalColors(options: {
+export abstract class TUI extends Container {
+	abstract get mode(): TuiMode;
+	abstract get terminal(): Terminal;
+	abstract set terminal(value: Terminal);
+	abstract get onDebug(): (() => void) | undefined;
+	abstract set onDebug(value: (() => void) | undefined);
+	abstract get fullRedraws(): number;
+	abstract getShowHardwareCursor(): boolean;
+	abstract setShowHardwareCursor(enabled: boolean): void;
+	abstract getClearOnShrink(): boolean;
+	abstract setClearOnShrink(enabled: boolean): void;
+	abstract getFocusedComponent(): Component | null;
+	abstract setFocus(component: Component | ComponentLike | null): void;
+	abstract showOverlay(component: Component | ComponentLike, options?: OverlayOptions): OverlayHandle;
+	abstract hideOverlay(): void;
+	abstract hasOverlay(): boolean;
+	abstract start(): void;
+	abstract stop(options?: TuiStopOptions): void;
+	abstract renderNow(force?: boolean): void;
+	abstract requestRender(force?: boolean): void;
+	abstract addInputListener(listener: TuiInputListener): () => void;
+	abstract removeInputListener(listener: TuiInputListener): void;
+	abstract onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
+	abstract setTerminalColorSchemeNotifications(enabled: boolean): void;
+	abstract queryTerminalColors(options: {
 		timeoutMs: number;
 		onLateReply?: (colors: TerminalColors) => void;
 	}): Promise<TerminalColors>;
+
+	isViewport(): boolean {
+		return false;
+	}
+
+	setLayoutRoot(_component: Component | ComponentLike | undefined): void {}
 }
 
 export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
 
-export interface ViewportTUI extends TUI {
+export type ViewportTUI = TUI & {
 	readonly [VIEWPORT_TUI]: true;
-	setLayoutRoot(component: Component | undefined): void;
-}
+	setLayoutRoot(component: Component | ComponentLike | undefined): void;
+};
 
 export function isViewportTUI(tui: TUI): tui is ViewportTUI {
-	return (tui as Partial<ViewportTUI>)[VIEWPORT_TUI] === true;
+	return tui instanceof TUI && tui.isViewport();
 }
 
-export abstract class TuiBase extends Container implements TUI {
-	abstract readonly mode: TuiMode;
-	public terminal: Terminal;
+export abstract class TuiBase extends TUI {
+	private _terminal: Terminal;
 	private focusedComponent: Component | null = null;
 	private inputListeners = new Set<TuiInputListener>();
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
-	public onDebug?: () => void;
+	private _onDebug?: () => void;
 	private renderRequested = false;
 	private immediateRenderScheduled = false;
 	private renderTimer: ReturnType<typeof setTimeout> | undefined;
@@ -582,11 +814,27 @@ export abstract class TuiBase extends Container implements TUI {
 
 	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
 		super();
-		this.terminal = terminal;
+		this._terminal = terminal;
 		this.logDirectory = logDirectory;
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
+	}
+
+	override get terminal(): Terminal {
+		return this._terminal;
+	}
+
+	override set terminal(value: Terminal) {
+		this._terminal = value;
+	}
+
+	override get onDebug(): (() => void) | undefined {
+		return this._onDebug;
+	}
+
+	override set onDebug(value: (() => void) | undefined) {
+		this._onDebug = value;
 	}
 
 	protected abstract doRender(): void;
@@ -624,15 +872,15 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	};
 
-	get fullRedraws(): number {
+	override get fullRedraws(): number {
 		return this.fullRedrawCount;
 	}
 
-	getShowHardwareCursor(): boolean {
+	override getShowHardwareCursor(): boolean {
 		return this.showHardwareCursor;
 	}
 
-	setShowHardwareCursor(enabled: boolean): void {
+	override setShowHardwareCursor(enabled: boolean): void {
 		if (this.showHardwareCursor === enabled) return;
 		this.showHardwareCursor = enabled;
 		if (!enabled) {
@@ -641,7 +889,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.requestRender();
 	}
 
-	getClearOnShrink(): boolean {
+	override getClearOnShrink(): boolean {
 		return this.clearOnShrink;
 	}
 
@@ -650,16 +898,19 @@ export abstract class TuiBase extends Container implements TUI {
 	 * When true, empty rows are cleared when content shrinks.
 	 * When false (default), empty rows remain (reduces redraws on slower terminals).
 	 */
-	setClearOnShrink(enabled: boolean): void {
+	override setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
 	}
 
-	getFocusedComponent(): Component | null {
+	override getFocusedComponent(): Component | null {
 		return this.focusedComponent;
 	}
 
-	setFocus(component: Component | null): void {
-		this.setFocusInternal({ component, overlayFocusRestore: "clear" });
+	override setFocus(component: Component | ComponentLike | null): void {
+		this.setFocusInternal({
+			component: component === null ? null : toComponent(component),
+			overlayFocusRestore: "clear",
+		});
 	}
 
 	private setFocusInternal({
@@ -789,9 +1040,10 @@ export abstract class TuiBase extends Container implements TUI {
 	 * Show an overlay component with configurable positioning and sizing.
 	 * Returns a handle to control the overlay's visibility.
 	 */
-	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle {
+	override showOverlay(component: Component | ComponentLike, options?: OverlayOptions): OverlayHandle {
+		const target = toComponent(component);
 		const entry: OverlayStackEntry = {
-			component,
+			component: target,
 			...(options === undefined ? {} : { options }),
 			preFocus: this.focusedComponent,
 			hidden: false,
@@ -800,7 +1052,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.overlayStack.push(entry);
 		// Only focus if overlay is actually visible
 		if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
-			this.setFocus(component);
+			this.setFocus(target);
 		}
 		this.hideTerminalCursor();
 		this.requestRender();
@@ -814,7 +1066,7 @@ export abstract class TuiBase extends Container implements TUI {
 					this.retargetOverlayPreFocus(entry);
 					this.overlayStack.splice(index, 1);
 					// Restore focus if this overlay had focus
-					if (this.focusedComponent === component) {
+					if (this.focusedComponent === target) {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
@@ -829,7 +1081,7 @@ export abstract class TuiBase extends Container implements TUI {
 				if (hidden) {
 					this.clearOverlayFocusRestoreFor(entry);
 					// If this overlay had focus, move focus to next visible or preFocus
-					if (this.focusedComponent === component) {
+					if (this.focusedComponent === target) {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
@@ -837,7 +1089,7 @@ export abstract class TuiBase extends Container implements TUI {
 					// Restore focus to this overlay when showing (if it's actually visible)
 					if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
 						entry.focusOrder = ++this.focusOrderCounter;
-						this.setFocus(component);
+						this.setFocus(target);
 					}
 				}
 				this.requestRender();
@@ -846,11 +1098,11 @@ export abstract class TuiBase extends Container implements TUI {
 			focus: () => {
 				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry)) return;
 				entry.focusOrder = ++this.focusOrderCounter;
-				this.setFocus(component);
+				this.setFocus(target);
 				this.requestRender();
 			},
 			unfocus: (unfocusOptions) => {
-				const isFocused = this.focusedComponent === component;
+				const isFocused = this.focusedComponent === target;
 				const restoreState = this.overlayFocusRestore;
 				const hasPendingRestore = restoreState.status !== "inactive" && restoreState.overlay === entry;
 				if (!isFocused && !hasPendingRestore) return;
@@ -880,7 +1132,7 @@ export abstract class TuiBase extends Container implements TUI {
 				}
 				this.requestRender();
 			},
-			isFocused: () => this.focusedComponent === component,
+			isFocused: () => this.focusedComponent === target,
 			getBounds: () => {
 				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry) || !entry.bounds) return undefined;
 				return { ...entry.bounds };
@@ -889,7 +1141,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	/** Hide the topmost overlay and restore previous focus. */
-	hideOverlay(): void {
+	override hideOverlay(): void {
 		const overlay = this.overlayStack[this.overlayStack.length - 1];
 		if (!overlay) return;
 		this.clearOverlayFocusRestoreFor(overlay);
@@ -910,7 +1162,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	/** Check if there are any visible overlays */
-	hasOverlay(): boolean {
+	override hasOverlay(): boolean {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
 	}
 
@@ -987,7 +1239,7 @@ export abstract class TuiBase extends Container implements TUI {
 		for (const overlay of this.overlayStack) overlay.component.invalidate();
 	}
 
-	start(): void {
+	override start(): void {
 		this.stopped = false;
 		process.off("exit", this.exitRestoreHandler);
 		process.on("exit", this.exitRestoreHandler);
@@ -1005,25 +1257,25 @@ export abstract class TuiBase extends Container implements TUI {
 		this.requestRender();
 	}
 
-	addInputListener(listener: TuiInputListener): () => void {
+	override addInputListener(listener: TuiInputListener): () => void {
 		this.inputListeners.add(listener);
 		return () => {
 			this.inputListeners.delete(listener);
 		};
 	}
 
-	removeInputListener(listener: TuiInputListener): void {
+	override removeInputListener(listener: TuiInputListener): void {
 		this.inputListeners.delete(listener);
 	}
 
-	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void {
+	override onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void {
 		this.terminalColorSchemeListeners.add(listener);
 		return () => {
 			this.terminalColorSchemeListeners.delete(listener);
 		};
 	}
 
-	setTerminalColorSchemeNotifications(enabled: boolean): void {
+	override setTerminalColorSchemeNotifications(enabled: boolean): void {
 		if (this.terminalColorSchemeNotificationsEnabled === enabled) {
 			return;
 		}
@@ -1043,7 +1295,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.terminal.write("\x1b[16t");
 	}
 
-	stop(options: TuiStopOptions = {}): void {
+	override stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
@@ -1056,7 +1308,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.afterTerminalStop(options);
 	}
 
-	renderNow(force = false): void {
+	override renderNow(force = false): void {
 		if (force) this.resetRenderState();
 		this.renderRequested = false;
 		this.cancelRenderTimer();
@@ -1064,7 +1316,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.doRender();
 	}
 
-	requestRender(force = false): void {
+	override requestRender(force = false): void {
 		if (force) {
 			this.resetRenderState();
 			this.requestImmediateRender();
@@ -1149,9 +1401,12 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 
 		// Global debug key handler (Shift+Ctrl+D)
-		if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
-			this.onDebug();
-			return;
+		if (matchesKey(data, "shift+ctrl+d")) {
+			const onDebug = this.onDebug;
+			if (onDebug) {
+				onDebug();
+				return;
+			}
 		}
 
 		// If focused component is an overlay, verify it's still visible
@@ -1184,7 +1439,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 		// Pass input to focused component (including Ctrl+C)
 		// The focused component can decide how to handle Ctrl+C
-		if (this.focusedComponent?.handleInput) {
+		if (this.focusedComponent?.canHandleInput()) {
 			// Filter out key release events unless component opts in
 			if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
 				return;
@@ -1560,7 +1815,7 @@ export abstract class TuiBase extends Container implements TUI {
 	 * @param timeoutMs Query timeout in milliseconds, for terminals that do not answer DA1 either.
 	 * @param onLateReply Receives the replies if the query completes after the timeout, e.g. over slow links.
 	 */
-	queryTerminalColors({
+	override queryTerminalColors({
 		timeoutMs,
 		onLateReply,
 	}: {

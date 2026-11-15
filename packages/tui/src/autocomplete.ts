@@ -8,7 +8,7 @@ import { autocompleteBoundaryRegex, autocompleteSeparatorRegex } from "./utils.t
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 const tokenStartRegex = new RegExp(`${autocompleteBoundaryRegex.source}$`, "u");
 // Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
-const PATH_WRAPPERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
+const PATH_WRAPPERS: Record<string, string | undefined> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");

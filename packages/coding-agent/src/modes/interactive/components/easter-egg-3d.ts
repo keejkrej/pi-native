@@ -1,7 +1,7 @@
 import {
 	backgroundAnsi,
 	type Color,
-	type Component,
+	Component,
 	colorToRgb,
 	foregroundAnsi,
 	getKeybindings,
@@ -133,7 +133,7 @@ const CORAL: Rgb = [228, 138, 122];
 const BLUE: Rgb = [79, 142, 179];
 const YELLOW: Rgb = [234, 182, 93];
 const PI_LOGO_PIXELS = ["ccc.", "b.c.", "bb.y", "b..y"];
-const PI_LOGO_COLORS: Record<string, Rgb> = { c: CORAL, b: BLUE, y: YELLOW };
+const PI_LOGO_COLORS: Record<string, Rgb | undefined> = { c: CORAL, b: BLUE, y: YELLOW };
 
 function piLogoModel(origin: { column: number; row: number }): Model {
 	return createModel(4, 4, (column, row) => PI_LOGO_COLORS[PI_LOGO_PIXELS[row]![column]!], {
@@ -868,7 +868,7 @@ export async function playEasterEgg3d(tui: TUI, screen: readonly string[], egg: 
 	const overlay = tui.showOverlay(animation, { anchor: "top-left", width: "100%", maxHeight: "100%" });
 }
 
-export class EasterEgg3dAnimation implements Component {
+export class EasterEgg3dAnimation extends Component {
 	private readonly tui: TUI;
 	/** The screen to dissolve, as rendered lines. */
 	private readonly screen: readonly string[];
@@ -898,6 +898,7 @@ export class EasterEgg3dAnimation implements Component {
 		colors: { foreground: Rgb; background: Rgb },
 		onDone: () => void,
 	) {
+		super();
 		this.tui = tui;
 		this.screen = screen;
 		this.model = model;
@@ -931,23 +932,27 @@ export class EasterEgg3dAnimation implements Component {
 		};
 	}
 
-	handleInput(data: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(data: string): void {
 		const keybindings = getKeybindings();
 		if (keybindings.matches(data, "tui.select.cancel") || keybindings.matches(data, "app.clear")) this.close();
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult {
 		if (event.type === "click") this.close();
 		return { handled: true, render: false };
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.screenWidth = -1;
 		this.screenHeight = -1;
 		this.ansiCache.clear();
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const height = Math.max(1, this.tui.terminal.rows);
 		const foreground = this.foreground;
 		const background = this.background;

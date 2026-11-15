@@ -1,4 +1,12 @@
-import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
+import {
+	Component,
+	type ComponentLike,
+	dispatchMouseEvent,
+	FunctionalComponent,
+	toComponent,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+} from "../tui.ts";
 import { flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
@@ -11,7 +19,7 @@ type RenderCache = {
 /**
  * Box component - a container that applies padding and background to all children
  */
-export class Box implements Component {
+export class Box extends Component {
 	children: Component[] = [];
 	private paddingX: number;
 	private paddingY: number;
@@ -22,18 +30,22 @@ export class Box implements Component {
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
+		super();
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
 		this.bgFn = bgFn;
 	}
 
-	addChild(component: Component): void {
-		this.children.push(component);
+	addChild(component: Component | ComponentLike): void {
+		this.children.push(toComponent(component));
 		this.invalidateCache();
 	}
 
-	removeChild(component: Component): void {
-		const index = this.children.indexOf(component);
+	removeChild(component: Component | ComponentLike): void {
+		const wrapped = toComponent(component);
+		const index = this.children.findIndex(
+			(child) => child === wrapped || child === component || (child instanceof FunctionalComponent && child.raw === component),
+		);
 		if (index !== -1) {
 			this.children.splice(index, 1);
 			this.invalidateCache();
@@ -70,14 +82,14 @@ export class Box implements Component {
 		);
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.invalidateCache();
 		for (const child of this.children) {
-			child.invalidate?.();
+			child.invalidate();
 		}
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		const contentWidth = Math.max(1, event.width - this.paddingX * 2);
 		const contentY = event.y - this.paddingY;
 		const contentX = event.x - this.paddingX;
@@ -90,20 +102,22 @@ export class Box implements Component {
 		let childY = 0;
 		for (const { component: child, height: childHeight } of mouseChildren) {
 			if (contentY >= childY && contentY < childY + childHeight) {
-				return dispatchMouseEvent(child, {
+				const result = dispatchMouseEvent(child, {
 					...event,
 					x: contentX,
 					y: contentY - childY,
 					width: contentWidth,
 					height: childHeight,
 				});
+				if (!result) return undefined;
+				return result;
 			}
 			childY += childHeight;
 		}
 		return undefined;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		if (this.children.length === 0) {
 			return [];
 		}

@@ -39,7 +39,7 @@ function getReleaseTarget(plat: string, architecture: string): string | undefine
 	return undefined;
 }
 
-const TOOLS: Record<string, ToolConfig> = {
+const TOOLS: Record<string, ToolConfig | undefined> = {
 	fd: {
 		name: "fd",
 		repo: "sharkdp/fd",
@@ -319,7 +319,7 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 }
 
 // Termux package names for tools
-const TERMUX_PACKAGES: Record<string, string> = {
+const TERMUX_PACKAGES: Record<string, string | undefined> = {
 	fd: "fd",
 	rg: "ripgrep",
 };

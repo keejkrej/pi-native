@@ -1,7 +1,8 @@
 import {
-	type Component,
+	Component,
+	type ComponentLike,
 	dispatchMouseEvent,
-	type TuiMouseDispatchResult,
+	toComponent,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 } from "../tui.ts";
@@ -9,25 +10,27 @@ import {
 export type MouseRegionHandler = (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
 
 /** Adds mouse handling to an existing component without changing its rendering. */
-export class MouseRegion implements Component {
+export class MouseRegion extends Component {
 	private readonly child: Component;
 	private readonly onMouse: MouseRegionHandler;
 
-	constructor(child: Component, onMouse: MouseRegionHandler) {
-		this.child = child;
+	constructor(child: Component | ComponentLike, onMouse: MouseRegionHandler) {
+		super();
+		this.child = toComponent(child);
 		this.onMouse = onMouse;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		return this.child.render(width);
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | TuiMouseEventResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		const childResult = dispatchMouseEvent(this.child, event);
-		return childResult ?? this.onMouse(event);
+		if (childResult) return childResult;
+		return this.onMouse(event);
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.child.invalidate();
 	}
 }

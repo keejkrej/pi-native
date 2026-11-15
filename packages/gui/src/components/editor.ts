@@ -486,8 +486,8 @@ export class Editor extends GuiComponent {
 			}
 		}
 		const fallbackRow = Math.max(0, visualLines.length - 1);
-		const last = visualLines[fallbackRow];
-		const text = last?.text ?? "";
+		const last = fallbackRow < visualLines.length ? visualLines[fallbackRow] : undefined;
+		const text = last ? last.text : "";
 		return {
 			row: fallbackRow,
 			colInRow: text.length,

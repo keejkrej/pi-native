@@ -76,8 +76,13 @@ export {
 	type StackOptions,
 	VStack,
 } from "./components/v-stack.ts";
-// Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.ts";
+// Editor component base class and functional adapter (for custom editors)
+export {
+	EditorComponent,
+	type EditorComponentLike,
+	FunctionalEditorComponent,
+	toEditorComponent,
+} from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
 // Keybindings
@@ -156,11 +161,14 @@ export {
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
 export {
-	type Component,
+	Component,
+	type ComponentLike,
 	Container,
 	CURSOR_MARKER,
 	compositeTuiLine,
+	dispatchMouseEvent,
 	type Focusable,
+	FunctionalComponent,
 	isFocusable,
 	isViewportTUI,
 	type OverlayAnchor,
@@ -170,16 +178,21 @@ export {
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
 	renderFakeCursor,
+	retargetMouseEvent,
 	type SizeValue,
-	type TUI,
+	toComponent,
+	TUI,
+	TuiBase,
 	type TuiInputListener,
 	type TuiInputListenerResult,
 	type TuiMode,
 	type TuiMouseButton,
+	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	type TuiMouseEventType,
 	type TuiStopOptions,
+	VIEWPORT_TUI,
 	type ViewportTUI,
 } from "./tui.ts";
 export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";

@@ -43,10 +43,16 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.input.focused = value;
 	}
@@ -297,7 +303,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.tui.requestRender();
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		const kb = getKeybindings();
 
 		if (kb.matches(data, "tui.select.cancel")) {

@@ -1,9 +1,9 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
+import { EditorComponent } from "../editor-component.ts";
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import {
-	type Component,
 	CURSOR_MARKER,
 	type Focusable,
 	renderFakeCursor,
@@ -21,7 +21,6 @@ import {
 	isWhitespaceChar,
 	sliceByColumn,
 	visibleWidth,
-	type WordSegmenter,
 } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
 import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
@@ -47,14 +46,18 @@ function isPasteMarker(segment: string): boolean {
  *
  * Only markers whose numeric ID exists in `validIds` are merged.
  */
+function segmentBase(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
+	return mode === "word" ? wordSegmenter.segment(text) : graphemeSegmenter.segment(text);
+}
+
 function segmentWithMarkers(
 	text: string,
-	baseSegmenter: WordSegmenter,
+	mode: "word" | "grapheme",
 	validIds: Set<number>,
 ): Iterable<Intl.SegmentData> {
 	// Fast path: no paste markers in the text or no valid IDs.
 	if (validIds.size === 0 || !text.includes("[paste #")) {
-		return baseSegmenter.segment(text);
+		return segmentBase(text, mode);
 	}
 
 	// Find all marker spans with valid IDs.
@@ -65,11 +68,11 @@ function segmentWithMarkers(
 		markers.push({ start: m.index, end: m.index + m[0].length });
 	}
 	if (markers.length === 0) {
-		return baseSegmenter.segment(text);
+		return segmentBase(text, mode);
 	}
 
 	// Build merged segment list.
-	const baseSegments = baseSegmenter.segment(text);
+	const baseSegments = segmentBase(text, mode);
 	const result: Intl.SegmentData[] = [];
 	let markerIdx = 0;
 
@@ -99,6 +102,10 @@ function segmentWithMarkers(
 	}
 
 	return result;
+}
+
+function segmentEditorText(text: string, mode: "word" | "grapheme", validIds: Set<number>): Iterable<Intl.SegmentData> {
+	return segmentWithMarkers(text, mode, validIds);
 }
 
 /**
@@ -295,18 +302,23 @@ function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, w
 	return sliceByColumn(indicator, 0, indicatorWidth, true) + ellipsis;
 }
 
-export class Editor implements Component, Focusable {
+export class Editor extends EditorComponent implements Focusable {
 	private state: EditorState = {
 		lines: [""],
 		cursorLine: 0,
 		cursorCol: 0,
 	};
 
-	/** Focusable interface - set by TUI when focus changes */
-	focused: boolean = false;
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
 
 	/** The open autocomplete menu receives fullscreen viewport keys, such as PageUp/PageDown. */
-	get capturesViewportInput(): boolean {
+	override get capturesViewportInput(): boolean {
 		return this.autocompleteState !== null;
 	}
 
@@ -321,9 +333,6 @@ export class Editor implements Component, Focusable {
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
-
-	// Border color (can be changed dynamically)
-	public borderColor: (str: string) => string;
 
 	// Autocomplete support
 	private autocompleteProvider?: AutocompleteProvider;
@@ -373,11 +382,10 @@ export class Editor implements Component, Focusable {
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
 
-	public onSubmit?: (text: string) => void;
-	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
+		super();
 		this.tui = tui;
 		this.theme = theme;
 		this.borderColor = theme.borderColor;
@@ -387,21 +395,26 @@ export class Editor implements Component, Focusable {
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 	}
 
+	private notifyChange(text: string): void {
+		const onChange = this.onChange;
+		if (onChange) onChange(text);
+	}
+
+	private notifySubmit(text: string): void {
+		const onSubmit = this.onSubmit;
+		if (onSubmit) onSubmit(text);
+	}
+
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
 	private validPasteIds(): Set<number> {
 		return new Set(this.pastes.keys());
 	}
 
-	/** Segment text with paste-marker awareness, only merging markers with valid IDs. */
-	private segment(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
-		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.validPasteIds());
-	}
-
-	getPaddingX(): number {
+	override getPaddingX(): number {
 		return this.paddingX;
 	}
 
-	setPaddingX(padding: number): void {
+	override setPaddingX(padding: number): void {
 		const newPadding = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
 		if (this.paddingX !== newPadding) {
 			this.paddingX = newPadding;
@@ -409,11 +422,11 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
-	getAutocompleteMaxVisible(): number {
+	override getAutocompleteMaxVisible(): number {
 		return this.autocompleteMaxVisible;
 	}
 
-	setAutocompleteMaxVisible(maxVisible: number): void {
+	override setAutocompleteMaxVisible(maxVisible: number): void {
 		const newMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 		if (this.autocompleteMaxVisible !== newMaxVisible) {
 			this.autocompleteMaxVisible = newMaxVisible;
@@ -421,7 +434,7 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
-	setAutocompleteProvider(provider: AutocompleteProvider): void {
+	override setAutocompleteProvider(provider: AutocompleteProvider): void {
 		this.cancelAutocomplete();
 		this.autocompleteProvider = provider;
 		this.setAutocompleteTriggerCharacters(provider.triggerCharacters ?? []);
@@ -431,7 +444,7 @@ export class Editor implements Component, Focusable {
 	 * Add a prompt to history for up/down arrow navigation.
 	 * Called after successful submission.
 	 */
-	addToHistory(text: string): void {
+	override addToHistory(text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;
 		// Don't add consecutive duplicates
@@ -482,7 +495,7 @@ export class Editor implements Component, Focusable {
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
-				if (this.onChange) this.onChange(this.getText());
+				this.notifyChange(this.getText());
 			} else {
 				this.setTextInternal("");
 			}
@@ -501,16 +514,18 @@ export class Editor implements Component, Focusable {
 		const lines = text.split("\n");
 		this.state.lines = lines.length === 0 ? [""] : lines;
 		this.state.cursorLine = cursorPlacement === "start" ? 0 : this.state.lines.length - 1;
-		this.setCursorCol(cursorPlacement === "start" ? 0 : this.state.lines[this.state.cursorLine]?.length || 0);
+		this.setCursorCol(
+			cursorPlacement === "start" || this.state.cursorLine < 0 || this.state.cursorLine >= this.state.lines.length
+				? 0
+				: this.state.lines[this.state.cursorLine]!.length,
+		);
 		// Reset scroll - render() will adjust to show cursor
 		this.scrollOffset = 0;
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		// No cached state to invalidate currently
 	}
 
@@ -524,7 +539,7 @@ export class Editor implements Component, Focusable {
 		return this.borderColor(border);
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
 		const contentWidth = Math.max(1, width - paddingX * 2);
@@ -591,8 +606,8 @@ export class Editor implements Component, Focusable {
 				if (after.length > 0) {
 					// Cursor is on a character (grapheme) - replace it with highlighted version
 					// Get the first grapheme from 'after'
-					const afterGraphemes = [...this.segment(after, "grapheme")];
-					const firstGrapheme = afterGraphemes[0]?.segment || "";
+					const afterGraphemes = [...segmentEditorText(after, "grapheme", this.validPasteIds())];
+					const firstGrapheme = afterGraphemes.length > 0 ? afterGraphemes[0]!.segment : "";
 					const restAfter = after.slice(firstGrapheme.length);
 					const cursor = renderFakeCursor(firstGrapheme);
 					displayText = before + marker + cursor + restAfter;
@@ -636,7 +651,7 @@ export class Editor implements Component, Focusable {
 		return result;
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		const autocompleteStartRow = this.renderedVisibleLineCount + 2;
 		if (
 			this.autocompleteState &&
@@ -677,7 +692,7 @@ export class Editor implements Component, Focusable {
 		let visibleColumn = 0;
 		let targetIndex = chunk.length;
 		let lastGraphemeIndex = 0;
-		for (const grapheme of this.segment(chunk, "grapheme")) {
+		for (const grapheme of segmentEditorText(chunk, "grapheme", this.validPasteIds())) {
 			const nextColumn = visibleColumn + visibleWidth(grapheme.segment);
 			lastGraphemeIndex = grapheme.index;
 			if (targetColumn < nextColumn) {
@@ -699,7 +714,7 @@ export class Editor implements Component, Focusable {
 		return { handled: true, focus: true };
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		const kb = getKeybindings();
 
 		// Handle character jump mode (awaiting next character to jump to)
@@ -793,7 +808,7 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 					this.cancelAutocomplete();
-					if (this.onChange) this.onChange(this.getText());
+					this.notifyChange(this.getText());
 				}
 				return;
 			}
@@ -819,7 +834,7 @@ export class Editor implements Component, Focusable {
 						// Fall through to submit
 					} else {
 						this.cancelAutocomplete();
-						if (this.onChange) this.onChange(this.getText());
+						this.notifyChange(this.getText());
 						return;
 					}
 				}
@@ -1041,7 +1056,7 @@ export class Editor implements Component, Focusable {
 				}
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
+				const chunks = wordWrapLine(line, contentWidth, [...segmentEditorText(line, "grapheme", this.validPasteIds())]);
 
 				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
 					const chunk = chunks[chunkIndex];
@@ -1094,7 +1109,7 @@ export class Editor implements Component, Focusable {
 		return layoutLines;
 	}
 
-	getText(): string {
+	override getText(): string {
 		return this.state.lines.join("\n");
 	}
 
@@ -1111,7 +1126,7 @@ export class Editor implements Component, Focusable {
 	 * Get text with paste markers expanded to their actual content.
 	 * Use this when you need the full content (e.g., for external editor).
 	 */
-	getExpandedText(): string {
+	override getExpandedText(): string {
 		return this.expandPasteMarkers(this.state.lines.join("\n"));
 	}
 
@@ -1119,11 +1134,11 @@ export class Editor implements Component, Focusable {
 		return [...this.state.lines];
 	}
 
-	getCursor(): { line: number; col: number } {
+	override getCursor(): { line: number; col: number } {
 		return { line: this.state.cursorLine, col: this.state.cursorCol };
 	}
 
-	setText(text: string): void {
+	override setText(text: string): void {
 		this.cancelAutocomplete();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
@@ -1142,7 +1157,7 @@ export class Editor implements Component, Focusable {
 	 * Used for programmatic insertion (e.g., clipboard image markers).
 	 * This is atomic for undo - single undo restores entire pre-insert state.
 	 */
-	insertTextAtCursor(text: string): void {
+	override insertTextAtCursor(text: string): void {
 		if (!text) return;
 		this.cancelAutocomplete();
 		this.pushUndoSnapshot();
@@ -1203,9 +1218,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol((insertedLines[insertedLines.length - 1] || "").length);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	// All the editor methods from before...
@@ -1232,9 +1245,7 @@ export class Editor implements Component, Focusable {
 		this.state.lines[this.state.cursorLine] = before + char + after;
 		this.setCursorCol(this.state.cursorCol + char.length);
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
@@ -1356,9 +1367,7 @@ export class Editor implements Component, Focusable {
 		this.state.cursorLine++;
 		this.setCursorCol(0);
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private shouldSubmitOnBackslashEnter(data: string, kb: ReturnType<typeof getKeybindings>): boolean {
@@ -1384,8 +1393,8 @@ export class Editor implements Component, Focusable {
 		this.undoStack.clear();
 		this.lastAction = null;
 
-		if (this.onChange) this.onChange("");
-		if (this.onSubmit) this.onSubmit(result);
+		this.notifyChange("");
+		this.notifySubmit(result);
 	}
 
 	private handleBackspace(): void {
@@ -1400,7 +1409,7 @@ export class Editor implements Component, Focusable {
 			const beforeCursor = line.slice(0, this.state.cursorCol);
 
 			// Find the last grapheme in the text before cursor
-			const graphemes = [...this.segment(beforeCursor, "grapheme")];
+			const graphemes = [...segmentEditorText(beforeCursor, "grapheme", this.validPasteIds())];
 			const lastGrapheme = graphemes[graphemes.length - 1];
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
 			const isPastedSegmented = PASTE_MARKER_SINGLE.exec(lastGrapheme.segment);
@@ -1451,9 +1460,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(previousLine.length);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 
 		// Update or re-trigger autocomplete after backspace
 		if (this.autocompleteState) {
@@ -1529,7 +1536,7 @@ export class Editor implements Component, Focusable {
 		// Snap cursor to atomic segment boundary (e.g. paste markers)
 		// so the cursor never lands in the middle of a multi-grapheme unit.
 		// Single-grapheme segments don't need snapping.
-		const segments = [...this.segment(logicalLine, "grapheme")];
+		const segments = [...segmentEditorText(logicalLine, "grapheme", this.validPasteIds())];
 		for (const seg of segments) {
 			if (seg.index > this.state.cursorCol) break;
 			if (seg.segment.length <= 1) continue;
@@ -1663,9 +1670,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(previousLine.length);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private deleteToEndOfLine(): void {
@@ -1695,9 +1700,7 @@ export class Editor implements Component, Focusable {
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private deleteWordBackwards(): void {
@@ -1740,9 +1743,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(deleteFrom);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private deleteWordForward(): void {
@@ -1782,9 +1783,7 @@ export class Editor implements Component, Focusable {
 				currentLine.slice(0, this.state.cursorCol) + currentLine.slice(deleteTo);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private handleForwardDelete(): void {
@@ -1800,7 +1799,7 @@ export class Editor implements Component, Focusable {
 			const afterCursor = currentLine.slice(this.state.cursorCol);
 
 			// Find the first grapheme at cursor
-			const graphemes = [...this.segment(afterCursor, "grapheme")];
+			const graphemes = [...segmentEditorText(afterCursor, "grapheme", this.validPasteIds())];
 			const firstGrapheme = graphemes[0];
 			const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
 
@@ -1816,9 +1815,7 @@ export class Editor implements Component, Focusable {
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 
 		// Update or re-trigger autocomplete after forward delete
 		if (this.autocompleteState) {
@@ -1857,7 +1854,7 @@ export class Editor implements Component, Focusable {
 				visualLines.push({ logicalLine: i, startCol: 0, length: line.length });
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, width, [...this.segment(line, "grapheme")]);
+				const chunks = wordWrapLine(line, width, [...segmentEditorText(line, "grapheme", this.validPasteIds())]);
 				for (const chunk of chunks) {
 					visualLines.push({
 						logicalLine: i,
@@ -1922,7 +1919,7 @@ export class Editor implements Component, Focusable {
 				// Moving right - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol < currentLine.length) {
 					const afterCursor = currentLine.slice(this.state.cursorCol);
-					const graphemes = [...this.segment(afterCursor, "grapheme")];
+					const graphemes = [...segmentEditorText(afterCursor, "grapheme", this.validPasteIds())];
 					const firstGrapheme = graphemes[0];
 					this.setCursorCol(this.state.cursorCol + (firstGrapheme ? firstGrapheme.segment.length : 1));
 				} else if (this.state.cursorLine < this.state.lines.length - 1) {
@@ -1940,7 +1937,7 @@ export class Editor implements Component, Focusable {
 				// Moving left - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol > 0) {
 					const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-					const graphemes = [...this.segment(beforeCursor, "grapheme")];
+					const graphemes = [...segmentEditorText(beforeCursor, "grapheme", this.validPasteIds())];
 					const lastGrapheme = graphemes[graphemes.length - 1];
 					this.setCursorCol(this.state.cursorCol - (lastGrapheme ? lastGrapheme.segment.length : 1));
 				} else if (this.state.cursorLine > 0) {
@@ -1997,7 +1994,7 @@ export class Editor implements Component, Focusable {
 
 		this.setCursorCol(
 			findWordBackward(currentLine, this.state.cursorCol, {
-				segment: (text) => this.segment(text, "word"),
+				segment: (text) => segmentEditorText(text, "word", this.validPasteIds()),
 				isAtomicSegment: isPasteMarker,
 			}),
 		);
@@ -2077,9 +2074,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol((lines[lines.length - 1] || "").length);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	/**
@@ -2119,9 +2114,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(startCol);
 		}
 
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	private pushUndoSnapshot(): void {
@@ -2137,9 +2130,7 @@ export class Editor implements Component, Focusable {
 		this.pasteCounter = snapshot.pasteCounter;
 		this.lastAction = null;
 		this.preferredVisualCol = null;
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.notifyChange(this.getText());
 	}
 
 	/**
@@ -2191,7 +2182,7 @@ export class Editor implements Component, Focusable {
 
 		this.setCursorCol(
 			findWordForward(currentLine, this.state.cursorCol, {
-				segment: (text) => this.segment(text, "word"),
+				segment: (text) => segmentEditorText(text, "word", this.validPasteIds()),
 				isAtomicSegment: isPasteMarker,
 			}),
 		);
@@ -2265,7 +2256,7 @@ export class Editor implements Component, Focusable {
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
 			this.cancelAutocomplete();
-			this.onChange?.(this.getText());
+			this.notifyChange(this.getText());
 		};
 		return list;
 	}
@@ -2415,7 +2406,7 @@ export class Editor implements Component, Focusable {
 			this.state.lines = result.lines;
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
-			if (this.onChange) this.onChange(this.getText());
+			this.notifyChange(this.getText());
 			this.tui.requestRender();
 			return;
 		}

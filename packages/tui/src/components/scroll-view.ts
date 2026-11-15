@@ -1,5 +1,5 @@
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
-import { type Component, Container } from "../tui.ts";
+import { type Component, type ComponentLike, Container, toComponent } from "../tui.ts";
 
 export type ScrollViewScrollbar = "hidden" | "auto" | "always";
 
@@ -38,13 +38,14 @@ export class ScrollView extends Container {
 	private scrollbarActive = false;
 	private scrollbarHideTimer: ReturnType<typeof setTimeout> | undefined;
 
-	constructor(component: Component, options: ScrollViewOptions = {}) {
+	constructor(component: Component | ComponentLike, options: ScrollViewOptions = {}) {
 		super();
 		if (options.axis !== undefined && options.axis !== "vertical") {
 			throw new Error(`Unsupported ScrollView axis: ${options.axis}`);
 		}
-		this.child = component;
-		this.children.push(component);
+		const resolved = toComponent(component);
+		this.child = resolved;
+		this.children.push(resolved);
 		this.followEnd = (options.follow ?? "none") === "end";
 		this.followingEnd = this.followEnd;
 		this.primary = options.primary ?? false;
@@ -200,11 +201,11 @@ export class ScrollView extends Container {
 		if (this.contentHeight <= this.currentViewportHeight) this.hideTransientScrollbar();
 	}
 
-	override addChild(_component: Component): void {
+	override addChild(_component: Component | ComponentLike): void {
 		throw new Error("ScrollView has exactly one child");
 	}
 
-	override removeChild(_component: Component): void {
+	override removeChild(_component: Component | ComponentLike): void {
 		throw new Error("ScrollView child cannot be removed");
 	}
 
@@ -218,7 +219,11 @@ export class ScrollView extends Container {
 		return contentWidth === width ? lines : lines.map((line) => `${line} `);
 	}
 
-	[LAYOUT_NODE](): ScrollLayoutNode {
+	override getLayoutNode(): ScrollLayoutNode {
 		return { type: "scroll", component: this.child, state: this };
+	}
+
+	[LAYOUT_NODE](): ScrollLayoutNode {
+		return this.getLayoutNode();
 	}
 }

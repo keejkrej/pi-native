@@ -107,7 +107,11 @@ export class ExtensionSelectorComponent extends Container {
 		}
 	}
 
-	handleInput(keyData: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "app.tools.expand")) {
 			this.onToggleToolsExpanded?.();
@@ -125,7 +129,7 @@ export class ExtensionSelectorComponent extends Container {
 		}
 	}
 
-	dispose(): void {
+	override dispose(): void {
 		this.countdown?.dispose();
 	}
 }

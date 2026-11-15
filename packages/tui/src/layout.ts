@@ -280,7 +280,7 @@ function replaceScrollbarCell(
 export function getScrollbarGeometry(box: LayoutBox, includeHiddenAuto = false): ScrollbarGeometry | undefined {
 	if (!box.scrollView || box.rect.width <= 0 || box.rect.height <= 0) return undefined;
 
-	const contentHeight = box.children[0]?.rect.height ?? box.scrollContentLines?.length ?? 0;
+	const contentHeight = box.children.length > 0 ? box.children[0]!.rect.height : (box.scrollContentLines?.length ?? 0);
 	const trackHeight = box.rect.height;
 	const canRevealHiddenAuto = includeHiddenAuto && box.scrollView.scrollbar === "auto" && contentHeight > trackHeight;
 	if (!box.scrollView.isScrollbarVisible && !canRevealHiddenAuto) return undefined;

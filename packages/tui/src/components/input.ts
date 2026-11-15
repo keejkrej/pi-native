@@ -2,7 +2,7 @@ import { getKeybindings } from "../keybindings.ts";
 import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import {
-	type Component,
+	Component,
 	CURSOR_MARKER,
 	type Focusable,
 	renderFakeCursor,
@@ -29,7 +29,7 @@ export interface InputOptions {
 /**
  * Input component - single-line text input with horizontal scrolling
  */
-export class Input implements Component, Focusable {
+export class Input extends Component implements Focusable {
 	private value: string = "";
 	private cursor: number = 0; // Cursor position in the value
 	private readonly prompt: string;
@@ -39,8 +39,13 @@ export class Input implements Component, Focusable {
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
 
-	/** Focusable interface - set by TUI when focus changes */
-	focused: boolean = false;
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -54,6 +59,7 @@ export class Input implements Component, Focusable {
 	private undoStack = new UndoStack<InputState>();
 
 	constructor(options: InputOptions = {}) {
+		super();
 		this.prompt = options.prompt ?? "> ";
 		this.placeholder = options.placeholder ?? "";
 		this.placeholderStyle = options.placeholderStyle ?? ((text) => text);
@@ -68,7 +74,7 @@ export class Input implements Component, Focusable {
 		this.cursor = Math.min(this.cursor, value.length);
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		// Handle bracketed paste mode
 		// Start of paste: \x1b[200~
 		// End of paste: \x1b[201~
@@ -173,7 +179,7 @@ export class Input implements Component, Focusable {
 			if (this.cursor > 0) {
 				const beforeCursor = this.value.slice(0, this.cursor);
 				const graphemes = [...segmenter.segment(beforeCursor)];
-				const lastGrapheme = graphemes[graphemes.length - 1];
+				const lastGrapheme = graphemes.length > 0 ? graphemes[graphemes.length - 1] : undefined;
 				this.cursor -= lastGrapheme ? lastGrapheme.segment.length : 1;
 			}
 			return;
@@ -184,7 +190,7 @@ export class Input implements Component, Focusable {
 			if (this.cursor < this.value.length) {
 				const afterCursor = this.value.slice(this.cursor);
 				const graphemes = [...segmenter.segment(afterCursor)];
-				const firstGrapheme = graphemes[0];
+				const firstGrapheme = graphemes.length > 0 ? graphemes[0] : undefined;
 				this.cursor += firstGrapheme ? firstGrapheme.segment.length : 1;
 			}
 			return;
@@ -233,7 +239,7 @@ export class Input implements Component, Focusable {
 		}
 	}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "press" || event.button !== "left" || event.y !== 0) return undefined;
 		const visibleColumn = Math.max(0, event.x - 2);
 		const targetColumn = this.renderedStartColumn + visibleColumn;
@@ -268,7 +274,7 @@ export class Input implements Component, Focusable {
 			this.pushUndo();
 			const beforeCursor = this.value.slice(0, this.cursor);
 			const graphemes = [...segmenter.segment(beforeCursor)];
-			const lastGrapheme = graphemes[graphemes.length - 1];
+			const lastGrapheme = graphemes.length > 0 ? graphemes[graphemes.length - 1] : undefined;
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
 			this.value = this.value.slice(0, this.cursor - graphemeLength) + this.value.slice(this.cursor);
 			this.cursor -= graphemeLength;
@@ -281,7 +287,7 @@ export class Input implements Component, Focusable {
 			this.pushUndo();
 			const afterCursor = this.value.slice(this.cursor);
 			const graphemes = [...segmenter.segment(afterCursor)];
-			const firstGrapheme = graphemes[0];
+			const firstGrapheme = graphemes.length > 0 ? graphemes[0] : undefined;
 			const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
 			this.value = this.value.slice(0, this.cursor) + this.value.slice(this.cursor + graphemeLength);
 		}
@@ -412,11 +418,11 @@ export class Input implements Component, Focusable {
 		this.cursor += cleanText.length;
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		// No cached state to invalidate currently
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		// Calculate visible window
 		const availableWidth = width - visibleWidth(this.prompt);
 
@@ -426,8 +432,8 @@ export class Input implements Component, Focusable {
 
 		if (this.value.length === 0 && this.placeholder) {
 			const placeholder = truncateToWidth(this.placeholder, availableWidth, "");
-			const graphemes = [...segmenter.segment(placeholder)];
-			const atCursor = graphemes[0]?.segment ?? " ";
+			const graphemes = placeholder.length > 0 ? [...segmenter.segment(placeholder)] : [];
+			const atCursor = graphemes.length > 0 ? graphemes[0]!.segment : " ";
 			const afterCursor = placeholder.slice(atCursor.length);
 			const marker = this.focused ? CURSOR_MARKER : "";
 			const cursorChar = renderFakeCursor(this.placeholderStyle(atCursor));
@@ -477,11 +483,12 @@ export class Input implements Component, Focusable {
 
 		// Build line with fake cursor
 		// Insert cursor character at cursor position
-		const graphemes = [...segmenter.segment(visibleText.slice(cursorDisplay))];
-		const cursorGrapheme = graphemes[0];
+		const afterSlice = visibleText.slice(cursorDisplay);
+		const graphemes = afterSlice.length > 0 ? [...segmenter.segment(afterSlice)] : [];
+		const cursorGrapheme = graphemes.length > 0 ? graphemes[0] : undefined;
 
 		const beforeCursor = visibleText.slice(0, cursorDisplay);
-		const atCursor = cursorGrapheme?.segment ?? " "; // Character at cursor, or space if at end
+		const atCursor = cursorGrapheme ? cursorGrapheme.segment : " "; // Character at cursor, or space if at end
 		const afterCursor = visibleText.slice(cursorDisplay + atCursor.length);
 
 		// Hardware cursor marker (zero-width, emitted before fake cursor for IME positioning)

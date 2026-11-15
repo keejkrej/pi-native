@@ -10,7 +10,7 @@ import {
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
-import type { Component } from "../tui.ts";
+import { Component } from "../tui.ts";
 import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
@@ -191,17 +191,22 @@ const LATEX_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
 ];
 
 function trimPartialClosingFences(tokens: readonly Token[]): void {
-	const token = tokens[tokens.length - 1];
-	if (token?.type === "list") {
-		const listToken = token as Tokens.List;
-		trimPartialClosingFences(listToken.items[listToken.items.length - 1]?.tokens ?? []);
+	if (tokens.length === 0) {
 		return;
 	}
-	if (token?.type === "blockquote") {
+	const token = tokens[tokens.length - 1]!;
+	if (token.type === "list") {
+		const listToken = token as Tokens.List;
+		if (listToken.items.length > 0) {
+			trimPartialClosingFences(listToken.items[listToken.items.length - 1]!.tokens);
+		}
+		return;
+	}
+	if (token.type === "blockquote") {
 		trimPartialClosingFences((token as Tokens.Blockquote).tokens ?? []);
 		return;
 	}
-	if (token?.type !== "code") {
+	if (token.type !== "code") {
 		return;
 	}
 
@@ -238,9 +243,9 @@ function removeHtmlCommentBlocks(tokens: Token[]): void {
 			removeHtmlCommentBlocks((token as Tokens.Blockquote).tokens ?? []);
 		} else if (token.type === "html" && stripHtmlComments(token.raw).trim() === "") {
 			tokens.splice(i, 1);
-			if (tokens[i]?.type === "space" && (i === 0 || tokens[i - 1]?.type === "space")) {
+			if (i < tokens.length && tokens[i]!.type === "space" && (i === 0 || (i > 0 && tokens[i - 1]!.type === "space"))) {
 				tokens.splice(i, 1);
-			} else if (i === tokens.length && tokens[i - 1]?.type === "space") {
+			} else if (i === tokens.length && i > 0 && tokens[i - 1]!.type === "space") {
 				tokens.splice(--i, 1);
 			}
 		}
@@ -348,7 +353,7 @@ interface RenderedBlock {
 	highlightedCode: Map<string, string[]>;
 }
 
-export class Markdown implements Component {
+export class Markdown extends Component {
 	private text: string;
 	private paddingX: number; // Left/right padding
 	private paddingY: number; // Top/bottom padding
@@ -377,6 +382,7 @@ export class Markdown implements Component {
 		defaultTextStyle?: DefaultTextStyle,
 		options?: MarkdownOptions,
 	) {
+		super();
 		this.text = text;
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
@@ -393,7 +399,7 @@ export class Markdown implements Component {
 		this.clearRenderCache();
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.clearRenderCache();
 		// The theme may have changed, which changes every styled line and the default style's prefix.
 		this.blocks = undefined;
@@ -406,7 +412,7 @@ export class Markdown implements Component {
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		// Check cache
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;
@@ -449,7 +455,7 @@ export class Markdown implements Component {
 		const contentLines: string[] = [];
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i];
-			const nextTokenType = tokens[i + 1]?.type;
+			const nextTokenType = i + 1 < tokens.length ? tokens[i + 1]!.type : undefined;
 			const reused = reuseBlocks ? (blocks.get(token.raw) ?? previousBlocks?.get(token.raw)) : undefined;
 			const block: RenderedBlock = reused ?? {
 				width: -1,
@@ -741,7 +747,8 @@ export class Markdown implements Component {
 				// width 1 and the output grows exponentially with nesting depth.
 				if (width < 3) {
 					for (let i = 0; i < quoteTokens.length; i++) {
-						for (const line of this.renderToken(quoteTokens[i], width, quoteTokens[i + 1]?.type, styleContext)) {
+						const nextQuoteTokenType = i + 1 < quoteTokens.length ? quoteTokens[i + 1]!.type : undefined;
+						for (const line of this.renderToken(quoteTokens[i], width, nextQuoteTokenType, styleContext)) {
 							lines.push(line);
 						}
 					}
@@ -761,11 +768,11 @@ export class Markdown implements Component {
 				const renderedQuoteLines: string[] = [];
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i];
-					const nextQuoteToken = quoteTokens[i + 1];
+					const nextQuoteTokenType = i + 1 < quoteTokens.length ? quoteTokens[i + 1]!.type : undefined;
 					for (const line of this.renderToken(
 						quoteToken,
 						quoteContentWidth,
-						nextQuoteToken?.type,
+						nextQuoteTokenType,
 						quoteInlineStyleContext,
 					)) {
 						renderedQuoteLines.push(line);

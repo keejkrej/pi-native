@@ -116,10 +116,10 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"tui.editor.deleteToLineEnd",
 ] as const;
 
-type BuiltInKeyBindings = Partial<Record<KeyId, { keybinding: string; restrictOverride: boolean }>>;
+type BuiltInKeyBindings = Map<KeyId, { keybinding: string; restrictOverride: boolean }>;
 
 const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltInKeyBindings => {
-	const builtinKeybindings = {} as BuiltInKeyBindings;
+	const builtinKeybindings: BuiltInKeyBindings = new Map();
 	for (const [keybinding, keys] of Object.entries(resolvedKeybindings)) {
 		if (keys === undefined) continue;
 		const keyList = Array.isArray(keys) ? keys : [keys];
@@ -128,12 +128,12 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 			const normalizedKey = key.toLowerCase() as KeyId;
 			// If multiple actions bind the same key, the reserved action wins so extensions
 			// remain blocked by reserved shortcuts regardless of iteration order.
-			const existing = builtinKeybindings[normalizedKey];
+			const existing = builtinKeybindings.get(normalizedKey);
 			if (existing?.restrictOverride && !restrictOverride) continue;
-			builtinKeybindings[normalizedKey] = {
+			builtinKeybindings.set(normalizedKey, {
 				keybinding,
 				restrictOverride,
-			};
+			});
 		}
 	}
 	return builtinKeybindings;
@@ -693,7 +693,7 @@ export class ExtensionRunner {
 			for (const [key, shortcut] of ext.shortcuts) {
 				const normalizedKey = key.toLowerCase() as KeyId;
 
-				const builtInKeybinding = builtinKeybindings[normalizedKey];
+				const builtInKeybinding = builtinKeybindings.get(normalizedKey);
 				if (builtInKeybinding?.restrictOverride === true) {
 					addDiagnostic(
 						`Extension shortcut '${key}' from ${shortcut.extensionPath} conflicts with built-in shortcut. Skipping.`,
@@ -1343,13 +1343,13 @@ export class ExtensionRunner {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context_with_system")) {
 			for (const handler of handlers) {
 				try {
-					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
+					const hadLeadingSystemMessage = currentMessages.length > 0 && currentMessages[0]!.role === "system";
 					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
 					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
 					currentMessages = handlerResult?.messages ?? currentMessages;
 					// Providers read the prompt and initial tools from the leading system message.
 					// Losing it is never intended; report it but honor the handler's output.
-					if (hadLeadingSystemMessage && currentMessages[0]?.role !== "system") {
+					if (hadLeadingSystemMessage && (currentMessages.length === 0 || currentMessages[0]!.role !== "system")) {
 						this.emitError({
 							extensionPath: ext.path,
 							event: "context_with_system",

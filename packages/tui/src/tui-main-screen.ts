@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+import { TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
 /** OSC 133 prompt markers at the start of a rendered line. Fullscreen uses them for prompt navigation. */
@@ -124,8 +124,10 @@ export interface TuiMainScreenRenderState {
 }
 
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
-export class TuiMainScreen extends TuiBase implements TUI {
-	readonly mode = "regular" as const;
+export class TuiMainScreen extends TuiBase {
+	override get mode(): "regular" {
+		return "regular";
+	}
 	private previousLines: string[] = [];
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;

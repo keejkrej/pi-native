@@ -4,7 +4,7 @@
 
 import { basename, dirname, join, relative } from "node:path";
 import {
-	type Component,
+	Component,
 	Container,
 	type Focusable,
 	getKeybindings,
@@ -177,11 +177,12 @@ type FlatEntry =
 	| { type: "subgroup"; subgroup: ResourceSubgroup; group: ResourceGroup }
 	| { type: "item"; item: ResourceItem };
 
-class ConfigSelectorHeader implements Component {
+class ConfigSelectorHeader extends Component {
 	private writeScope: ConfigWriteScope;
 	private projectModeAvailable: boolean;
 
 	constructor(writeScope: ConfigWriteScope, projectModeAvailable: boolean) {
+		super();
 		this.writeScope = writeScope;
 		this.projectModeAvailable = projectModeAvailable;
 	}
@@ -190,9 +191,9 @@ class ConfigSelectorHeader implements Component {
 		this.writeScope = writeScope;
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const title = theme.bold(this.writeScope === "project" ? "Project Local Resources" : "Global Resources");
 		const sep = theme.fg("muted", " · ");
 		const switchHint = this.projectModeAvailable ? keyHint("tui.input.tab", "switch mode") + sep : "";
@@ -212,7 +213,7 @@ class ConfigSelectorHeader implements Component {
 	}
 }
 
-class ResourceList implements Component, Focusable {
+class ResourceList extends Component implements Focusable {
 	private groupsByScope: Record<ConfigWriteScope, ResourceGroup[]>;
 	private flatItems: FlatEntry[] = [];
 	private filteredItems: FlatEntry[] = [];
@@ -231,10 +232,16 @@ class ResourceList implements Component, Focusable {
 	public onSwitchMode?: () => void;
 
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -247,6 +254,7 @@ class ResourceList implements Component, Focusable {
 		terminalHeight?: number,
 		writeScope: ConfigWriteScope = "global",
 	) {
+		super();
 		this.groupsByScope = groupsByScope;
 		this.settingsManager = settingsManager;
 		this.cwd = cwd;
@@ -380,9 +388,9 @@ class ResourceList implements Component, Focusable {
 		}
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 
 		// Search input
@@ -444,7 +452,7 @@ class ResourceList implements Component, Focusable {
 		return lines;
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		const kb = getKeybindings();
 
 		if (kb.matches(data, "tui.select.up")) {
@@ -490,7 +498,10 @@ class ResourceList implements Component, Focusable {
 			return;
 		}
 		if (data === " " || kb.matches(data, "tui.select.confirm")) {
-			const entry = this.filteredItems[this.selectedIndex];
+			const entry =
+				this.selectedIndex >= 0 && this.selectedIndex < this.filteredItems.length
+					? this.filteredItems[this.selectedIndex]
+					: undefined;
 			if (entry?.type === "item" && (this.writeScope === "project" || this.getItemScope(entry.item) === "user")) {
 				const newEnabled = this.toggleResource(entry.item);
 				if (newEnabled !== undefined) {
@@ -865,10 +876,13 @@ export class ConfigSelectorComponent extends Container implements Focusable {
 	private writeScope: ConfigWriteScope;
 
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.resourceList.focused = value;
 	}

@@ -94,7 +94,11 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
-	setOutputPad(padding: number): void {
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		// Markdown takes its padding at construction.
 		this.markdownSlots = [];
@@ -123,7 +127,7 @@ export class AssistantMessageComponent extends Container {
 		const previousSlots = this.markdownSlots;
 		this.markdownSlots = [];
 		const markdownBlock = (kind: MarkdownSlot["kind"], text: string, create: () => Markdown): Markdown => {
-			const slot = previousSlots[this.markdownSlots.length];
+			const slot = this.markdownSlots.length < previousSlots.length ? previousSlots[this.markdownSlots.length] : undefined;
 			const markdown = slot?.kind === kind ? slot.markdown : create();
 			markdown.setText(text);
 			this.markdownSlots.push({ kind, markdown });

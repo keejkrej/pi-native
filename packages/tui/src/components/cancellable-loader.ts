@@ -26,7 +26,19 @@ export class CancellableLoader extends Loader {
 		return this.abortController.signal.aborted;
 	}
 
-	handleInput(data: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override handleInput(data: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(data, "tui.select.cancel")) {
 			this.abortController.abort();
@@ -34,7 +46,7 @@ export class CancellableLoader extends Loader {
 		}
 	}
 
-	dispose(): void {
+	override dispose(): void {
 		this.stop();
 	}
 }

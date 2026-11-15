@@ -1,3 +1,4 @@
+import type { StackLayoutNode } from "../layout-node.ts";
 import { compositeTuiLine } from "../tui.ts";
 import { visibleWidth } from "../utils.ts";
 import { allocateStackSizes, Stack, type StackChild, type StackOptions, visibleStackEntries } from "./stack.ts";
@@ -7,6 +8,14 @@ export class HStack extends Stack {
 
 	constructor(children: StackChild[] = [], options: StackOptions = {}) {
 		super(children, options);
+	}
+
+	override getLayoutNode(): StackLayoutNode {
+		return super.getLayoutNode();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
 	}
 
 	override render(width: number): string[] {

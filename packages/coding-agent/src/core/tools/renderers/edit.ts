@@ -34,6 +34,14 @@ class EditCallRenderComponent extends Box {
 	previewArgsKey: string | undefined = undefined;
 	previewPending = false;
 	settledError = false;
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
 }
 function createEditCallRenderComponent(): EditCallRenderComponent {
 	return new EditCallRenderComponent(1, 1, (text: string) => text);

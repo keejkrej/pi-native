@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import {
-	type Component,
+	Component,
 	Container,
 	type Focusable,
 	getKeybindings,
@@ -43,7 +43,7 @@ function getSessionPathKey(path: string): string {
 	return getPathComparisonKey(canonicalizePath(path));
 }
 
-class SessionSelectorHeader implements Component {
+class SessionSelectorHeader extends Component {
 	private scope: SessionScope;
 	private sortMode: SortMode;
 	private nameFilter: NameFilter;
@@ -57,6 +57,7 @@ class SessionSelectorHeader implements Component {
 	private showRenameHint = false;
 
 	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
+		super();
 		this.scope = scope;
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
@@ -115,9 +116,9 @@ class SessionSelectorHeader implements Component {
 		}, autoHideMs);
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
 		const leftText = theme.bold(title);
 
@@ -270,9 +271,12 @@ function flattenSessionTree(roots: SessionTreeNode[]): FlatSessionNode[] {
 /**
  * Custom session list component with multi-line items and search
  */
-class SessionList implements Component, Focusable {
+class SessionList extends Component implements Focusable {
 	public getSelectedSessionPath(): string | undefined {
-		const selected = this.filteredSessions[this.selectedIndex];
+		const selected =
+			this.selectedIndex >= 0 && this.selectedIndex < this.filteredSessions.length
+				? this.filteredSessions[this.selectedIndex]
+				: undefined;
 		return selected?.session.path;
 	}
 	private allSessions: SessionInfo[] = [];
@@ -304,10 +308,16 @@ class SessionList implements Component, Focusable {
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -320,6 +330,7 @@ class SessionList implements Component, Focusable {
 		keybindings: KeybindingsManager,
 		currentSessionFilePath?: string,
 	) {
+		super();
 		this.allSessions = sessions;
 		this.filteredSessions = [];
 		this.searchInput = new Input();
@@ -423,9 +434,9 @@ class SessionList implements Component, Focusable {
 		return getSessionPathKey(path) === this.currentSessionPathKey;
 	}
 
-	invalidate(): void {}
+	override invalidate(): void {}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines: string[] = [];
 
 		// Render search input
@@ -543,7 +554,7 @@ class SessionList implements Component, Focusable {
 		return parts.join("") + branch;
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 
 		// Handle delete confirmation state first - intercept all keys
@@ -699,11 +710,19 @@ async function deleteSessionFile(
  * Component that renders a session selector
  */
 export class SessionSelectorComponent extends Container implements Focusable {
-	get capturesViewportInput(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get capturesViewportInput(): boolean {
 		return this.mode !== "rename";
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		if (this.mode === "rename") {
 			const kb = getKeybindings();
 			if (kb.matches(data, "tui.select.cancel")) {
@@ -739,10 +758,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 	// Focusable implementation - propagate to sessionList for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.sessionList.focused = value;
 		this.renameInput.focused = value;

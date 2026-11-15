@@ -84,7 +84,7 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 	const initialMessage = createInitialSystemMessage(initialState?.systemPrompt, tools.map(toToolDeclaration));
-	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
+	if ((messages.length === 0 || messages[0]!.role !== "system") && initialMessage) messages.unshift(initialMessage);
 
 	return {
 		get systemPrompt() {

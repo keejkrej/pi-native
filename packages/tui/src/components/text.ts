@@ -1,10 +1,10 @@
-import type { Component } from "../tui.ts";
+import { Component } from "../tui.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
  */
-export class Text implements Component {
+export class Text extends Component {
 	private text: string;
 	private paddingX: number; // Left/right padding
 	private paddingY: number; // Top/bottom padding
@@ -16,6 +16,7 @@ export class Text implements Component {
 	private cachedLines?: string[];
 
 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
+		super();
 		this.text = text;
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
@@ -43,13 +44,13 @@ export class Text implements Component {
 		this.invalidate();
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		// Check cache
 		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
 			return this.cachedLines;

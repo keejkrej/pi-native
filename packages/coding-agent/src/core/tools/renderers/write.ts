@@ -35,6 +35,14 @@ class WriteCallRenderComponent extends Text {
 	constructor() {
 		super("", 0, 0);
 	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
 }
 const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
 function highlightSingleLine(line: string, lang: string): string {

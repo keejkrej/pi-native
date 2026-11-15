@@ -2,7 +2,7 @@
  * Armin says hi! A fun easter egg with animated XBM art.
  */
 
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { Component, type TUI } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 // XBM image: 31x36 pixels, LSB first, 1=background, 0=foreground
@@ -59,19 +59,40 @@ function buildFinalGrid(): string[][] {
 	return grid;
 }
 
-export class ArminComponent implements Component {
+interface ArminEffectState {
+	pos: number;
+	row: number;
+	drops: { y: number; settled: number }[];
+	positions: [number, number][];
+	idx: number;
+	expansion: number;
+	phase: number;
+	glitchFrames: number;
+}
+
+export class ArminComponent extends Component {
 	private ui: TUI;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private effect: Effect;
 	private finalGrid: string[][];
 	private currentGrid: string[][];
-	private effectState: Record<string, unknown> = {};
+	private effectState: ArminEffectState = {
+		pos: 0,
+		row: 0,
+		drops: [],
+		positions: [],
+		idx: 0,
+		expansion: 0,
+		phase: 0,
+		glitchFrames: 8,
+	};
 	private cachedLines: string[] = [];
 	private cachedWidth = 0;
 	private gridVersion = 0;
 	private cachedVersion = -1;
 
 	constructor(ui: TUI) {
+		super();
 		this.ui = ui;
 		this.effect = EFFECTS[Math.floor(Math.random() * EFFECTS.length)];
 		this.finalGrid = buildFinalGrid();
@@ -81,11 +102,11 @@ export class ArminComponent implements Component {
 		this.startAnimation();
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.cachedWidth = 0;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		if (width === this.cachedWidth && this.cachedVersion === this.gridVersion) {
 			return this.cachedLines;
 		}
@@ -112,68 +133,59 @@ export class ArminComponent implements Component {
 	}
 
 	private createEmptyGrid(): string[][] {
-		return Array.from({ length: DISPLAY_HEIGHT }, () => Array(WIDTH).fill(" "));
+		return Array.from({ length: DISPLAY_HEIGHT }, () => Array.from({ length: WIDTH }, () => " "));
+	}
+
+	private createShuffledPositions(): [number, number][] {
+		const positions: [number, number][] = [];
+		for (let row = 0; row < DISPLAY_HEIGHT; row++) {
+			for (let x = 0; x < WIDTH; x++) {
+				positions.push([row, x]);
+			}
+		}
+		// Fisher-Yates shuffle
+		for (let i = positions.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[positions[i], positions[j]] = [positions[j]!, positions[i]!];
+		}
+		return positions;
 	}
 
 	private initEffect(): void {
 		switch (this.effect) {
 			case "typewriter":
-				this.effectState = { pos: 0 };
+				this.effectState.pos = 0;
 				break;
 			case "scanline":
-				this.effectState = { row: 0 };
+				this.effectState.row = 0;
 				break;
 			case "rain":
 				// Track falling position for each column
-				this.effectState = {
-					drops: Array.from({ length: WIDTH }, () => ({
-						y: -Math.floor(Math.random() * DISPLAY_HEIGHT * 2),
-						settled: 0,
-					})),
-				};
+				this.effectState.drops = Array.from({ length: WIDTH }, () => ({
+					y: -Math.floor(Math.random() * DISPLAY_HEIGHT * 2),
+					settled: 0,
+				}));
 				break;
 			case "fade": {
-				// Shuffle all pixel positions
-				const positions: [number, number][] = [];
-				for (let row = 0; row < DISPLAY_HEIGHT; row++) {
-					for (let x = 0; x < WIDTH; x++) {
-						positions.push([row, x]);
-					}
-				}
-				// Fisher-Yates shuffle
-				for (let i = positions.length - 1; i > 0; i--) {
-					const j = Math.floor(Math.random() * (i + 1));
-					[positions[i], positions[j]] = [positions[j], positions[i]];
-				}
-				this.effectState = { positions, idx: 0 };
+				this.effectState.positions = this.createShuffledPositions();
+				this.effectState.idx = 0;
 				break;
 			}
 			case "crt":
-				this.effectState = { expansion: 0 };
+				this.effectState.expansion = 0;
 				break;
 			case "glitch":
-				this.effectState = { phase: 0, glitchFrames: 8 };
+				this.effectState.phase = 0;
+				this.effectState.glitchFrames = 8;
 				break;
 			case "dissolve": {
 				// Start with random noise
+				const chars = [" ", "░", "▒", "▓", "█", "▀", "▄"];
 				this.currentGrid = Array.from({ length: DISPLAY_HEIGHT }, () =>
-					Array.from({ length: WIDTH }, () => {
-						const chars = [" ", "░", "▒", "▓", "█", "▀", "▄"];
-						return chars[Math.floor(Math.random() * chars.length)];
-					}),
+					Array.from({ length: WIDTH }, () => chars[Math.floor(Math.random() * chars.length)]!),
 				);
-				// Shuffle positions for gradual resolve
-				const dissolvePositions: [number, number][] = [];
-				for (let row = 0; row < DISPLAY_HEIGHT; row++) {
-					for (let x = 0; x < WIDTH; x++) {
-						dissolvePositions.push([row, x]);
-					}
-				}
-				for (let i = dissolvePositions.length - 1; i > 0; i--) {
-					const j = Math.floor(Math.random() * (i + 1));
-					[dissolvePositions[i], dissolvePositions[j]] = [dissolvePositions[j], dissolvePositions[i]];
-				}
-				this.effectState = { positions: dissolvePositions, idx: 0 };
+				this.effectState.positions = this.createShuffledPositions();
+				this.effectState.idx = 0;
 				break;
 			}
 		}
@@ -220,46 +232,40 @@ export class ArminComponent implements Component {
 	}
 
 	private tickTypewriter(): boolean {
-		const state = this.effectState as { pos: number };
 		const pixelsPerFrame = 3;
 
 		for (let i = 0; i < pixelsPerFrame; i++) {
-			const row = Math.floor(state.pos / WIDTH);
-			const x = state.pos % WIDTH;
+			const row = Math.floor(this.effectState.pos / WIDTH);
+			const x = this.effectState.pos % WIDTH;
 			if (row >= DISPLAY_HEIGHT) return true;
-			this.currentGrid[row][x] = this.finalGrid[row][x];
-			state.pos++;
+			this.currentGrid[row]![x] = this.finalGrid[row]![x]!;
+			this.effectState.pos++;
 		}
 		return false;
 	}
 
 	private tickScanline(): boolean {
-		const state = this.effectState as { row: number };
-		if (state.row >= DISPLAY_HEIGHT) return true;
+		if (this.effectState.row >= DISPLAY_HEIGHT) return true;
 
 		// Copy row
 		for (let x = 0; x < WIDTH; x++) {
-			this.currentGrid[state.row][x] = this.finalGrid[state.row][x];
+			this.currentGrid[this.effectState.row]![x] = this.finalGrid[this.effectState.row]![x]!;
 		}
-		state.row++;
+		this.effectState.row++;
 		return false;
 	}
 
 	private tickRain(): boolean {
-		const state = this.effectState as {
-			drops: { y: number; settled: number }[];
-		};
-
 		let allSettled = true;
 		this.currentGrid = this.createEmptyGrid();
 
 		for (let x = 0; x < WIDTH; x++) {
-			const drop = state.drops[x];
+			const drop = this.effectState.drops[x]!;
 
 			// Draw settled pixels
 			for (let row = DISPLAY_HEIGHT - 1; row >= DISPLAY_HEIGHT - drop.settled; row--) {
 				if (row >= 0) {
-					this.currentGrid[row][x] = this.finalGrid[row][x];
+					this.currentGrid[row]![x] = this.finalGrid[row]![x]!;
 				}
 			}
 
@@ -271,7 +277,7 @@ export class ArminComponent implements Component {
 			// Find the target row for this column (lowest non-space pixel)
 			let targetRow = -1;
 			for (let row = DISPLAY_HEIGHT - 1 - drop.settled; row >= 0; row--) {
-				if (this.finalGrid[row][x] !== " ") {
+				if (this.finalGrid[row]![x] !== " ") {
 					targetRow = row;
 					break;
 				}
@@ -288,7 +294,7 @@ export class ArminComponent implements Component {
 					drop.y = -Math.floor(Math.random() * 5) - 1;
 				} else {
 					// Still falling
-					this.currentGrid[drop.y][x] = "▓";
+					this.currentGrid[drop.y]![x] = "▓";
 				}
 			}
 		}
@@ -296,43 +302,42 @@ export class ArminComponent implements Component {
 		return allSettled;
 	}
 
-	private tickFade(): boolean {
-		const state = this.effectState as { positions: [number, number][]; idx: number };
-		const pixelsPerFrame = 15;
-
+	private advanceRevealedPositions(pixelsPerFrame: number): boolean {
+		const positions = this.effectState.positions;
 		for (let i = 0; i < pixelsPerFrame; i++) {
-			if (state.idx >= state.positions.length) return true;
-			const [row, x] = state.positions[state.idx];
-			this.currentGrid[row][x] = this.finalGrid[row][x];
-			state.idx++;
+			if (this.effectState.idx >= positions.length) return true;
+			const [row, x] = positions[this.effectState.idx]!;
+			this.currentGrid[row]![x] = this.finalGrid[row]![x]!;
+			this.effectState.idx++;
 		}
 		return false;
 	}
 
+	private tickFade(): boolean {
+		return this.advanceRevealedPositions(15);
+	}
+
 	private tickCrt(): boolean {
-		const state = this.effectState as { expansion: number };
 		const midRow = Math.floor(DISPLAY_HEIGHT / 2);
 
 		this.currentGrid = this.createEmptyGrid();
 
 		// Draw from middle expanding outward
-		const top = midRow - state.expansion;
-		const bottom = midRow + state.expansion;
+		const top = midRow - this.effectState.expansion;
+		const bottom = midRow + this.effectState.expansion;
 
 		for (let row = Math.max(0, top); row <= Math.min(DISPLAY_HEIGHT - 1, bottom); row++) {
 			for (let x = 0; x < WIDTH; x++) {
-				this.currentGrid[row][x] = this.finalGrid[row][x];
+				this.currentGrid[row]![x] = this.finalGrid[row]![x]!;
 			}
 		}
 
-		state.expansion++;
-		return state.expansion > DISPLAY_HEIGHT;
+		this.effectState.expansion++;
+		return this.effectState.expansion > DISPLAY_HEIGHT;
 	}
 
 	private tickGlitch(): boolean {
-		const state = this.effectState as { phase: number; glitchFrames: number };
-
-		if (state.phase < state.glitchFrames) {
+		if (this.effectState.phase < this.effectState.glitchFrames) {
 			// Glitch phase: show corrupted version
 			this.currentGrid = this.finalGrid.map((row) => {
 				const offset = Math.floor(Math.random() * 7) - 3;
@@ -347,12 +352,12 @@ export class ArminComponent implements Component {
 				// Random vertical swap
 				if (Math.random() < 0.2) {
 					const swapRow = Math.floor(Math.random() * DISPLAY_HEIGHT);
-					return [...this.finalGrid[swapRow]];
+					return [...this.finalGrid[swapRow]!];
 				}
 
 				return glitchRow;
 			});
-			state.phase++;
+			this.effectState.phase++;
 			return false;
 		}
 
@@ -362,23 +367,14 @@ export class ArminComponent implements Component {
 	}
 
 	private tickDissolve(): boolean {
-		const state = this.effectState as { positions: [number, number][]; idx: number };
-		const pixelsPerFrame = 20;
-
-		for (let i = 0; i < pixelsPerFrame; i++) {
-			if (state.idx >= state.positions.length) return true;
-			const [row, x] = state.positions[state.idx];
-			this.currentGrid[row][x] = this.finalGrid[row][x];
-			state.idx++;
-		}
-		return false;
+		return this.advanceRevealedPositions(20);
 	}
 
 	private updateDisplay(): void {
 		this.gridVersion++;
 	}
 
-	dispose(): void {
+	override dispose(): void {
 		this.stopAnimation();
 	}
 }

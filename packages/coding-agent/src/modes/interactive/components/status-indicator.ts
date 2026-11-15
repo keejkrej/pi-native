@@ -1,4 +1,4 @@
-import { type Component, Loader, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { Component, Loader, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
@@ -30,7 +30,15 @@ export class StatusIndicator extends Loader {
 		return truncateToWidth(this.getRenderedIndicator(), width, "");
 	}
 
-	dispose(): void {
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
+	override dispose(): void {
 		this.stop();
 	}
 }
@@ -45,6 +53,14 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			message,
 			indicator,
 		);
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
 	}
 }
 
@@ -73,6 +89,14 @@ export class RetryStatusIndicator extends StatusIndicator {
 		);
 	}
 
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
+
 	override dispose(): void {
 		this.countdown?.dispose();
 		this.countdown = undefined;
@@ -97,6 +121,14 @@ export class CompactionStatusIndicator extends StatusIndicator {
 			label,
 		);
 	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
 }
 
 export class BranchSummaryStatusIndicator extends StatusIndicator {
@@ -109,14 +141,22 @@ export class BranchSummaryStatusIndicator extends StatusIndicator {
 			`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
 		);
 	}
+
+	override render(width: number): string[] {
+		return super.render(width);
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+	}
 }
 
-export class IdleStatus implements Component {
-	invalidate(): void {
+export class IdleStatus extends Component {
+	override invalidate(): void {
 		// No cached state to invalidate.
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const emptyLine = " ".repeat(width);
 		return [emptyLine, emptyLine];
 	}

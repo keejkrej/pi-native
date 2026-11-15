@@ -1,3 +1,4 @@
+import type { StackLayoutNode } from "../layout-node.ts";
 import { allocateStackSizes, Stack, type StackChild, type StackOptions, visibleStackEntries } from "./stack.ts";
 
 export class VStack extends Stack {
@@ -5,6 +6,14 @@ export class VStack extends Stack {
 
 	constructor(children: StackChild[] = [], options: StackOptions = {}) {
 		super(children, options);
+	}
+
+	override getLayoutNode(): StackLayoutNode {
+		return super.getLayoutNode();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
 	}
 
 	override render(width: number): string[] {
@@ -22,9 +31,10 @@ export class VStack extends Stack {
 			if (index > 0) {
 				for (let gap = 0; gap < this.gap; gap++) lines.push("");
 			}
-			const childLines = rendered[index]!.slice(0, sizes[index]);
+			const targetSize = index < sizes.length ? sizes[index]! : 0;
+			const childLines = (index < rendered.length ? rendered[index]! : []).slice(0, targetSize);
 			lines.push(...childLines);
-			for (let padding = childLines.length; padding < sizes[index]!; padding++) lines.push("");
+			for (let padding = childLines.length; padding < targetSize; padding++) lines.push("");
 		}
 		return lines;
 	}

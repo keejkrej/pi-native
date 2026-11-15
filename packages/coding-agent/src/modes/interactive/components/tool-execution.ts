@@ -1,14 +1,17 @@
 import {
 	Box,
 	type Component,
+	type ComponentLike,
 	Container,
 	getCapabilities,
 	Image,
 	MouseRegion,
 	Spacer,
 	Text,
+	toComponent,
 	type TUI,
 	type TuiMouseEvent,
+	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../core/extensions/types.ts";
 
@@ -163,8 +166,8 @@ export class ToolExecutionComponent extends Container {
 		return new Text(text, 0, 0);
 	}
 
-	private createResultRegion(component: Component): MouseRegion {
-		return new MouseRegion(component, (event) => {
+	private createResultRegion(component: Component | ComponentLike): MouseRegion {
+		return new MouseRegion(toComponent(component), (event) => {
 			if (!this.result || event.type !== "click" || event.button !== "left") return undefined;
 			this.setExpanded(!this.expanded);
 			return { handled: true };
@@ -208,12 +211,24 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override isLayoutContainerDefaultMouse(): boolean {
+		return false;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
 	}
 
-	setOutputPad(outputPad: number): void {
+	override setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.updateDisplay();
 	}
@@ -268,7 +283,7 @@ export class ToolExecutionComponent extends Container {
 		return super.render(width);
 	}
 
-	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
 		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
 		return this.selfRenderContainer.handleMouse({
@@ -302,7 +317,9 @@ export class ToolExecutionComponent extends Container {
 				hasContent = true;
 			} else {
 				try {
-					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
+					const component = toComponent(
+						callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent)),
+					);
 					this.callRendererComponent = component;
 					renderContainer.addChild(this.createResultRegion(component));
 					hasContent = true;
@@ -323,11 +340,13 @@ export class ToolExecutionComponent extends Container {
 					}
 				} else {
 					try {
-						const component = resultRenderer(
-							{ content: this.result.content as any, details: this.result.details },
-							{ expanded: this.expanded, isPartial: this.isPartial },
-							theme,
-							this.getRenderContext(this.resultRendererComponent),
+						const component = toComponent(
+							resultRenderer(
+								{ content: this.result.content as any, details: this.result.details },
+								{ expanded: this.expanded, isPartial: this.isPartial },
+								theme,
+								this.getRenderContext(this.resultRendererComponent),
+							),
 						);
 						this.resultRendererComponent = component;
 						renderContainer.addChild(this.createResultRegion(component));
@@ -371,12 +390,14 @@ export class ToolExecutionComponent extends Container {
 					this.imageSpacers.push(spacer);
 					const source = { data: img.data, mimeType: img.mimeType, widthCells: this.imageWidthCells };
 					const index = this.imageComponents.length;
-					const previous = previousSources[index];
+					const previous = index < previousSources.length ? previousSources[index] : undefined;
 					const imageComponent =
-						previous?.data === source.data &&
+						previous &&
+						previous.data === source.data &&
 						previous.mimeType === source.mimeType &&
-						previous.widthCells === source.widthCells
-							? previousImages[index]
+						previous.widthCells === source.widthCells &&
+						index < previousImages.length
+							? previousImages[index]!
 							: new Image(
 									source.data,
 									source.mimeType,

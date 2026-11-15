@@ -6,7 +6,7 @@
  */
 
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { Component } from "@earendil-works/pi-tui";
+import { type Component, toComponent } from "@earendil-works/pi-tui";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolRenderContext, ToolRenderers } from "../extensions/types.ts";
@@ -107,10 +107,12 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 					return undefined;
 				}
 
-				const component = toolDef.renderCall(
-					args,
-					theme,
-					createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
+				const component = toComponent(
+					toolDef.renderCall(
+						args,
+						theme,
+						createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
+					),
 				);
 				renderedCallComponents.set(toolCallId, component);
 				const lines = component.render(width);
@@ -143,21 +145,25 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 				};
 
 				// Render collapsed
-				const collapsedComponent = toolDef.renderResult(
-					agentToolResult,
-					{ expanded: false, isPartial: false },
-					theme,
-					createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), false, false, isError),
+				const collapsedComponent = toComponent(
+					toolDef.renderResult(
+						agentToolResult,
+						{ expanded: false, isPartial: false },
+						theme,
+						createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), false, false, isError),
+					),
 				);
 				renderedResultComponents.set(toolCallId, collapsedComponent);
 				const collapsed = ansiLinesToHtml(trimRenderedResultLines(collapsedComponent.render(width)));
 
 				// Render expanded
-				const expandedComponent = toolDef.renderResult(
-					agentToolResult,
-					{ expanded: true, isPartial: false },
-					theme,
-					createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), true, false, isError),
+				const expandedComponent = toComponent(
+					toolDef.renderResult(
+						agentToolResult,
+						{ expanded: true, isPartial: false },
+						theme,
+						createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), true, false, isError),
+					),
 				);
 				renderedResultComponents.set(toolCallId, expandedComponent);
 				const expanded = ansiLinesToHtml(trimRenderedResultLines(expandedComponent.render(width)));

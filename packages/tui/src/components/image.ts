@@ -8,7 +8,7 @@ import {
 	imageFallback,
 	renderImage,
 } from "../terminal-image.ts";
-import type { Component } from "../tui.ts";
+import { Component } from "../tui.ts";
 import { truncateToWidth } from "../utils.ts";
 
 /**
@@ -52,7 +52,7 @@ export interface ImageOptions {
 	imageId?: number;
 }
 
-export class Image implements Component {
+export class Image extends Component {
 	private base64Data: string;
 	private mimeType: string;
 	private dimensions: ImageDimensions;
@@ -72,6 +72,7 @@ export class Image implements Component {
 		options: ImageOptions = {},
 		dimensions?: ImageDimensions,
 	) {
+		super();
 		this.base64Data = base64Data;
 		this.mimeType = mimeType;
 		this.theme = theme;
@@ -85,12 +86,12 @@ export class Image implements Component {
 		return this.imageId;
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.cachedLines = undefined;
 		this.cachedWidth = undefined;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) {
 			return this.cachedLines;
 		}

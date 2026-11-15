@@ -1,5 +1,5 @@
 import { LAYOUT_NODE, type LayoutViewport, type StackLayoutEntry, type StackLayoutNode } from "../layout-node.ts";
-import { type Component, Container } from "../tui.ts";
+import { Component, type ComponentLike, Container, toComponent } from "../tui.ts";
 
 export interface StackEntryOptions {
 	basis?: number | "auto";
@@ -11,10 +11,10 @@ export interface StackEntryOptions {
 }
 
 export interface StackEntry extends StackEntryOptions {
-	component: Component;
+	component: Component | ComponentLike;
 }
 
-export type StackChild = Component | StackEntry;
+export type StackChild = Component | ComponentLike | StackEntry;
 
 export interface StackOptions {
 	gap?: number;
@@ -22,7 +22,8 @@ export interface StackOptions {
 }
 
 function isStackEntry(child: StackChild): child is StackEntry {
-	return !("render" in child);
+	if (child instanceof Component) return false;
+	return typeof (child as Partial<ComponentLike>).render !== "function";
 }
 
 function normalizeSize(value: number | undefined, fallback: number): number {
@@ -45,10 +46,11 @@ export abstract class Stack extends Container {
 		}
 	}
 
-	override addChild(component: Component, options: StackEntryOptions = {}): void {
-		super.addChild(component);
+	override addChild(component: Component | ComponentLike, options: StackEntryOptions = {}): void {
+		const resolved = toComponent(component);
+		super.addChild(resolved);
 		this.entries.push({
-			component,
+			component: resolved,
 			...(options.basis === undefined ? {} : { basis: options.basis }),
 			...(options.grow === undefined ? {} : { grow: normalizeSize(options.grow, 0) }),
 			...(options.shrink === undefined ? {} : { shrink: normalizeSize(options.shrink, 1) }),
@@ -58,9 +60,10 @@ export abstract class Stack extends Container {
 		});
 	}
 
-	override removeChild(component: Component): void {
-		super.removeChild(component);
-		const index = this.entries.findIndex((entry) => entry.component === component);
+	override removeChild(component: Component | ComponentLike): void {
+		const resolved = toComponent(component);
+		super.removeChild(resolved);
+		const index = this.entries.findIndex((entry) => entry.component === resolved || entry.component === component);
 		if (index !== -1) this.entries.splice(index, 1);
 	}
 
@@ -69,13 +72,17 @@ export abstract class Stack extends Container {
 		this.entries.length = 0;
 	}
 
-	[LAYOUT_NODE](): StackLayoutNode {
+	override getLayoutNode(): StackLayoutNode {
 		return {
 			type: this.layoutType,
 			entries: this.entries,
 			gap: this.gap,
 			align: this.align,
 		};
+	}
+
+	[LAYOUT_NODE](): StackLayoutNode {
+		return this.getLayoutNode();
 	}
 }
 

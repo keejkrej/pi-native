@@ -36,7 +36,11 @@ export class UserMessageComponent extends Container {
 		this.rebuild();
 	}
 
-	setOutputPad(padding: number): void {
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.rebuild();
 	}

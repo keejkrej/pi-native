@@ -34,18 +34,30 @@ export class BranchSummaryMessageComponent extends Box {
 		this.updateDisplay();
 	}
 
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
 	}
 
-	setOutputPad(outputPad: number): void {
+	override setOutputPad(outputPad: number): void {
 		this.setPaddingX(outputPad);
 	}
 
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
+	}
+
+	override render(width: number): string[] {
+		return super.render(width);
 	}
 
 	private updateDisplay(): void {

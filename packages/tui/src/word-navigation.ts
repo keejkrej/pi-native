@@ -29,12 +29,11 @@ export function findWordBackward(text: string, cursor: number, options?: WordNav
 	let newCursor = cursor;
 
 	// Skip trailing whitespace
-	while (
-		segments.length > 0 &&
-		!isAtomic?.(segments[segments.length - 1]?.segment || "") &&
-		isWhitespaceChar(segments[segments.length - 1]?.segment || "")
-	) {
-		newCursor -= segments.pop()?.segment.length || 0;
+	while (segments.length > 0) {
+		const seg = segments[segments.length - 1]!;
+		if (isAtomic?.(seg.segment) || !isWhitespaceChar(seg.segment)) break;
+		segments.pop();
+		newCursor -= seg.segment.length;
 	}
 
 	if (segments.length === 0) return newCursor;
@@ -56,13 +55,11 @@ export function findWordBackward(text: string, cursor: number, options?: WordNav
 		}
 	} else {
 		// Skip non-word non-whitespace run (punctuation)
-		while (
-			segments.length > 0 &&
-			!isAtomic?.(segments[segments.length - 1]?.segment || "") &&
-			!segments[segments.length - 1]?.isWordLike &&
-			!isWhitespaceChar(segments[segments.length - 1]?.segment || "")
-		) {
-			newCursor -= segments.pop()?.segment.length || 0;
+		while (segments.length > 0) {
+			const seg = segments[segments.length - 1]!;
+			if (isAtomic?.(seg.segment) || seg.isWordLike || isWhitespaceChar(seg.segment)) break;
+			segments.pop();
+			newCursor -= seg.segment.length;
 		}
 	}
 
@@ -81,35 +78,35 @@ export function findWordForward(text: string, cursor: number, options?: WordNavi
 	const textAfterCursor = text.slice(cursor);
 	const segmentFn = options?.segment;
 	const isAtomic = options?.isAtomicSegment;
-	const segments = segmentFn ? segmentFn(textAfterCursor) : wordSegmenter.segment(textAfterCursor);
-	const iterator = segments[Symbol.iterator]();
-	let next = iterator.next();
+	const segments = segmentFn ? [...segmentFn(textAfterCursor)] : [...wordSegmenter.segment(textAfterCursor)];
+	let idx = 0;
 	let newCursor = cursor;
 
 	// Skip leading whitespace
-	while (!next.done && !isAtomic?.(next.value.segment) && isWhitespaceChar(next.value.segment)) {
-		newCursor += next.value.segment.length;
-		next = iterator.next();
+	while (idx < segments.length) {
+		const seg = segments[idx]!;
+		if (isAtomic?.(seg.segment) || !isWhitespaceChar(seg.segment)) break;
+		newCursor += seg.segment.length;
+		idx += 1;
 	}
 
-	if (next.done) return newCursor;
+	if (idx >= segments.length) return newCursor;
 
-	if (isAtomic?.(next.value.segment)) {
+	const current = segments[idx]!;
+	if (isAtomic?.(current.segment)) {
 		// Skip one atomic segment.
-		newCursor += next.value.segment.length;
-	} else if (next.value.isWordLike) {
+		newCursor += current.segment.length;
+	} else if (current.isWordLike) {
 		// Skip inside one word-like segment, preserving ASCII punctuation boundaries.
-		newCursor += PUNCTUATION_REGEX.exec(next.value.segment)?.index ?? next.value.segment.length;
+		const match = PUNCTUATION_REGEX.exec(current.segment);
+		newCursor += match ? match.index : current.segment.length;
 	} else {
 		// Skip non-word non-whitespace run (punctuation)
-		while (
-			!next.done &&
-			!isAtomic?.(next.value.segment) &&
-			!next.value.isWordLike &&
-			!isWhitespaceChar(next.value.segment)
-		) {
-			newCursor += next.value.segment.length;
-			next = iterator.next();
+		while (idx < segments.length) {
+			const seg = segments[idx]!;
+			if (isAtomic?.(seg.segment) || seg.isWordLike || isWhitespaceChar(seg.segment)) break;
+			newCursor += seg.segment.length;
+			idx += 1;
 		}
 	}
 

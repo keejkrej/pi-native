@@ -34,10 +34,16 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private externalEditorStatus = new Text("", 1, 0);
 
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.editor.focused = value;
 	}
@@ -107,7 +113,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new DynamicBorder());
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		// Escape or Ctrl+C to cancel
 		if (kb.matches(keyData, "tui.select.cancel")) {

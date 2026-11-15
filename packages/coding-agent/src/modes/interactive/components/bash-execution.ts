@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, FunctionalComponent, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -65,12 +65,20 @@ export class BashExecutionComponent extends Container {
 	/**
 	 * Set whether the output is expanded (shows full output) or collapsed (preview only).
 	 */
-	setExpanded(expanded: boolean): void {
+	override isExpandableComponent(): boolean {
+		return true;
+	}
+
+	override hasOutputPad(): boolean {
+		return true;
+	}
+
+	override setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
 	}
 
-	setOutputPad(outputPad: number): void {
+	override setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.updateDisplay();
 	}
@@ -153,20 +161,22 @@ export class BashExecutionComponent extends Container {
 				const styledInput = `\n${styledOutput}`;
 				let cachedWidth: number | undefined;
 				let cachedLines: string[] | undefined;
-				this.contentContainer.addChild({
-					render: (width: number) => {
-						if (cachedLines === undefined || cachedWidth !== width) {
-							const result = truncateToVisualLines(styledInput, PREVIEW_LINES, width, this.outputPad);
-							cachedLines = result.visualLines;
-							cachedWidth = width;
-						}
-						return cachedLines ?? [];
-					},
-					invalidate: () => {
-						cachedWidth = undefined;
-						cachedLines = undefined;
-					},
-				});
+				this.contentContainer.addChild(
+					new FunctionalComponent({
+						render: (width: number) => {
+							if (cachedLines === undefined || cachedWidth !== width) {
+								const result = truncateToVisualLines(styledInput, PREVIEW_LINES, width, this.outputPad);
+								cachedLines = result.visualLines;
+								cachedWidth = width;
+							}
+							return cachedLines ?? [];
+						},
+						invalidate: () => {
+							cachedWidth = undefined;
+							cachedLines = undefined;
+						},
+					}),
+				);
 			}
 		}
 

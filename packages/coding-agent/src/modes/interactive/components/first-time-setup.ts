@@ -125,7 +125,11 @@ export class FirstTimeSetupComponent extends Container {
 		this.update();
 	}
 
-	handleInput(keyData: string): void {
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
 			this.moveSelection(-1);

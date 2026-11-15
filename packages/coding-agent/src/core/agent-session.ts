@@ -1066,7 +1066,7 @@ export class AgentSession {
 		const projection = this._createBoundaryPreviewManager(drafts).buildSessionProjection();
 		const pendingMessages = this._getPendingBoundaryMessages();
 		const llmMessages = convertToLlm(projection.messages);
-		const finalRole = llmMessages[llmMessages.length - 1]?.role;
+		const finalRole = llmMessages.length > 0 ? llmMessages[llmMessages.length - 1]!.role : undefined;
 		const hasNonSystemContext = llmMessages.some((message) => message.role !== "system");
 		const contextCanContinue = hasNonSystemContext && finalRole !== "assistant";
 		const pendingCustomContext = this._pendingCustomMessages.length > 0;
@@ -2952,7 +2952,7 @@ export class AgentSession {
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
 				// Check why we can't compact
-				const lastEntry = pathEntries[pathEntries.length - 1];
+				const lastEntry = pathEntries.length > 0 ? pathEntries[pathEntries.length - 1] : undefined;
 				if (lastEntry?.type === "compaction") {
 					throw new Error("Already compacted");
 				}

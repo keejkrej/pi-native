@@ -63,15 +63,23 @@ const MAX_VISIBLE = 8;
  * shows its animated brand style.
  */
 export class OAuthSelectorComponent extends Container implements Focusable {
-	readonly capturesViewportInput: boolean = true;
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to search input for IME cursor positioning
 	private _focused = false;
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+	override canHandleInput(): boolean {
+		return true;
+	}
+	override get focused(): boolean {
 		return this._focused;
 	}
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.searchInput.focused = value;
 	}
@@ -224,7 +232,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	handleInput(keyData: string): void {
+	override handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		const pageIndex = getSelectPageIndex(kb, keyData, this.selectedIndex, this.filteredProviders.length, MAX_VISIBLE);
 		// Up arrow

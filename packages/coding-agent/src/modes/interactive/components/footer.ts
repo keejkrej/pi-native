@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
@@ -59,13 +59,14 @@ interface SessionStats {
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
-export class FooterComponent implements Component {
+export class FooterComponent extends Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+		super();
 		this.session = session;
 		this.footerData = footerData;
 	}
@@ -82,7 +83,7 @@ export class FooterComponent implements Component {
 	 * No-op: git branch caching now handled by provider.
 	 * Kept for compatibility with existing call sites in interactive-mode.
 	 */
-	invalidate(): void {
+	override invalidate(): void {
 		// No-op: git branch is cached/invalidated by provider
 	}
 
@@ -90,7 +91,7 @@ export class FooterComponent implements Component {
 	 * Clean up resources.
 	 * Git watcher cleanup now handled by provider.
 	 */
-	dispose(): void {
+	override dispose(): void {
 		// Git watcher cleanup handled by provider
 	}
 
@@ -154,7 +155,7 @@ export class FooterComponent implements Component {
 		return this.sessionStats;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const state = this.session.state;
 		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;

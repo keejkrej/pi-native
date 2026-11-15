@@ -1,5 +1,6 @@
 import {
-	type Component,
+	Component,
+	type ComponentLike,
 	Container,
 	type Focusable,
 	fuzzyFilter,
@@ -26,7 +27,7 @@ const SEARCH_MAX_VISIBLE = 10;
 
 export type LlamaManagerAction = { type: "model"; model: LlamaModelInfo } | { type: "download" } | { type: "close" };
 
-type InputHandler = Pick<Component, "handleInput" | "capturesViewportInput">;
+type InputHandler = Pick<ComponentLike, "handleInput" | "capturesViewportInput">;
 
 interface ProgressState extends LlamaProgress {
 	title: string;
@@ -98,7 +99,9 @@ function compactCount(value: number): string {
 }
 
 class HuggingFaceSearch extends Container implements Focusable {
-	readonly capturesViewportInput: boolean = true;
+	override get capturesViewportInput(): boolean {
+		return true;
+	}
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
@@ -141,11 +144,19 @@ class HuggingFaceSearch extends Container implements Focusable {
 		this.updateResults();
 	}
 
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get focused(): boolean {
 		return this._focused;
 	}
 
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		this.input.focused = value;
 	}
@@ -253,7 +264,7 @@ class HuggingFaceSearch extends Container implements Focusable {
 		this.onSelectModel(model);
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		if (this.keybindings.matches(data, "tui.select.up")) {
 			if (this.filteredResults.length > 0) {
 				this.selectedIndex = this.selectedIndex === 0 ? this.filteredResults.length - 1 : this.selectedIndex - 1;
@@ -304,7 +315,7 @@ class HuggingFaceSearch extends Container implements Focusable {
 	}
 }
 
-class LlamaView implements LlamaUi, Focusable {
+class LlamaView extends Component implements LlamaUi, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
@@ -318,22 +329,31 @@ class LlamaView implements LlamaUi, Focusable {
 	private _focused = false;
 
 	constructor(tui: TUI, theme: Theme, keybindings: KeybindingsManager) {
+		super();
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
 		this.content = frame(theme, "llama.cpp models", [new Text(theme.fg("muted", "Loading…"), 1, 1)]);
 	}
 
-	get focused(): boolean {
+	override isFocusableComponent(): boolean {
+		return true;
+	}
+
+	override canHandleInput(): boolean {
+		return true;
+	}
+
+	override get focused(): boolean {
 		return this._focused;
 	}
 
-	set focused(value: boolean) {
+	override set focused(value: boolean) {
 		this._focused = value;
 		if (this.inputTarget) this.inputTarget.focused = value;
 	}
 
-	get capturesViewportInput(): boolean {
+	override get capturesViewportInput(): boolean {
 		return this.inputHandler?.capturesViewportInput === true;
 	}
 
@@ -460,7 +480,7 @@ class LlamaView implements LlamaUi, Focusable {
 
 	updateProgress(state: ProgressState): void {
 		if (!this.showingProgress) return;
-		const body = [
+		const body: Component[] = [
 			new Text(this.theme.fg("text", state.model), 1, 0),
 			new Spacer(1),
 			new Text(this.theme.fg("muted", state.message), 1, 0),
@@ -485,7 +505,7 @@ class LlamaView implements LlamaUi, Focusable {
 		this.tui.requestRender();
 	}
 
-	handleInput(data: string): void {
+	override handleInput(data: string): void {
 		if (this.progressResolver && this.keybindings.matches(data, "tui.select.cancel")) {
 			const resolve = this.progressResolver;
 			this.progressPromise = undefined;

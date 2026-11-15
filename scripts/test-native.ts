@@ -103,6 +103,98 @@ import {
 	MockGuiSessionController,
 	mountPiGui,
 } from "../packages/coding-agent/src/modes/gui/index.ts";
+import {
+	Box as TuiBox,
+	CombinedAutocompleteProvider,
+	Component,
+	type ComponentLike,
+	Container as TuiContainer,
+	dispatchMouseEvent,
+	Editor,
+	FunctionalComponent,
+	FunctionalEditorComponent,
+	Input as TuiInput,
+	isViewportTUI,
+	Markdown as TuiMarkdown,
+	matchesKey,
+	MouseRegion,
+	ProcessTerminal,
+	type ProgramStatus,
+	parseKey,
+	SettingsList,
+	setKeybindings,
+	Spacer as TuiSpacer,
+	type Terminal,
+	Text as TuiText,
+	toComponent,
+	toEditorComponent,
+	TUI,
+	type TuiMouseEvent,
+	VStack as TuiVStack,
+} from "@earendil-works/pi-tui";
+import { KeybindingsManager } from "../packages/coding-agent/src/core/keybindings.ts";
+import { createChatViewport } from "../packages/coding-agent/src/modes/interactive/chat-viewport.ts";
+import { CustomEditor } from "../packages/coding-agent/src/modes/interactive/components/custom-editor.ts";
+import { WorkingStatusIndicator } from "../packages/coding-agent/src/modes/interactive/components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "../packages/coding-agent/src/modes/interactive/components/thinking-selector.ts";
+import {
+	getEditorTheme,
+	getMarkdownTheme,
+	getSettingsListTheme,
+	initTheme,
+} from "../packages/coding-agent/src/modes/interactive/theme/theme.ts";
+import { createInteractiveTui, createInteractiveTuiReference } from "../packages/coding-agent/src/modes/interactive/tui-renderer.ts";
+import { renderLayoutFrame } from "../packages/tui/src/layout.ts";
+import { findWordBackward } from "../packages/tui/src/word-navigation.ts";
+
+class MemoryTerminal implements Terminal {
+	writes: string[] = [];
+	started = false;
+	stopped = false;
+	onInput?: (data: string) => void;
+	onResize?: () => void;
+
+	start(onInput: (data: string) => void, onResize: () => void): void {
+		this.started = true;
+		this.stopped = false;
+		this.onInput = onInput;
+		this.onResize = onResize;
+	}
+
+	stop(): void {
+		this.stopped = true;
+		this.onInput = undefined;
+		this.onResize = undefined;
+	}
+
+	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {}
+
+	write(data: string): void {
+		this.writes.push(data);
+	}
+
+	get columns(): number {
+		return 80;
+	}
+
+	get rows(): number {
+		return 24;
+	}
+
+	get kittyProtocolActive(): boolean {
+		return false;
+	}
+
+	moveBy(_lines: number): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(_title: string): void {}
+	setProgress(_active: boolean): void {}
+	setProgramStatus(_status: ProgramStatus): void {}
+}
 
 interface TestResult {
 	name: string;
@@ -849,6 +941,309 @@ async function main(): Promise<void> {
 			}
 		}
 		assertEqual(decodedEvents.join(""), "bedrock-ok", "parseBedrockEventStream text mismatch");
+	});
+
+	await runCase("tui:interactive-regression", async () => {
+		const testDir = mkdtempSync(join(tmpdir(), "pi-native-tui-test-"));
+		const termMain = new MemoryTerminal();
+		const termAlt = new MemoryTerminal();
+		const mainTui = createInteractiveTui({
+			tuiMode: "regular",
+			terminal: termMain,
+			showHardwareCursor: false,
+			logDirectory: testDir,
+		});
+		const altTui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			terminal: termAlt,
+			showHardwareCursor: false,
+			logDirectory: testDir,
+		});
+		let currentRenderer: TUI = mainTui;
+		const uiRef = createInteractiveTuiReference(() => currentRenderer);
+		let statusIndicator: WorkingStatusIndicator | undefined;
+		try {
+			assert(uiRef instanceof TUI && uiRef instanceof TuiContainer && uiRef instanceof Component, "uiRef class hierarchy broken");
+			assertEqual(isViewportTUI(mainTui), false, "mainTui isViewportTUI");
+			assertEqual(isViewportTUI(altTui), true, "altTui isViewportTUI");
+			assertEqual(isViewportTUI(uiRef), false, "uiRef should track mainTui initially");
+
+			const capturedRender = (width: number) => uiRef.render(width);
+			const capturedRequestRender = (force?: boolean) => uiRef.requestRender(force);
+
+			const kb = KeybindingsManager.create(testDir);
+			setKeybindings(kb);
+			initTheme("dark", false);
+			const baseEditor = new Editor(uiRef, getEditorTheme(), { paddingX: 2 });
+			const baseInitPad = baseEditor.getPaddingX();
+			baseEditor.setPaddingX(1);
+			const baseAfterPad = baseEditor.getPaddingX();
+
+			const editor = new CustomEditor(uiRef, getEditorTheme(), kb, {
+				paddingX: 2,
+				autocompleteMaxVisible: 5,
+				embedWorkingStatus: true,
+			});
+			const ceInitPad = editor.getPaddingX();
+			// Regression for #104 crash: setPaddingX / actionHandlers / borderColor / onSubmit
+			editor.setPaddingX(1);
+			const ceAfterPad = editor.getPaddingX();
+			const ceInitMax = editor.getAutocompleteMaxVisible();
+			editor.setAutocompleteMaxVisible(6);
+			const ceAfterMax = editor.getAutocompleteMaxVisible();
+			editor.setText("probe");
+			const ceText = editor.getText();
+			editor.setText("");
+			assertEqual(baseInitPad, 2, "Editor init paddingX");
+			assertEqual(baseAfterPad, 1, "Editor setPaddingX");
+			assertEqual(ceInitPad, 2, "CustomEditor init paddingX");
+			assertEqual(ceAfterPad, 1, "CustomEditor setPaddingX");
+			assertEqual(ceInitMax, 5, "CustomEditor init autocompleteMaxVisible");
+			assertEqual(ceAfterMax, 6, "CustomEditor setAutocompleteMaxVisible");
+			assertEqual(ceText, "probe", "CustomEditor setText/getText");
+			assertEqual(editor.embedWorkingStatus, true, "CustomEditor embedWorkingStatus");
+
+			let lastChange = "";
+			let submitted = "";
+			editor.onChange = (text) => {
+				lastChange = text;
+			};
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			let actionFired = 0;
+			editor.actionHandlers.set("app.interrupt", () => {
+				actionFired += 1;
+			});
+			const borderColorFn = editor.borderColor;
+			assertEqual(typeof borderColorFn("x"), "string", "CustomEditor borderColor");
+
+			statusIndicator = new WorkingStatusIndicator(uiRef, "Working");
+			editor.setWorkingStatusIndicator(statusIndicator);
+			const editorLines = editor.render(80);
+			assert(editorLines.length >= 3, `expected >= 3 editor lines, got ${editorLines.length}`);
+			editor.setWorkingStatusIndicator(undefined);
+
+			editor.handleInput("h");
+			editor.handleInput("i");
+			assertEqual(lastChange, "hi", "CustomEditor onChange");
+			editor.handleInput("\r");
+			assertEqual(submitted, "hi", "CustomEditor onSubmit");
+			assertEqual(lastChange, "", "CustomEditor cleared on submit");
+			assertEqual(actionFired, 0, "unexpected action handler firing");
+
+			const wrappedEditor = toEditorComponent({
+				getText: () => "wrapped",
+				setText: () => {},
+				handleInput: () => {},
+				render: () => ["wrapped"],
+				invalidate: () => {},
+			});
+			assert(wrappedEditor instanceof FunctionalEditorComponent, "toEditorComponent wrapper check");
+			wrappedEditor.setPaddingX(2);
+			assertEqual(wrappedEditor.getText(), "wrapped", "FunctionalEditorComponent getText");
+
+			let expandedState = false;
+			let padState = -1;
+			let inputSeen = "";
+			const rawLike: ComponentLike = {
+				render: () => ["functional-row"],
+				handleInput: (data) => {
+					inputSeen += data;
+				},
+				handleMouse: (_ev) => ({ handled: true, focus: true }),
+				focused: false,
+				setExpanded: (expanded) => {
+					expandedState = expanded;
+				},
+				setOutputPad: (padding) => {
+					padState = padding;
+				},
+				invalidate: () => {},
+			};
+			const wrappedComp = toComponent(rawLike);
+			assert(wrappedComp instanceof FunctionalComponent, "toComponent wrapper check");
+			assertEqual(wrappedComp.isExpandableComponent(), true, "FunctionalComponent expandable");
+			wrappedComp.setExpanded(true);
+			assertEqual(expandedState, true, "FunctionalComponent setExpanded");
+			assertEqual(wrappedComp.hasOutputPad(), true, "FunctionalComponent outputPad");
+			wrappedComp.setOutputPad(3);
+			assertEqual(padState, 3, "FunctionalComponent setOutputPad");
+			assertEqual(wrappedComp.isFocusableComponent(), true, "FunctionalComponent focusable");
+
+			let debugCalls = 0;
+			uiRef.onDebug = () => {
+				debugCalls += 1;
+			};
+			const debugCb = uiRef.onDebug;
+			debugCb?.();
+			assertEqual(debugCalls, 1, "uiRef onDebug getter/setter");
+
+			mainTui.addChild(editor);
+			mainTui.addChild(rawLike);
+			mainTui.setFocus(rawLike);
+			assertEqual(rawLike.focused, true, "setFocus should update raw ComponentLike.focused");
+			assert(mainTui.getFocusedComponent() === wrappedComp, "getFocusedComponent should return cached FunctionalComponent");
+			wrappedComp.handleInput("x");
+			assertEqual(inputSeen, "x", "FunctionalComponent handleInput");
+
+			const box = new TuiBox(0, 0);
+			const region = new MouseRegion(new TuiText("click-me", 0, 0), (ev: TuiMouseEvent) =>
+				ev.type === "click" ? { handled: true, focus: true } : undefined,
+			);
+			box.addChild(region);
+			const mouseRoot = new TuiContainer();
+			mouseRoot.addChild(box);
+			mouseRoot.render(40);
+			const dispatchRes = dispatchMouseEvent(mouseRoot, {
+				type: "click",
+				button: "left",
+				x: 1,
+				y: 0,
+				screenX: 1,
+				screenY: 0,
+				width: 40,
+				height: 1,
+				shift: false,
+				alt: false,
+				ctrl: false,
+			});
+			assert(dispatchRes !== undefined && dispatchRes.handled === true, "dispatchMouseEvent handled check");
+
+			mainTui.start();
+			mainTui.renderNow(true);
+			assert(termMain.writes.length > 0, "TuiMainScreen should write rendered output");
+
+			currentRenderer = altTui;
+			assertEqual(isViewportTUI(uiRef), true, "uiRef should switch to altTui");
+			altTui.addChild(new TuiText("alt-screen-line", 0, 0));
+			altTui.start();
+			altTui.renderNow(true);
+			uiRef.requestRender(false);
+			capturedRequestRender(false);
+			assert(uiRef.render(80).length > 0, "uiRef.render should render active TUI");
+			assert(capturedRender(80).length > 0, "captured uiRef.render should render active TUI");
+			assert(termAlt.writes.join("").includes("\x1b[?1049h"), "TuiAltScreen should enter alternate screen");
+
+			mainTui.stop();
+			altTui.stop();
+			new ProcessTerminal().stop();
+
+			// Regression for #108/#109: autocomplete "/", "@", grapheme cursor render, Input empty/placeholder/word-nav, selectors in VStack/chat-viewport, Markdown + LaTeX, bounds guards
+			editor.setText("hello world");
+			editor.handleInput("\x1b[D");
+			assert(editor.render(80).length >= 3, "Editor mid-line grapheme cursor render failed");
+			editor.handleInput("\x7f");
+			editor.setText("");
+
+			writeFileSync(join(testDir, "readme.txt"), "autocomplete fixture\n", "utf8");
+			const acProvider = new CombinedAutocompleteProvider(
+				[
+					{ name: "settings", description: "Open settings" },
+					{ name: "model", description: "Select model" },
+				],
+				testDir,
+				null,
+			);
+			editor.setAutocompleteProvider(acProvider);
+			editor.handleInput("/");
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			const slashAcLines = editor.render(80);
+			assert(slashAcLines.length >= 4 && slashAcLines.join("\n").includes("settings"), "CombinedAutocompleteProvider '/' render failed");
+			editor.handleInput("\x7f");
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			assertEqual(editor.getText(), "", "Editor backspace after '/' failed");
+			editor.handleInput("@");
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			const atAcLines = editor.render(80);
+			assert(atAcLines.length >= 3, "CombinedAutocompleteProvider '@' render failed");
+			editor.setText("");
+
+			const emptyInput = new TuiInput();
+			emptyInput.focused = true;
+			assertEqual(emptyInput.render(80).length, 1, "Empty Input.render(80) failed");
+			const searchInput = new TuiInput({ placeholder: "Filter..." });
+			searchInput.focused = true;
+			assertEqual(searchInput.render(80).length, 1, "Placeholder Input.render(80) failed");
+			searchInput.handleInput("a");
+			searchInput.handleInput("b");
+			searchInput.handleInput(" ");
+			searchInput.handleInput("c");
+			searchInput.handleInput("d");
+			assertEqual(searchInput.getValue(), "ab cd", "Input typing failed");
+			searchInput.handleInput("\x7f");
+			assertEqual(searchInput.getValue(), "ab c", "Input backspace failed");
+			searchInput.handleInput("\x1bb");
+			searchInput.handleInput("x");
+			assertEqual(searchInput.getValue(), "ab xc", "Input word nav + insert failed");
+			assertEqual(searchInput.render(80).length, 1, "Typed Input.render(80) failed");
+
+			const thinkingSelector = new ThinkingSelectorComponent(
+				"medium",
+				["off", "low", "medium", "high"],
+				() => {},
+				() => {},
+			);
+			assert(thinkingSelector.render(80).length >= 5, "ThinkingSelectorComponent render failed");
+			thinkingSelector.handleInput("z");
+			thinkingSelector.handleInput("z");
+			assert(thinkingSelector.render(80).length >= 4, "ThinkingSelectorComponent 0-match filter render failed");
+
+			const settingsList = new SettingsList(
+				[
+					{
+						id: "theme",
+						label: "Theme",
+						description: "Color theme",
+						currentValue: "dark",
+						values: ["dark", "light"],
+					},
+				],
+				5,
+				getSettingsListTheme(),
+				() => {},
+				() => {},
+				{ enableSearch: true },
+			);
+			assert(settingsList.render(80).length >= 3, "SettingsList render failed");
+
+			const selectorVStack = new TuiVStack([
+				{ component: thinkingSelector, shrink: 1, minSize: 0 },
+				{ component: settingsList, shrink: 1, minSize: 0 },
+			]);
+			assert(selectorVStack.render(80).length >= 6, "VStack with selectors render failed");
+
+			const viewport = createChatViewport({
+				document: new TuiText("Transcript line", 0, 0),
+				pendingMessages: new TuiSpacer(0),
+				status: thinkingSelector,
+				editor: settingsList,
+				footer: new TuiText("footer", 0, 0),
+			});
+			assert(viewport.root.render(80).length > 0, "createChatViewport VStack.render(80) failed");
+			const layoutFrame = renderLayoutFrame(viewport.root, 80, 24, () => {});
+			assertEqual(layoutFrame.lines.length, 24, "renderLayoutFrame height mismatch");
+
+			const md = new TuiMarkdown(
+				"# Heading\n\n```ts\nconst x = 1;\n```\n\n> blockquote\n\n- item 1\n- item 2\n\nInline $x + \\unknown$",
+				1,
+				0,
+				getMarkdownTheme(),
+			);
+			const mdLines = md.render(80);
+			assert(mdLines.length >= 6 && mdLines.join("\n").includes("Heading"), "Markdown + LaTeX render failed");
+			assert(md.render(2).length > 0, "Markdown narrow blockquote render failed");
+
+			assertEqual(findWordBackward("", 0), 0, "findWordBackward empty string");
+			assertEqual(findWordBackward("   ", 3), 0, "findWordBackward whitespace only");
+			assertEqual(parseKey("\x1b[99~"), undefined, "parseKey unknown functional sequence");
+			assertEqual(matchesKey("\x1b[200~", "enter"), false, "matchesKey unknown functional sequence");
+		} finally {
+			statusIndicator?.dispose();
+			mainTui.stop();
+			altTui.stop();
+			rmSync(testDir, { recursive: true, force: true });
+		}
 	});
 
 	let passed = 0;

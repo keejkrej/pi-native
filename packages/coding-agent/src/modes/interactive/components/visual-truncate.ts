@@ -3,7 +3,7 @@
  * Used by tool renderers and bash-execution.ts for consistent behavior.
  */
 
-import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 export interface VisualTruncateResult {
 	/** The visual lines to display */
@@ -66,16 +66,17 @@ export interface VisualLinePreviewOptions {
  * lines instead lets a single long line (such as minified JSON) wrap across the whole screen.
  * Caches its lines per width, since it renders on every frame for every result in the transcript.
  */
-export class VisualLinePreview implements Component {
+export class VisualLinePreview extends Component {
 	private options: VisualLinePreviewOptions;
 	private cachedWidth: number | undefined;
 	private cachedLines: string[] | undefined;
 
 	constructor(options: VisualLinePreviewOptions) {
+		super();
 		this.options = options;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		if (this.cachedLines === undefined || this.cachedWidth !== width) {
 			const { text, maxVisualLines, keep, formatHint } = this.options;
 			const preview = truncateToVisualLines(text, maxVisualLines, width, 0, keep);
@@ -91,7 +92,7 @@ export class VisualLinePreview implements Component {
 		return this.cachedLines;
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
 	}

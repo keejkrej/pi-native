@@ -1,0 +1,64 @@
+{
+	"ffi_format": 7,
+	"functions": [
+		{ "name": "sguiInit", "symbol": "sgui_init", "params": [], "returns": "i32" },
+		{ "name": "sguiShutdown", "symbol": "sgui_shutdown", "params": [], "returns": "void" },
+		{
+			"name": "sguiWindowCreate",
+			"symbol": "sgui_window_create",
+			"params": ["string", "f64", "f64", "u32"],
+			"returns": "u32"
+		},
+		{ "name": "sguiWindowDestroy", "symbol": "sgui_window_destroy", "params": ["u32"], "returns": "void" },
+		{ "name": "sguiWindowSetTitle", "symbol": "sgui_window_set_title", "params": ["u32", "string"], "returns": "void" },
+		{
+			"name": "sguiWindowGetMetrics",
+			"symbol": "sgui_window_get_metrics",
+			"params": ["u32", "mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "sguiMeasureText",
+			"symbol": "sgui_measure_text",
+			"params": ["u32", "f64", "u32", "u32", "f64", "string", "mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "sguiTextCaretX",
+			"symbol": "sgui_text_caret_x",
+			"params": ["u32", "f64", "u32", "u32", "string", "u32"],
+			"returns": "f64"
+		},
+		{
+			"name": "sguiTextHitIndex",
+			"symbol": "sgui_text_hit_index",
+			"params": ["u32", "f64", "u32", "u32", "string", "f64"],
+			"returns": "u32"
+		},
+		{ "name": "sguiPresent", "symbol": "sgui_present", "params": ["u32", "bytes"], "returns": "i32" },
+		{
+			"name": "sguiPollEvents",
+			"symbol": "sgui_poll_events",
+			"params": ["u32", "mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "sguiClipboardGetText",
+			"symbol": "sgui_clipboard_get_text",
+			"params": ["mutable-bytes"],
+			"returns": "i32"
+		},
+		{ "name": "sguiClipboardSetText", "symbol": "sgui_clipboard_set_text", "params": ["string"], "returns": "i32" },
+		{ "name": "sguiSetCursor", "symbol": "sgui_set_cursor", "params": ["u32", "u32"], "returns": "void" },
+		{
+			"name": "sguiSetImeRect",
+			"symbol": "sgui_set_ime_rect",
+			"params": ["u32", "f64", "f64", "f64", "f64"],
+			"returns": "void"
+		},
+		{ "name": "sguiSetAppMenu", "symbol": "sgui_set_app_menu", "params": ["bytes"], "returns": "i32" },
+		{ "name": "sguiSetA11yTree", "symbol": "sgui_set_a11y_tree", "params": ["u32", "bytes"], "returns": "i32" }
+	],
+	"libraries": ["../native/linux/build/libsgui.a"],
+	"system_libraries": ["gtk-4", "pangocairo-1.0", "pango-1.0", "cairo", "gobject-2.0", "glib-2.0"]
+}

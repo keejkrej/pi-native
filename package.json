@@ -1,0 +1,39 @@
+{
+	"name": "pi-native",
+	"private": true,
+	"type": "module",
+	"version": "1.5.2",
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"clean": "npm run clean --workspaces --if-present",
+		"build": "cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../tui && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build:offline && cd ../agent && npm run build && cd ../coding-agent && npm run build:unbundled",
+		"check": "tsc --noEmit",
+		"coverage": "SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc coverage --coverage=reached packages/coding-agent/src/cli.ts && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"build:native": "(pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true) && SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc build --optimization=dev --strip --no-keep-llvm --no-shape-overlay packages/coding-agent/src/cli.ts -o dist/pi && rm -rf dist/pi.dSYM dist/pi.libnode dist/*.ll && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"build:native:dist": "(pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true) && SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc build --optimization=dev --strip --no-keep-llvm --no-shape-overlay --libnode=beside packages/coding-agent/src/cli.ts -o dist/pi && rm -rf dist/pi.dSYM dist/*.ll && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"build:gui": "(pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true) && SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc build --optimization=dev --strip --no-keep-llvm --no-shape-overlay packages/coding-agent/src/gui-cli.ts --ffi packages/gui/ffi/darwin.json -o dist/pi-gui && rm -rf dist/pi-gui.dSYM dist/pi-gui.libnode dist/*.ll && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"build:gui:dist": "(pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true) && SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc build --optimization=dev --strip --no-keep-llvm --no-shape-overlay --libnode=beside packages/coding-agent/src/gui-cli.ts --ffi packages/gui/ffi/darwin.json -o dist/pi-gui && rm -rf dist/pi-gui.dSYM dist/*.ll && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"build:examples": "for f in counter tasks desktop bench demo hopper gallery; do SCRIPTC_EMIT_WORKERS=1 taskpolicy -c utility scriptc build --optimization=dev --strip --no-keep-llvm --no-shape-overlay packages/gui/examples/$f.ts --ffi packages/gui/ffi/darwin.json -o dist/examples/$f || exit 1; done && rm -rf dist/examples/*.dSYM dist/examples/*.ll && (pkill -f 'tsc-ts --api' || true) && (pkill -f 'scriptc-llvm-codegen serve' || true)",
+		"test": "npm run test --workspaces --if-present"
+	},
+	"optionalDependencies": {
+		"@scriptc/libnode-darwin-arm64": "0.4.12",
+		"@scriptc/libnode-darwin-x64": "0.4.12",
+		"@scriptc/libnode-linux-arm64-gnu": "0.4.12",
+		"@scriptc/libnode-linux-x64-gnu": "0.4.12"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"scriptc": "0.4.12",
+		"typescript": "5.9.3",
+		"vitest": "4.1.12"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"overrides": {
+		"protobufjs": "7.6.6"
+	}
+}

@@ -12,7 +12,6 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -163,7 +162,7 @@ interface SingleResult {
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
-	terminationSignal?: NodeJS.Signals;
+	terminationSignal?: string;
 	step?: number;
 }
 
@@ -318,7 +317,7 @@ interface DispatchDefaults {
 
 interface ProcessOutcome {
 	code: number | null;
-	signal: NodeJS.Signals | null;
+	signal: string | null;
 	spawnError?: Error;
 }
 
@@ -360,6 +359,7 @@ function createUnstartedResult(
 }
 
 async function runSingleAgent(
+	pi: ExtensionAPI,
 	dispatchDefaults: DispatchDefaults,
 	resolvedAgent: ResolvedAgent,
 	agentName: string,
@@ -433,107 +433,67 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		emitUpdate();
-		let wasAborted = false;
-		const outcome = await new Promise<ProcessOutcome>((resolve) => {
-			const invocation = getPiInvocation(args);
-			let settled = false;
-			let exited = false;
-			let closed = false;
-			let killTimer: ReturnType<typeof setTimeout> | undefined;
-			let buffer = "";
-
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: JsonAgentSessionEvent;
-				try {
-					event = JSON.parse(line) as JsonAgentSessionEvent;
-				} catch {
-					return;
-				}
-				if (event.type !== "message_end") return;
-				const eventMessage = event.message;
-				if (
-					eventMessage.role !== "user" &&
-					eventMessage.role !== "assistant" &&
-					eventMessage.role !== "toolResult"
-				) {
-					return;
-				}
-				const message = eventMessage as Message;
-				currentResult.messages.push(message);
-				if (message.role === "assistant") {
-					currentResult.usage.turns++;
-					currentResult.usage.input += message.usage.input;
-					currentResult.usage.output += message.usage.output;
-					currentResult.usage.cacheRead += message.usage.cacheRead;
-					currentResult.usage.cacheWrite += message.usage.cacheWrite;
-					currentResult.usage.cost += message.usage.cost.total;
-					currentResult.usage.contextTokens = message.usage.totalTokens;
-					if (!currentResult.model) currentResult.model = message.model;
-					currentResult.stopReason = message.stopReason;
-					currentResult.errorMessage = message.errorMessage;
-				}
-				emitUpdate();
-			};
-
-			let proc: ReturnType<typeof spawn>;
-			const finish = (result: ProcessOutcome) => {
-				if (settled) return;
-				settled = true;
-				closed = true;
-				if (killTimer) clearTimeout(killTimer);
-				if (signal) signal.removeEventListener("abort", abortProcess);
-				resolve(result);
-			};
-			const abortProcess = () => {
-				if (closed || exited || proc.exitCode !== null || proc.signalCode !== null) return;
-				if (!proc.kill("SIGTERM")) return;
-				wasAborted = true;
-				killTimer = setTimeout(() => {
-					if (!closed && !exited) proc.kill("SIGKILL");
-				}, 5000);
-			};
-
+		const processLine = (line: string) => {
+			if (!line.trim()) return;
+			let event: JsonAgentSessionEvent;
 			try {
-				proc = spawn(invocation.command, invocation.args, {
-					cwd: effectiveCwd,
-					shell: false,
-					stdio: ["ignore", "pipe", "pipe"],
-				});
-			} catch (error) {
-				finish({
-					code: null,
-					signal: null,
-					spawnError: error instanceof Error ? error : new Error(String(error)),
-				});
+				event = JSON.parse(line) as JsonAgentSessionEvent;
+			} catch {
 				return;
 			}
-
-			proc.stdout?.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-			proc.stderr?.on("data", (data) => {
-				currentResult.stderr += data.toString();
-			});
-			proc.on("exit", () => {
-				exited = true;
-			});
-			proc.on("close", (code, terminationSignal) => {
-				if (buffer.trim()) processLine(buffer);
-				finish({ code, signal: terminationSignal });
-			});
-			proc.on("error", (error) => {
-				finish({ code: null, signal: null, spawnError: error });
-			});
-
-			if (signal) {
-				if (signal.aborted) abortProcess();
-				else signal.addEventListener("abort", abortProcess, { once: true });
+			if (event.type !== "message_end") return;
+			const eventMessage = event.message;
+			if (
+				eventMessage.role !== "user" &&
+				eventMessage.role !== "assistant" &&
+				eventMessage.role !== "toolResult"
+			) {
+				return;
 			}
-		});
+			const message = eventMessage as Message;
+			currentResult.messages.push(message);
+			if (message.role === "assistant") {
+				currentResult.usage.turns++;
+				currentResult.usage.input += message.usage.input;
+				currentResult.usage.output += message.usage.output;
+				currentResult.usage.cacheRead += message.usage.cacheRead;
+				currentResult.usage.cacheWrite += message.usage.cacheWrite;
+				currentResult.usage.cost += message.usage.cost.total;
+				currentResult.usage.contextTokens = message.usage.totalTokens;
+				if (!currentResult.model) currentResult.model = message.model;
+				currentResult.stopReason = message.stopReason;
+				currentResult.errorMessage = message.errorMessage;
+			}
+			emitUpdate();
+		};
+
+		let wasAborted = false;
+		let outcome: ProcessOutcome;
+		const invocation = getPiInvocation(args);
+		try {
+			const execResult = await pi.exec(invocation.command, invocation.args, {
+				cwd: effectiveCwd,
+				signal,
+			});
+			if (execResult.stderr) {
+				currentResult.stderr += execResult.stderr;
+			}
+			for (const line of execResult.stdout.split("\n")) {
+				processLine(line);
+			}
+			wasAborted = Boolean(signal?.aborted);
+			outcome = {
+				code: execResult.code,
+				signal: execResult.killed && !wasAborted ? "SIGTERM" : null,
+			};
+		} catch (error) {
+			wasAborted = Boolean(signal?.aborted);
+			outcome = {
+				code: null,
+				signal: null,
+				spawnError: error instanceof Error ? error : new Error(String(error)),
+			};
+		}
 
 		currentResult.exitCode = outcome.code;
 		currentResult.terminationSignal = outcome.signal ?? undefined;
@@ -727,6 +687,7 @@ export default function (pi: ExtensionAPI) {
 						: undefined;
 
 					const result = await runSingleAgent(
+						pi,
 						dispatchDefaults,
 						resolvedChain[i],
 						step.agent,
@@ -812,6 +773,7 @@ export default function (pi: ExtensionAPI) {
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const result = await runSingleAgent(
+						pi,
 						dispatchDefaults,
 						resolvedTasks[index],
 						t.agent,
@@ -854,6 +816,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (params.agent && params.task && resolvedSingle) {
 				const result = await runSingleAgent(
+					pi,
 					dispatchDefaults,
 					resolvedSingle,
 					params.agent,

@@ -1,5 +1,5 @@
 /**
- * Extension loader - built-in inline factories only in pi-native.
+ * Extension loader - loads built-in inline factories and external JS/TS extensions (via JavaScriptCore FFI on Darwin).
  */
 
 import * as fs from "node:fs";
@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Provider } from "@earendil-works/pi-ai";
 import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { KeyId } from "@earendil-works/pi-tui";
+import { isNativeDarwinAvailable } from "../../../../pi-native-ffi/src/index.ts";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import { pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -17,6 +18,7 @@ import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { disposeAllExtensionJscVms, loadExternalExtensionViaJsc } from "./jsc-loader.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -37,7 +39,9 @@ import type {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown> | unknown;
 
-export function clearExtensionCache(): void {}
+export function clearExtensionCache(): void {
+	disposeAllExtensionJscVms();
+}
 
 /**
  * Create a runtime with throwing stubs for action methods.
@@ -500,25 +504,44 @@ export async function loadExtensionFromFactory(
 
 /**
  * Load extensions from paths.
- * External JS/TS extensions are not supported in pi-native.
+ * Uses JavaScriptCore FFI on macOS when native Darwin bindings are available.
  */
 async function loadExtensionsInternal(
 	paths: string[],
-	_cwd: string,
+	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const warnings: Array<{ path: string; warning: string }> = [];
-	const _resolvedEventBus = eventBus ?? createEventBus();
+	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
+	const nativeAvailable = paths.length > 0 ? isNativeDarwinAvailable() : false;
 	for (const extPath of paths) {
-		warnings.push({
-			path: extPath,
-			warning: "External JS/TS extensions are not supported in pi-native; use MCP or ACP instead.",
-		});
+		if (!nativeAvailable) {
+			warnings.push({
+				path: extPath,
+				warning: "External JS/TS extensions are not supported in pi-native; use MCP or ACP instead.",
+			});
+			continue;
+		}
+		try {
+			const ext = await loadExternalExtensionViaJsc(extPath, cwd, resolvedEventBus, resolvedRuntime, {
+				createExtension,
+				createExtensionAPI,
+			});
+			extensions.push(ext);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			errors.push({
+				path: extPath,
+				error: message.startsWith("Failed to load extension:")
+					? message
+					: `Failed to load extension: ${message}`,
+			});
+		}
 	}
 
 	return {

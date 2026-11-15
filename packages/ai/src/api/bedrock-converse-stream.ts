@@ -222,12 +222,15 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		try {
 			const credentials: BedrockCredentials | undefined = useBearerToken
 				? undefined
-				: resolveBedrockCredentials({
+				: await resolveBedrockCredentials({
 						optionsProfile,
 						ambientProfile,
 						envCredentials: getConfiguredBedrockCredentials(options.env),
 						skipAuth,
 						env: options.env,
+						region,
+						signal: options.signal,
+						fetchFn: options.fetch,
 					});
 			const proxyUrl = resolveHttpProxyUrlForTarget(endpoint, options.env);
 			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;

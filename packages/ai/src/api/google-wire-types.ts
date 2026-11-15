@@ -1,4 +1,4 @@
-import { createSign } from "node:crypto";
+import { createHash, createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -8,10 +8,12 @@ const DEFAULT_GOOGLE_MLDEV_API_VERSION = "v1beta";
 const DEFAULT_GOOGLE_VERTEX_API_VERSION = "v1beta1";
 const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const DEFAULT_OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token";
+const DEFAULT_GOOGLE_STS_URL = "https://sts.googleapis.com/v1/token";
 const GCE_METADATA_TOKEN_URL =
 	"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const MULTI_REGIONAL_LOCATIONS = new Set(["us", "eu"]);
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
+const MAX_VERTEX_CREDENTIAL_DEPTH = 8;
 
 export const FinishReason = {
 	FINISH_REASON_UNSPECIFIED: "FINISH_REASON_UNSPECIFIED",
@@ -218,12 +220,12 @@ export class GoogleAPIError extends Error {
 	}
 }
 
-interface CachedAccessToken {
+export interface CachedAccessToken {
 	token: string;
 	expiresAtMs: number;
 }
 
-interface ServiceAccountCredentials {
+export interface ServiceAccountCredentials {
 	type: "service_account";
 	client_email: string;
 	private_key: string;
@@ -231,12 +233,76 @@ interface ServiceAccountCredentials {
 	token_uri?: string;
 }
 
-interface AuthorizedUserCredentials {
+export interface AuthorizedUserCredentials {
 	type: "authorized_user";
 	client_id: string;
 	client_secret: string;
 	refresh_token: string;
 	token_uri?: string;
+}
+
+export interface ExternalAccountCredentialSourceFormat {
+	type?: "text" | "json" | string;
+	subject_token_field_name?: string;
+}
+
+export interface ExternalAccountCredentialSource {
+	file?: string;
+	url?: string;
+	headers?: Record<string, string>;
+	format?: ExternalAccountCredentialSourceFormat;
+}
+
+export interface ExternalAccountCredentials {
+	type: "external_account";
+	audience: string;
+	subject_token_type: string;
+	token_url?: string;
+	credential_source: ExternalAccountCredentialSource;
+	service_account_impersonation_url?: string;
+	service_account_impersonation?: {
+		token_lifetime_seconds?: number;
+	};
+}
+
+export interface ImpersonatedServiceAccountCredentials {
+	type: "impersonated_service_account";
+	service_account_impersonation_url: string;
+	source_credentials: ParsedVertexCredentials;
+	delegates?: string[];
+	service_account_impersonation?: {
+		token_lifetime_seconds?: number;
+	};
+}
+
+export interface ParsedVertexCredentials {
+	type?: unknown;
+	client_email?: string;
+	private_key?: string;
+	private_key_id?: string;
+	client_id?: string;
+	client_secret?: string;
+	refresh_token?: string;
+	token_uri?: string;
+	service_account_impersonation_url?: string;
+	source_credentials?: ParsedVertexCredentials;
+	delegates?: string[];
+	audience?: string;
+	subject_token_type?: string;
+	token_url?: string;
+	credential_source?: ExternalAccountCredentialSource;
+	service_account_impersonation?: {
+		token_lifetime_seconds?: number;
+	};
+}
+
+export interface ExchangeImpersonatedTokenParams {
+	impersonationUrl: string;
+	sourceToken: string;
+	delegates?: string[];
+	lifetimeSeconds?: number;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
 }
 
 const vertexTokenCache = new Map<string, CachedAccessToken>();
@@ -583,62 +649,280 @@ function parseSseEvent(rawEvent: string): GenerateContentResponse | "DONE" | und
 	return JSON.parse(payload) as GenerateContentResponse;
 }
 
-interface ParsedVertexCredentials {
-	type?: unknown;
-	client_email?: string;
-	private_key?: string;
-	private_key_id?: string;
-	client_id?: string;
-	client_secret?: string;
-	refresh_token?: string;
-	token_uri?: string;
+/** Clears the in-memory Google Vertex AI OAuth token cache (intended for tests). */
+export function clearVertexTokenCache(): void {
+	vertexTokenCache.clear();
 }
 
-async function resolveVertexAccessToken(
+function sha256Hex(input: string): string {
+	return createHash("sha256").update(input, "utf8").digest("hex");
+}
+
+function extractSubjectToken(rawContent: string, format: ExternalAccountCredentialSourceFormat | undefined): string {
+	const isJsonFormat = format?.type === "json" || (format?.type === undefined && Boolean(format?.subject_token_field_name));
+	if (isJsonFormat) {
+		const fieldName = format?.subject_token_field_name;
+		if (!fieldName) {
+			throw new Error("Vertex AI external_account JSON credential_source requires format.subject_token_field_name.");
+		}
+		const parsed = parseJsonSafe(rawContent);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			throw new Error("Vertex AI external_account credential_source did not return a JSON object.");
+		}
+		const record = parsed as Record<string, unknown>;
+		const tokenValue = record[fieldName];
+		if (typeof tokenValue !== "string" || !tokenValue.trim()) {
+			throw new Error(`Vertex AI external_account credential_source missing string field "${fieldName}".`);
+		}
+		return tokenValue.trim();
+	}
+
+	const trimmed = rawContent.trim();
+	if (!trimmed) {
+		throw new Error("Vertex AI external_account credential_source returned an empty subject token.");
+	}
+	return trimmed;
+}
+
+/** Exchanges an external Workload Identity subject token via Google STS (and optional IAM impersonation). */
+export async function resolveExternalAccountToken(
+	creds: ExternalAccountCredentials,
+	fetchFn: typeof globalThis.fetch = globalThis.fetch,
+	signal?: AbortSignal,
+): Promise<CachedAccessToken> {
+	const source = creds.credential_source;
+	let rawSubject: string;
+	if (source.file) {
+		try {
+			rawSubject = await readFile(source.file, "utf8");
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			throw new Error(`Failed to read external_account subject token file at ${source.file}: ${msg}`, { cause: error });
+		}
+	} else if (source.url) {
+		const headers = new Headers();
+		if (source.headers) {
+			for (const key of Object.keys(source.headers)) {
+				const value = source.headers[key];
+				if (typeof value === "string") {
+					headers.set(key, value);
+				}
+			}
+		}
+		const response = await executeGoogleFetch(fetchFn, source.url, { method: "GET", headers }, 10_000, signal);
+		if (!response.ok) {
+			const text = await readResponseTextSafe(response);
+			throw new GoogleAPIError({
+				message: `Failed to fetch external_account subject token (${response.status}): ${text}`,
+				status: response.status,
+				headers: response.headers,
+				error: parseJsonSafe(text),
+			});
+		}
+		rawSubject = await response.text();
+	} else {
+		throw new Error("Vertex AI external_account credential_source must specify file or url.");
+	}
+
+	const subjectToken = extractSubjectToken(rawSubject, source.format);
+	const tokenUrl = creds.token_url || DEFAULT_GOOGLE_STS_URL;
+	const form = new URLSearchParams({
+		grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+		audience: creds.audience,
+		scope: VERTEX_SCOPE,
+		requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+		subject_token: subjectToken,
+		subject_token_type: creds.subject_token_type,
+	});
+	const stsToken = await requestOAuthToken(tokenUrl, form.toString(), fetchFn, signal);
+
+	if (creds.service_account_impersonation_url) {
+		return await exchangeImpersonatedToken({
+			impersonationUrl: creds.service_account_impersonation_url,
+			sourceToken: stsToken.token,
+			lifetimeSeconds: creds.service_account_impersonation?.token_lifetime_seconds,
+			fetchFn,
+			signal,
+		});
+	}
+
+	return stsToken;
+}
+
+/** Exchanges a source bearer token for an impersonated service account access token via IAM Credentials API. */
+export async function exchangeImpersonatedToken(
+	params: ExchangeImpersonatedTokenParams,
+): Promise<CachedAccessToken> {
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	const lifetimeSec =
+		params.lifetimeSeconds !== undefined && params.lifetimeSeconds > 0 ? Math.floor(params.lifetimeSeconds) : 3600;
+	const bodyPayload: Record<string, unknown> = {
+		scope: [VERTEX_SCOPE],
+		lifetime: `${lifetimeSec}s`,
+	};
+	if (params.delegates !== undefined) {
+		bodyPayload.delegates = params.delegates;
+	}
+
+	const headers = new Headers({
+		"content-type": "application/json",
+		authorization: `Bearer ${params.sourceToken}`,
+	});
+
+	const response = await executeGoogleFetch(
+		fetchFn,
+		params.impersonationUrl,
+		{
+			method: "POST",
+			headers,
+			body: JSON.stringify(bodyPayload),
+		},
+		30_000,
+		params.signal,
+	);
+	if (!response.ok) {
+		const text = await readResponseTextSafe(response);
+		throw new GoogleAPIError({
+			message: `Failed to exchange impersonated service account token (${response.status}): ${text}`,
+			status: response.status,
+			headers: response.headers,
+			error: parseJsonSafe(text),
+		});
+	}
+
+	const payload = (await response.json()) as { accessToken?: unknown; expireTime?: unknown };
+	if (typeof payload.accessToken !== "string" || !payload.accessToken) {
+		throw new Error("Google IAM Credentials generateAccessToken endpoint did not return an accessToken.");
+	}
+	const parsedExpireMs = typeof payload.expireTime === "string" ? Date.parse(payload.expireTime) : Number.NaN;
+	const expiresAtMs = Number.isFinite(parsedExpireMs) ? parsedExpireMs : Date.now() + lifetimeSec * 1000;
+	return { token: payload.accessToken, expiresAtMs };
+}
+
+/** Resolves and caches an access token from a parsed Google ADC / credentials JSON object. */
+export async function resolveVertexCredentialsObject(
+	parsed: ParsedVertexCredentials,
+	fetchFn: typeof globalThis.fetch = globalThis.fetch,
+	signal?: AbortSignal,
+	sourceLabel = "Vertex AI ADC",
+	depth = 0,
+): Promise<string> {
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error(`Invalid Vertex AI credentials JSON object in ${sourceLabel}`);
+	}
+	if (depth > MAX_VERTEX_CREDENTIAL_DEPTH) {
+		throw new Error(`Maximum Vertex AI credential delegation depth (${MAX_VERTEX_CREDENTIAL_DEPTH}) exceeded.`);
+	}
+
+	if (parsed.type === "service_account" && parsed.client_email && parsed.private_key) {
+		const creds: ServiceAccountCredentials = {
+			type: "service_account",
+			client_email: parsed.client_email,
+			private_key: parsed.private_key,
+			private_key_id: parsed.private_key_id,
+			token_uri: parsed.token_uri,
+		};
+		return await getCachedOrMintToken(
+			`sa:${creds.client_email}:${creds.private_key_id ?? ""}:${creds.token_uri ?? ""}`,
+			() => exchangeServiceAccountJwt(creds, fetchFn, signal),
+		);
+	}
+
+	if (parsed.type === "authorized_user" && parsed.client_id && parsed.client_secret && parsed.refresh_token) {
+		const creds: AuthorizedUserCredentials = {
+			type: "authorized_user",
+			client_id: parsed.client_id,
+			client_secret: parsed.client_secret,
+			refresh_token: parsed.refresh_token,
+			token_uri: parsed.token_uri,
+		};
+		return await getCachedOrMintToken(
+			`user:${creds.client_id}:${creds.refresh_token.slice(-12)}:${creds.token_uri ?? ""}`,
+			() => exchangeRefreshToken(creds, fetchFn, signal),
+		);
+	}
+
+	if (
+		parsed.type === "impersonated_service_account" &&
+		typeof parsed.service_account_impersonation_url === "string" &&
+		parsed.service_account_impersonation_url.length > 0 &&
+		parsed.source_credentials &&
+		typeof parsed.source_credentials === "object" &&
+		!Array.isArray(parsed.source_credentials)
+	) {
+		const impersonationUrl = parsed.service_account_impersonation_url;
+		const sourceCredentials = parsed.source_credentials;
+		const delegates = Array.isArray(parsed.delegates)
+			? parsed.delegates.filter((item): item is string => typeof item === "string")
+			: undefined;
+		const lifetimeSeconds = parsed.service_account_impersonation?.token_lifetime_seconds;
+		const cacheKey = `imp:${impersonationUrl}:${sha256Hex(JSON.stringify(parsed))}`;
+		return await getCachedOrMintToken(cacheKey, async () => {
+			const sourceToken = await resolveVertexCredentialsObject(
+				sourceCredentials,
+				fetchFn,
+				signal,
+				`${sourceLabel} > source_credentials`,
+				depth + 1,
+			);
+			return await exchangeImpersonatedToken({
+				impersonationUrl,
+				sourceToken,
+				delegates,
+				lifetimeSeconds,
+				fetchFn,
+				signal,
+			});
+		});
+	}
+
+	if (
+		parsed.type === "external_account" &&
+		typeof parsed.audience === "string" &&
+		parsed.audience.length > 0 &&
+		typeof parsed.subject_token_type === "string" &&
+		parsed.subject_token_type.length > 0 &&
+		parsed.credential_source &&
+		typeof parsed.credential_source === "object" &&
+		!Array.isArray(parsed.credential_source)
+	) {
+		const creds: ExternalAccountCredentials = {
+			type: "external_account",
+			audience: parsed.audience,
+			subject_token_type: parsed.subject_token_type,
+			token_url: parsed.token_url,
+			credential_source: parsed.credential_source,
+			service_account_impersonation_url: parsed.service_account_impersonation_url,
+			service_account_impersonation: parsed.service_account_impersonation,
+		};
+		const cacheKey = `ext:${creds.audience}:${sha256Hex(JSON.stringify(parsed))}`;
+		return await getCachedOrMintToken(cacheKey, () => resolveExternalAccountToken(creds, fetchFn, signal));
+	}
+
+	throw new Error(`Unsupported Vertex AI credential type "${String(parsed.type)}" in ${sourceLabel}`);
+}
+
+export async function resolveVertexAccessToken(
 	explicitKeyFilename: string | undefined,
-	fetchFn: typeof globalThis.fetch,
+	fetchFn: typeof globalThis.fetch = globalThis.fetch,
 	signal?: AbortSignal,
 ): Promise<string> {
-	const credPath = explicitKeyFilename || resolveWellKnownAdcPath();
+	const envKeyFilename = typeof process !== "undefined" ? process.env.GOOGLE_APPLICATION_CREDENTIALS : undefined;
+	const configuredPath = explicitKeyFilename || envKeyFilename;
+	const credPath = configuredPath || resolveWellKnownAdcPath();
 	if (credPath) {
 		let rawCreds: string | undefined;
 		try {
 			rawCreds = await readFile(credPath, "utf8");
 		} catch (error) {
-			if (explicitKeyFilename) {
+			if (configuredPath) {
 				const msg = error instanceof Error ? error.message : String(error);
-				throw new Error(`Failed to read Vertex AI credentials at ${credPath}: ${msg}`);
+				throw new Error(`Failed to read Vertex AI credentials at ${credPath}: ${msg}`, { cause: error });
 			}
 		}
 		if (rawCreds !== undefined) {
 			const parsed = JSON.parse(rawCreds) as ParsedVertexCredentials;
-			if (parsed.type === "service_account" && parsed.client_email && parsed.private_key) {
-				const creds: ServiceAccountCredentials = {
-					type: "service_account",
-					client_email: parsed.client_email,
-					private_key: parsed.private_key,
-					private_key_id: parsed.private_key_id,
-					token_uri: parsed.token_uri,
-				};
-				return await getCachedOrMintToken(
-					`sa:${creds.client_email}:${creds.private_key_id ?? ""}`,
-					() => exchangeServiceAccountJwt(creds, fetchFn, signal),
-				);
-			}
-			if (parsed.type === "authorized_user" && parsed.client_id && parsed.client_secret && parsed.refresh_token) {
-				const creds: AuthorizedUserCredentials = {
-					type: "authorized_user",
-					client_id: parsed.client_id,
-					client_secret: parsed.client_secret,
-					refresh_token: parsed.refresh_token,
-					token_uri: parsed.token_uri,
-				};
-				return await getCachedOrMintToken(
-					`user:${creds.client_id}:${creds.refresh_token.slice(-12)}`,
-					() => exchangeRefreshToken(creds, fetchFn, signal),
-				);
-			}
-			throw new Error(`Unsupported Vertex AI credential type "${String(parsed.type)}" in ${credPath}`);
+			return await resolveVertexCredentialsObject(parsed, fetchFn, signal, credPath, 0);
 		}
 	}
 
@@ -646,11 +930,11 @@ async function resolveVertexAccessToken(
 }
 
 function resolveWellKnownAdcPath(): string | undefined {
-	const configDir = process.env.CLOUDSDK_CONFIG;
+	const configDir = typeof process !== "undefined" ? process.env.CLOUDSDK_CONFIG : undefined;
 	if (configDir) {
 		return join(configDir, "application_default_credentials.json");
 	}
-	if (process.platform === "win32" && process.env.APPDATA) {
+	if (typeof process !== "undefined" && process.platform === "win32" && process.env.APPDATA) {
 		return join(process.env.APPDATA, "gcloud", "application_default_credentials.json");
 	}
 	const home = homedir();

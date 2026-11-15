@@ -145,8 +145,9 @@ describe("Markdown parsing and rendering", () => {
 		app.renderFrame();
 
 		const rendered = backend.getRenderedTexts().join(" ");
+		const joined = backend.getRenderedTexts().join("");
 		assert.ok(rendered.includes("Heading"));
-		assert.ok(rendered.includes("const x = 1;"));
+		assert.ok(joined.includes("const x = 1;"));
 		app.dispose();
 	});
 });

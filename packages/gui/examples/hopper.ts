@@ -176,6 +176,7 @@ function makeHopperGuiTheme(dark: boolean): GuiTheme {
 	const p = getPalette(dark);
 	const base = dark ? darkGuiTheme : lightGuiTheme;
 	return {
+		...base,
 		dark,
 		background: p.page,
 		surface: p.card,

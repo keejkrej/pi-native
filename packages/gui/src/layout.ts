@@ -79,6 +79,13 @@ export class Spacer extends GuiComponent {
 	}
 }
 
+export interface CornerRadii {
+	readonly tl: number;
+	readonly tr: number;
+	readonly br: number;
+	readonly bl: number;
+}
+
 export interface BoxOptions {
 	readonly child?: GuiComponent;
 	readonly padding?: PaddingInput;
@@ -86,6 +93,7 @@ export interface BoxOptions {
 	readonly borderColor?: Color;
 	readonly borderWidth?: number;
 	readonly radius?: number;
+	readonly cornerRadii?: CornerRadii;
 	readonly shadow?: BoxShadow;
 	readonly width?: number;
 	readonly height?: number;
@@ -105,6 +113,7 @@ export class Box extends GuiComponent {
 	private borderColor: Color | undefined;
 	private borderWidth: number;
 	private radius: number;
+	private cornerRadiiValue: CornerRadii | undefined;
 	private shadow: BoxShadow | undefined;
 	private fixedWidth: number | undefined;
 	private fixedHeight: number | undefined;
@@ -124,6 +133,7 @@ export class Box extends GuiComponent {
 		this.borderColor = options.borderColor;
 		this.borderWidth = options.borderWidth ?? (options.borderColor !== undefined ? 1 : 0);
 		this.radius = options.radius ?? 0;
+		this.cornerRadiiValue = options.cornerRadii;
 		this.shadow = options.shadow;
 		this.fixedWidth = options.width;
 		this.fixedHeight = options.height;
@@ -180,11 +190,21 @@ export class Box extends GuiComponent {
 
 	setRadius(radius: number): void {
 		this.radius = Math.max(0, radius);
+		this.cornerRadiiValue = undefined;
 		this.invalidate();
 	}
 
 	getRadius(): number {
 		return this.radius;
+	}
+
+	setCornerRadii(radii: CornerRadii | undefined): void {
+		this.cornerRadiiValue = radii;
+		this.invalidate();
+	}
+
+	getCornerRadii(): CornerRadii | undefined {
+		return this.cornerRadiiValue;
 	}
 
 	hasBackground(): boolean {
@@ -289,12 +309,21 @@ export class Box extends GuiComponent {
 	render(ctx: GuiRenderContext): void {
 		if (!this.visible) return;
 		const r = this.layoutRect;
+		const cr = this.cornerRadiiValue;
+		const uniformCorner = cr !== undefined && cr.tl === cr.tr && cr.tr === cr.br && cr.br === cr.bl;
+		const effectiveScalarRadius = cr !== undefined ? Math.max(0, Math.max(cr.tl, cr.tr, cr.br, cr.bl)) : this.radius;
+		const usePerCorner = cr !== undefined && !uniformCorner;
 		const shadowLevel = this.resolvedShadowLevel();
 		if (shadowLevel !== undefined) {
-			drawElevationShadow(ctx, r, this.radius, shadowLevel);
+			drawElevationShadow(ctx, r, effectiveScalarRadius, shadowLevel);
 		}
 		if (this.background !== undefined) {
-			ctx.fillRect(r.x, r.y, r.width, r.height, this.background, this.radius);
+			if (usePerCorner) {
+				ctx.fillRectCorners(r.x, r.y, r.width, r.height, cr.tl, cr.tr, cr.br, cr.bl, this.background);
+			} else {
+				const scalar = cr !== undefined ? Math.max(0, cr.tl) : this.radius;
+				ctx.fillRect(r.x, r.y, r.width, r.height, this.background, scalar);
+			}
 		}
 		if (this.child?.visible) {
 			if (this.clipChildren) {
@@ -306,7 +335,23 @@ export class Box extends GuiComponent {
 			}
 		}
 		if (this.borderColor !== undefined && this.borderWidth > 0) {
-			ctx.strokeRect(r.x, r.y, r.width, r.height, this.borderColor, this.borderWidth, this.radius);
+			if (usePerCorner) {
+				ctx.strokeRectCorners(
+					r.x,
+					r.y,
+					r.width,
+					r.height,
+					cr.tl,
+					cr.tr,
+					cr.br,
+					cr.bl,
+					this.borderColor,
+					this.borderWidth,
+				);
+			} else {
+				const scalar = cr !== undefined ? Math.max(0, cr.tl) : this.radius;
+				ctx.strokeRect(r.x, r.y, r.width, r.height, this.borderColor, this.borderWidth, scalar);
+			}
 		}
 	}
 

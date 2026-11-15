@@ -190,6 +190,8 @@ export abstract class GuiBackend {
 	abstract createWindow(options: WindowOptions): number;
 	abstract destroyWindow(windowId: number): void;
 	abstract setWindowTitle(windowId: number, title: string): void;
+	abstract setWindowChrome(windowId: number, darkMode: boolean, sidebarWidth: number, vibrancyEnabled: boolean): void;
+	abstract windowAction(windowId: number, action: number): void;
 	abstract getWindowMetrics(windowId: number): WindowMetrics;
 	abstract measureText(style: TextStyle, maxWidth: number, text: string): TextMetrics;
 	abstract getTextCaretX(style: TextStyle, line: string, charIndex: number): number;

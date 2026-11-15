@@ -527,6 +527,50 @@ static void render_d2d(SguiWindowEntry *entry) {
                 }
                 break;
             }
+            case SGUI_CMD_FILL_RECT_CORNERS: {
+                if (cmd_len >= 80u) {
+                    float x = (float)read_f64(cmd + 8u);
+                    float y = (float)read_f64(cmd + 16u);
+                    float w = (float)read_f64(cmd + 24u);
+                    float h = (float)read_f64(cmd + 32u);
+                    float tl = (float)read_f64(cmd + 40u);
+                    float tr = (float)read_f64(cmd + 48u);
+                    float br = (float)read_f64(cmd + 56u);
+                    float bl = (float)read_f64(cmd + 64u);
+                    float rad = fmaxf(fmaxf(tl, tr), fmaxf(br, bl));
+                    brush->SetColor(d2d_color_from_rgba(read_u32(cmd + 72u)));
+                    D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
+                    if (rad > 0.0f) {
+                        rt->FillRoundedRectangle(D2D1::RoundedRect(r, rad, rad), brush);
+                    } else {
+                        rt->FillRectangle(r, brush);
+                    }
+                }
+                break;
+            }
+            case SGUI_CMD_STROKE_RECT_CORNERS: {
+                if (cmd_len >= 88u) {
+                    float x = (float)read_f64(cmd + 8u);
+                    float y = (float)read_f64(cmd + 16u);
+                    float w = (float)read_f64(cmd + 24u);
+                    float h = (float)read_f64(cmd + 32u);
+                    float tl = (float)read_f64(cmd + 40u);
+                    float tr = (float)read_f64(cmd + 48u);
+                    float br = (float)read_f64(cmd + 56u);
+                    float bl = (float)read_f64(cmd + 64u);
+                    float sw = (float)read_f64(cmd + 72u);
+                    float rad = fmaxf(fmaxf(tl, tr), fmaxf(br, bl));
+                    brush->SetColor(d2d_color_from_rgba(read_u32(cmd + 80u)));
+                    float inset = sw * 0.5f;
+                    D2D1_RECT_F r = D2D1::RectF(x + inset, y + inset, x + w - inset, y + h - inset);
+                    if (rad > 0.0f) {
+                        rt->DrawRoundedRectangle(D2D1::RoundedRect(r, rad, rad), brush, sw);
+                    } else {
+                        rt->DrawRectangle(r, brush, sw);
+                    }
+                }
+                break;
+            }
             case SGUI_CMD_PUSH_CLIP: {
                 if (cmd_len >= 40u) {
                     float x = (float)read_f64(cmd + 8u);
@@ -1219,6 +1263,18 @@ int32_t sgui_set_a11y_tree(uint32_t window_id, const uint8_t *nodes, size_t node
     (void)nodes;
     (void)nodes_len;
     return 0;
+}
+
+void sgui_window_set_chrome(uint32_t win_id, uint32_t dark_mode, double sidebar_width, uint32_t vibrancy_enabled) {
+    (void)win_id;
+    (void)dark_mode;
+    (void)sidebar_width;
+    (void)vibrancy_enabled;
+}
+
+void sgui_window_action(uint32_t win_id, uint32_t action) {
+    (void)win_id;
+    (void)action;
 }
 
 #ifdef __cplusplus

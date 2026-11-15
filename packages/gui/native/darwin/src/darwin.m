@@ -688,13 +688,18 @@ typedef struct {
     uint32_t window_id;
     uint32_t flags;
     NSWindow * __strong window;
+    NSView * __strong container;
+    NSVisualEffectView * __strong vibrancy_view;
     SguiView * __strong view;
     SguiWindowDelegate * __strong delegate;
     uint8_t *commands;
     size_t commands_len;
     size_t commands_cap;
     NSCursor * __strong cursor;
+    NSEvent * __strong last_mouse_down_event;
     NSRect ime_rect;
+    double sidebar_width;
+    bool vibrancy_enabled;
 } SguiWindowEntry;
 
 #define SGUI_MAX_WINDOWS 64
@@ -713,9 +718,11 @@ static SguiWindowEntry *find_window_entry(uint32_t window_id) {
     return NULL;
 }
 
-static bool is_dark_mode(void) {
-    if (NSApp == nil) return false;
-    NSAppearance *app = [NSApp effectiveAppearance];
+static bool is_window_dark_mode(NSWindow *window) {
+    NSAppearance *app = window != nil
+        ? [window effectiveAppearance]
+        : (NSApp != nil ? [NSApp effectiveAppearance] : nil);
+    if (app == nil) return false;
     NSAppearanceName match = [app bestMatchFromAppearancesWithNames:@[
         NSAppearanceNameDarkAqua,
         NSAppearanceNameAqua,
@@ -744,7 +751,69 @@ static void draw_rounded_rect_path(CGContextRef ctx, CGRect rect, CGFloat radius
     CGContextClosePath(ctx);
 }
 
-static void render_command_buffer(CGContextRef ctx, CGRect bounds, const uint8_t *buf, size_t len) {
+static void draw_rounded_corners_path(
+    CGContextRef ctx,
+    CGRect rect,
+    CGFloat tl,
+    CGFloat tr,
+    CGFloat br,
+    CGFloat bl
+) {
+    CGFloat w = rect.size.width;
+    CGFloat h = rect.size.height;
+    if (w <= 0.0 || h <= 0.0) return;
+
+    CGFloat rtl = fmax(0.0, tl);
+    CGFloat rtr = fmax(0.0, tr);
+    CGFloat rbr = fmax(0.0, br);
+    CGFloat rbl = fmax(0.0, bl);
+    if (rtl <= 0.0 && rtr <= 0.0 && rbr <= 0.0 && rbl <= 0.0) {
+        CGContextAddRect(ctx, rect);
+        return;
+    }
+
+    CGFloat sx1 = (rtl + rtr) > 0.0 ? w / (rtl + rtr) : 1.0;
+    CGFloat sx2 = (rbl + rbr) > 0.0 ? w / (rbl + rbr) : 1.0;
+    CGFloat sy1 = (rtl + rbl) > 0.0 ? h / (rtl + rbl) : 1.0;
+    CGFloat sy2 = (rtr + rbr) > 0.0 ? h / (rtr + rbr) : 1.0;
+    CGFloat k = fmin(1.0, fmin(fmin(sx1, sx2), fmin(sy1, sy2)));
+    rtl *= k;
+    rtr *= k;
+    rbr *= k;
+    rbl *= k;
+
+    CGFloat minx = CGRectGetMinX(rect);
+    CGFloat maxx = CGRectGetMaxX(rect);
+    CGFloat miny = CGRectGetMinY(rect);
+    CGFloat maxy = CGRectGetMaxY(rect);
+
+    CGContextMoveToPoint(ctx, minx + rtl, miny);
+    CGContextAddLineToPoint(ctx, maxx - rtr, miny);
+    if (rtr > 0.0) {
+        CGContextAddArcToPoint(ctx, maxx, miny, maxx, miny + rtr, rtr);
+    }
+    CGContextAddLineToPoint(ctx, maxx, maxy - rbr);
+    if (rbr > 0.0) {
+        CGContextAddArcToPoint(ctx, maxx, maxy, maxx - rbr, maxy, rbr);
+    }
+    CGContextAddLineToPoint(ctx, minx + rbl, maxy);
+    if (rbl > 0.0) {
+        CGContextAddArcToPoint(ctx, minx, maxy, minx, maxy - rbl, rbl);
+    }
+    CGContextAddLineToPoint(ctx, minx, miny + rtl);
+    if (rtl > 0.0) {
+        CGContextAddArcToPoint(ctx, minx, miny, minx + rtl, miny, rtl);
+    }
+    CGContextClosePath(ctx);
+}
+
+static void render_command_buffer(
+    CGContextRef ctx,
+    CGRect bounds,
+    const uint8_t *buf,
+    size_t len,
+    double vibrancy_sidebar_w
+) {
     if (buf == NULL || len < 8u) {
         return;
     }
@@ -761,8 +830,26 @@ static void render_command_buffer(CGContextRef ctx, CGRect bounds, const uint8_t
             case SGUI_CMD_CLEAR: {
                 if (cmd_len >= 16u) {
                     uint32_t rgba = read_u32(cmd + 8u);
-                    CGContextSetFillColorWithColor(ctx, cg_color_from_rgba(rgba));
-                    CGContextFillRect(ctx, bounds);
+                    if (vibrancy_sidebar_w > 0.0) {
+                        CGFloat sw = fmin(bounds.size.width, vibrancy_sidebar_w);
+                        if (sw > 0.0) {
+                            CGContextClearRect(
+                                ctx,
+                                CGRectMake(bounds.origin.x, bounds.origin.y, sw, bounds.size.height)
+                            );
+                        }
+                        CGFloat main_w = bounds.size.width - sw;
+                        if (main_w > 0.0) {
+                            CGContextSetFillColorWithColor(ctx, cg_color_from_rgba(rgba));
+                            CGContextFillRect(
+                                ctx,
+                                CGRectMake(bounds.origin.x + sw, bounds.origin.y, main_w, bounds.size.height)
+                            );
+                        }
+                    } else {
+                        CGContextSetFillColorWithColor(ctx, cg_color_from_rgba(rgba));
+                        CGContextFillRect(ctx, bounds);
+                    }
                 }
                 break;
             }
@@ -801,6 +888,56 @@ static void render_command_buffer(CGContextRef ctx, CGRect bounds, const uint8_t
                             ctx,
                             CGRectMake(x + inset, y + inset, fmax(0.0, w - stroke_w), fmax(0.0, h - stroke_w)),
                             fmax(0.0, radius - inset)
+                        );
+                        CGContextStrokePath(ctx);
+                    }
+                }
+                break;
+            }
+            case SGUI_CMD_FILL_RECT_CORNERS: {
+                if (cmd_len >= 80u) {
+                    double x = read_f64(cmd + 8u);
+                    double y = read_f64(cmd + 16u);
+                    double w = read_f64(cmd + 24u);
+                    double h = read_f64(cmd + 32u);
+                    double tl = read_f64(cmd + 40u);
+                    double tr = read_f64(cmd + 48u);
+                    double br = read_f64(cmd + 56u);
+                    double bl = read_f64(cmd + 64u);
+                    uint32_t rgba = read_u32(cmd + 72u);
+                    if (w > 0.0 && h > 0.0) {
+                        CGContextSetFillColorWithColor(ctx, cg_color_from_rgba(rgba));
+                        CGContextBeginPath(ctx);
+                        draw_rounded_corners_path(ctx, CGRectMake(x, y, w, h), tl, tr, br, bl);
+                        CGContextFillPath(ctx);
+                    }
+                }
+                break;
+            }
+            case SGUI_CMD_STROKE_RECT_CORNERS: {
+                if (cmd_len >= 88u) {
+                    double x = read_f64(cmd + 8u);
+                    double y = read_f64(cmd + 16u);
+                    double w = read_f64(cmd + 24u);
+                    double h = read_f64(cmd + 32u);
+                    double tl = read_f64(cmd + 40u);
+                    double tr = read_f64(cmd + 48u);
+                    double br = read_f64(cmd + 56u);
+                    double bl = read_f64(cmd + 64u);
+                    double stroke_w = read_f64(cmd + 72u);
+                    uint32_t rgba = read_u32(cmd + 80u);
+                    if (w > 0.0 && h > 0.0 && stroke_w > 0.0) {
+                        CGFloat inset = stroke_w * 0.5;
+                        CGContextSetStrokeColorWithColor(ctx, cg_color_from_rgba(rgba));
+                        CGContextSetLineWidth(ctx, stroke_w);
+                        CGContextBeginPath(ctx);
+                        draw_rounded_corners_path(
+                            ctx,
+                            CGRectMake(x + inset, y + inset, fmax(0.0, w - stroke_w), fmax(0.0, h - stroke_w)),
+                            tl > 0.0 ? fmax(0.0, tl - inset) : 0.0,
+                            tr > 0.0 ? fmax(0.0, tr - inset) : 0.0,
+                            br > 0.0 ? fmax(0.0, br - inset) : 0.0,
+                            bl > 0.0 ? fmax(0.0, bl - inset) : 0.0
                         );
                         CGContextStrokePath(ctx);
                     }
@@ -966,6 +1103,7 @@ static void render_command_buffer(CGContextRef ctx, CGRect bounds, const uint8_t
 
 @interface SguiView : NSView <NSTextInputClient>
 @property(nonatomic, assign) uint32_t sguiWindowId;
+@property(nonatomic, assign) BOOL sguiVibrancyActive;
 - (void)activateWindowForInput;
 - (void)applyA11yElements:(NSArray<SguiA11yElement *> *)elements
                byNodeId:(NSDictionary<NSNumber *, SguiA11yElement *> *)byId;
@@ -1183,6 +1321,10 @@ static NSString *strip_control_chars(NSString *str) {
     return YES;
 }
 
+- (BOOL)isOpaque {
+    return !_sguiVibrancyActive;
+}
+
 - (BOOL)acceptsFirstResponder {
     return YES;
 }
@@ -1262,7 +1404,7 @@ static NSString *strip_control_chars(NSString *str) {
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
     BOOL focused = self.window != nil && self.window.isKeyWindow;
-    push_evt_focus(_sguiWindowId, focused ? 1u : 0u, is_dark_mode() ? 1u : 0u);
+    push_evt_focus(_sguiWindowId, focused ? 1u : 0u, is_window_dark_mode(self.window) ? 1u : 0u);
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -1270,12 +1412,20 @@ static NSString *strip_control_chars(NSString *str) {
     SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
     CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
     if (ctx == NULL) return;
+    double vibrancy_sidebar_w = (entry != NULL && entry->vibrancy_enabled) ? entry->sidebar_width : 0.0;
+    if (vibrancy_sidebar_w > 0.0) {
+        CGContextClearRect(ctx, self.bounds);
+    }
     if (entry == NULL || entry->commands == NULL || entry->commands_len == 0u) {
+        CGFloat sw = fmin(self.bounds.size.width, fmax(0.0, vibrancy_sidebar_w));
         CGContextSetFillColorWithColor(ctx, [[NSColor windowBackgroundColor] CGColor]);
-        CGContextFillRect(ctx, self.bounds);
+        CGContextFillRect(
+            ctx,
+            CGRectMake(self.bounds.origin.x + sw, self.bounds.origin.y, fmax(0.0, self.bounds.size.width - sw), self.bounds.size.height)
+        );
         return;
     }
-    render_command_buffer(ctx, self.bounds, entry->commands, entry->commands_len);
+    render_command_buffer(ctx, self.bounds, entry->commands, entry->commands_len, vibrancy_sidebar_w);
 }
 
 - (NSPoint)localPointFromEvent:(NSEvent *)event {
@@ -1308,11 +1458,19 @@ static NSString *strip_control_chars(NSString *str) {
 
 - (void)mouseDown:(NSEvent *)event {
     [self activateWindowForInput];
+    SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
+    if (entry != NULL) {
+        entry->last_mouse_down_event = event;
+    }
     [self emitPointerEvent:event phase:SGUI_PTR_DOWN button:SGUI_BTN_LEFT];
 }
 
 - (void)mouseUp:(NSEvent *)event {
     [self emitPointerEvent:event phase:SGUI_PTR_UP button:SGUI_BTN_LEFT];
+    SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
+    if (entry != NULL) {
+        entry->last_mouse_down_event = nil;
+    }
 }
 
 - (void)mouseDragged:(NSEvent *)event {
@@ -1518,6 +1676,10 @@ static NSString *strip_control_chars(NSString *str) {
     (void)notification;
     SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
     if (entry == NULL || entry->view == nil || entry->window == nil) return;
+    if (entry->vibrancy_enabled && entry->vibrancy_view != nil && entry->container != nil) {
+        CGFloat sw = fmin(entry->sidebar_width, entry->container.bounds.size.width);
+        entry->vibrancy_view.frame = NSMakeRect(0.0, 0.0, sw, entry->container.bounds.size.height);
+    }
     NSRect bounds = entry->view.bounds;
     double scale = (double)entry->window.backingScaleFactor;
     push_evt_resize(_sguiWindowId, bounds.size.width, bounds.size.height, scale);
@@ -1529,12 +1691,16 @@ static NSString *strip_control_chars(NSString *str) {
 
 - (void)windowDidBecomeKey:(NSNotification *)notification {
     (void)notification;
-    push_evt_focus(_sguiWindowId, 1u, is_dark_mode() ? 1u : 0u);
+    SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
+    NSWindow *w = entry != NULL ? entry->window : nil;
+    push_evt_focus(_sguiWindowId, 1u, is_window_dark_mode(w) ? 1u : 0u);
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
     (void)notification;
-    push_evt_focus(_sguiWindowId, 0u, is_dark_mode() ? 1u : 0u);
+    SguiWindowEntry *entry = find_window_entry(_sguiWindowId);
+    NSWindow *w = entry != NULL ? entry->window : nil;
+    push_evt_focus(_sguiWindowId, 0u, is_window_dark_mode(w) ? 1u : 0u);
 }
 
 @end
@@ -1652,9 +1818,24 @@ uint32_t sgui_window_create(
             window.titleVisibility = NSWindowTitleHidden;
         }
 
-        SguiView *view = [[SguiView alloc] initWithFrame:window.contentView.bounds windowId:window_id];
+        NSRect content_bounds = NSMakeRect(0.0, 0.0, safe_w, safe_h);
+        NSView *container = [[NSView alloc] initWithFrame:content_bounds];
+        container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        container.wantsLayer = YES;
+        window.contentView = container;
+
+        NSVisualEffectView *vibrancy_view = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 0.0, safe_h)];
+        vibrancy_view.material = NSVisualEffectMaterialSidebar;
+        vibrancy_view.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        vibrancy_view.state = NSVisualEffectStateFollowsWindowActiveState;
+        vibrancy_view.autoresizingMask = NSViewHeightSizable | NSViewMaxXMargin;
+        vibrancy_view.hidden = YES;
+        [container addSubview:vibrancy_view];
+
+        SguiView *view = [[SguiView alloc] initWithFrame:container.bounds windowId:window_id];
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-        window.contentView = view;
+        view.wantsLayer = YES;
+        [container addSubview:view positioned:NSWindowAbove relativeTo:vibrancy_view];
 
         SguiWindowDelegate *delegate = [[SguiWindowDelegate alloc] init];
         delegate.sguiWindowId = window_id;
@@ -1664,13 +1845,18 @@ uint32_t sgui_window_create(
             .window_id = window_id,
             .flags = flags,
             .window = window,
+            .container = container,
+            .vibrancy_view = vibrancy_view,
             .view = view,
             .delegate = delegate,
             .commands = NULL,
             .commands_len = 0u,
             .commands_cap = 0u,
             .cursor = [NSCursor arrowCursor],
+            .last_mouse_down_event = nil,
             .ime_rect = NSMakeRect(0.0, 0.0, 2.0, 18.0),
+            .sidebar_width = 0.0,
+            .vibrancy_enabled = false,
         };
 
         [window center];
@@ -1680,7 +1866,7 @@ uint32_t sgui_window_create(
 
         NSRect bounds = view.bounds;
         push_evt_resize(window_id, bounds.size.width, bounds.size.height, (double)window.backingScaleFactor);
-        push_evt_focus(window_id, window.isKeyWindow ? 1u : 0u, is_dark_mode() ? 1u : 0u);
+        push_evt_focus(window_id, window.isKeyWindow ? 1u : 0u, is_window_dark_mode(window) ? 1u : 0u);
         return window_id;
     }
 }
@@ -1692,14 +1878,19 @@ void sgui_window_destroy(uint32_t window_id) {
         entry->window.delegate = nil;
         [entry->window orderOut:nil];
         [entry->window close];
+        entry->vibrancy_view = nil;
+        entry->container = nil;
         entry->view = nil;
         entry->delegate = nil;
         entry->window = nil;
         entry->cursor = nil;
+        entry->last_mouse_down_event = nil;
         free(entry->commands);
         entry->commands = NULL;
         entry->commands_len = 0u;
         entry->commands_cap = 0u;
+        entry->sidebar_width = 0.0;
+        entry->vibrancy_enabled = false;
         entry->window_id = 0u;
     }
 }
@@ -1709,6 +1900,71 @@ void sgui_window_set_title(uint32_t window_id, const uint8_t *title, size_t titl
         SguiWindowEntry *entry = find_window_entry(window_id);
         if (entry == NULL || entry->window == nil) return;
         entry->window.title = nsstring_from_utf8(title, title_len);
+    }
+}
+
+void sgui_window_set_chrome(uint32_t win_id, uint32_t dark_mode, double sidebar_width, uint32_t vibrancy_enabled) {
+    @autoreleasepool {
+        SguiWindowEntry *entry = find_window_entry(win_id);
+        if (entry == NULL || entry->window == nil || entry->view == nil) return;
+
+        if (dark_mode == 2u) {
+            entry->window.appearance = nil;
+        } else {
+            NSAppearanceName name = dark_mode != 0u ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
+            entry->window.appearance = [NSAppearance appearanceNamed:name];
+        }
+
+        BOOL enable_vibrancy = (vibrancy_enabled != 0u && sidebar_width > 0.0) ? YES : NO;
+        double clamped_sidebar = enable_vibrancy ? sidebar_width : 0.0;
+        entry->sidebar_width = clamped_sidebar;
+        entry->vibrancy_enabled = enable_vibrancy ? true : false;
+        entry->view.sguiVibrancyActive = enable_vibrancy;
+
+        if (enable_vibrancy) {
+            entry->window.opaque = NO;
+            entry->window.backgroundColor = [NSColor clearColor];
+            if (entry->view.layer != nil) {
+                entry->view.layer.opaque = NO;
+            }
+            if (entry->vibrancy_view != nil && entry->container != nil) {
+                CGFloat sw = fmin(clamped_sidebar, entry->container.bounds.size.width);
+                CGFloat h = entry->container.bounds.size.height;
+                entry->vibrancy_view.material = NSVisualEffectMaterialSidebar;
+                entry->vibrancy_view.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+                entry->vibrancy_view.state = NSVisualEffectStateFollowsWindowActiveState;
+                entry->vibrancy_view.frame = NSMakeRect(0.0, 0.0, sw, h);
+                entry->vibrancy_view.hidden = NO;
+            }
+        } else {
+            entry->window.opaque = YES;
+            entry->window.backgroundColor = [NSColor windowBackgroundColor];
+            if (entry->view.layer != nil) {
+                entry->view.layer.opaque = YES;
+            }
+            if (entry->vibrancy_view != nil) {
+                entry->vibrancy_view.hidden = YES;
+            }
+        }
+        entry->view.needsDisplay = YES;
+    }
+}
+
+void sgui_window_action(uint32_t win_id, uint32_t action) {
+    @autoreleasepool {
+        SguiWindowEntry *entry = find_window_entry(win_id);
+        if (entry == NULL || entry->window == nil) return;
+        if (action == SGUI_WIN_ACTION_DRAG) {
+            NSEvent *ev = entry->last_mouse_down_event;
+            if (ev != nil) {
+                entry->last_mouse_down_event = nil;
+                [entry->window performWindowDragWithEvent:ev];
+            }
+        } else if (action == SGUI_WIN_ACTION_ZOOM) {
+            [entry->window performZoom:nil];
+        } else if (action == SGUI_WIN_ACTION_MINIATURIZE) {
+            [entry->window performMiniaturize:nil];
+        }
     }
 }
 
@@ -1723,14 +1979,16 @@ int32_t sgui_window_get_metrics(uint32_t window_id, uint8_t *out_metrics, size_t
         double inset_left = 0.0;
         double titlebar_h = 0.0;
         if ((entry->flags & (SGUI_WIN_TITLEBAR_HIDDEN | SGUI_WIN_UNIFIED_TITLEBAR)) != 0u) {
+            NSRect content_layout = entry->window.contentLayoutRect;
+            double layout_title_h = fmax(0.0, entry->window.frame.size.height - NSMaxY(content_layout));
             NSButton *zoom_btn = [entry->window standardWindowButton:NSWindowZoomButton];
             if (zoom_btn != nil && zoom_btn.superview != nil) {
                 NSRect zoom_in_view = [entry->view convertRect:zoom_btn.frame fromView:zoom_btn.superview];
                 inset_left = fmax(0.0, NSMaxX(zoom_in_view) + 12.0);
-                titlebar_h = fmax(28.0, NSMaxY(zoom_in_view) + 8.0);
+                titlebar_h = fmax(fmax(28.0, NSMaxY(zoom_in_view) + 8.0), layout_title_h);
             } else {
                 inset_left = 78.0;
-                titlebar_h = 38.0;
+                titlebar_h = fmax(38.0, layout_title_h);
             }
         }
         write_f64(out_metrics + 0u, bounds.size.width);
@@ -1738,7 +1996,7 @@ int32_t sgui_window_get_metrics(uint32_t window_id, uint8_t *out_metrics, size_t
         write_f64(out_metrics + 16u, scale);
         write_f64(out_metrics + 24u, inset_left);
         write_f64(out_metrics + 32u, titlebar_h);
-        write_u32(out_metrics + 40u, is_dark_mode() ? 1u : 0u);
+        write_u32(out_metrics + 40u, is_window_dark_mode(entry->window) ? 1u : 0u);
         write_u32(out_metrics + 44u, entry->window.isKeyWindow ? 1u : 0u);
         return 0;
     }

@@ -12,6 +12,13 @@
 		{ "name": "sguiWindowDestroy", "symbol": "sgui_window_destroy", "params": ["u32"], "returns": "void" },
 		{ "name": "sguiWindowSetTitle", "symbol": "sgui_window_set_title", "params": ["u32", "string"], "returns": "void" },
 		{
+			"name": "sguiWindowSetChrome",
+			"symbol": "sgui_window_set_chrome",
+			"params": ["u32", "u32", "f64", "u32"],
+			"returns": "void"
+		},
+		{ "name": "sguiWindowAction", "symbol": "sgui_window_action", "params": ["u32", "u32"], "returns": "void" },
+		{
 			"name": "sguiWindowGetMetrics",
 			"symbol": "sgui_window_get_metrics",
 			"params": ["u32", "mutable-bytes"],

@@ -397,6 +397,43 @@ static void cairo_rounded_rect(cairo_t *cr, double x, double y, double w, double
     cairo_close_path(cr);
 }
 
+static void cairo_rounded_corners(
+    cairo_t *cr,
+    double x,
+    double y,
+    double w,
+    double h,
+    double tl,
+    double tr,
+    double br,
+    double bl
+) {
+    double rtl = fmax(0.0, tl);
+    double rtr = fmax(0.0, tr);
+    double rbr = fmax(0.0, br);
+    double rbl = fmax(0.0, bl);
+    if (rtl <= 0.0 && rtr <= 0.0 && rbr <= 0.0 && rbl <= 0.0) {
+        cairo_rectangle(cr, x, y, w, h);
+        return;
+    }
+    double sx1 = (rtl + rtr) > 0.0 ? w / (rtl + rtr) : 1.0;
+    double sx2 = (rbl + rbr) > 0.0 ? w / (rbl + rbr) : 1.0;
+    double sy1 = (rtl + rbl) > 0.0 ? h / (rtl + rbl) : 1.0;
+    double sy2 = (rtr + rbr) > 0.0 ? h / (rtr + rbr) : 1.0;
+    double k = fmin(1.0, fmin(fmin(sx1, sx2), fmin(sy1, sy2)));
+    rtl *= k;
+    rtr *= k;
+    rbr *= k;
+    rbl *= k;
+    double deg = M_PI / 180.0;
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + w - rtr, y + rtr, rtr, -90.0 * deg, 0.0 * deg);
+    cairo_arc(cr, x + w - rbr, y + h - rbr, rbr, 0.0 * deg, 90.0 * deg);
+    cairo_arc(cr, x + rbl, y + h - rbl, rbl, 90.0 * deg, 180.0 * deg);
+    cairo_arc(cr, x + rtl, y + rtl, rtl, 180.0 * deg, 270.0 * deg);
+    cairo_close_path(cr);
+}
+
 static void draw_commands_cairo(cairo_t *cr, double width, double height, const uint8_t *buf, size_t len) {
     if (buf == NULL || len < 8u) return;
     int clip_depth = 0;
@@ -451,6 +488,57 @@ static void draw_commands_cairo(cairo_t *cr, double width, double height, const 
                             fmax(0.0, w - stroke_w),
                             fmax(0.0, h - stroke_w),
                             fmax(0.0, radius - inset)
+                        );
+                        cairo_stroke(cr);
+                    }
+                }
+                break;
+            }
+            case SGUI_CMD_FILL_RECT_CORNERS: {
+                if (cmd_len >= 80u) {
+                    double x = read_f64(cmd + 8u);
+                    double y = read_f64(cmd + 16u);
+                    double w = read_f64(cmd + 24u);
+                    double h = read_f64(cmd + 32u);
+                    double tl = read_f64(cmd + 40u);
+                    double tr = read_f64(cmd + 48u);
+                    double br = read_f64(cmd + 56u);
+                    double bl = read_f64(cmd + 64u);
+                    uint32_t rgba = read_u32(cmd + 72u);
+                    if (w > 0.0 && h > 0.0) {
+                        cairo_set_rgba(cr, rgba);
+                        cairo_rounded_corners(cr, x, y, w, h, tl, tr, br, bl);
+                        cairo_fill(cr);
+                    }
+                }
+                break;
+            }
+            case SGUI_CMD_STROKE_RECT_CORNERS: {
+                if (cmd_len >= 88u) {
+                    double x = read_f64(cmd + 8u);
+                    double y = read_f64(cmd + 16u);
+                    double w = read_f64(cmd + 24u);
+                    double h = read_f64(cmd + 32u);
+                    double tl = read_f64(cmd + 40u);
+                    double tr = read_f64(cmd + 48u);
+                    double br = read_f64(cmd + 56u);
+                    double bl = read_f64(cmd + 64u);
+                    double stroke_w = read_f64(cmd + 72u);
+                    uint32_t rgba = read_u32(cmd + 80u);
+                    if (w > 0.0 && h > 0.0 && stroke_w > 0.0) {
+                        double inset = stroke_w * 0.5;
+                        cairo_set_rgba(cr, rgba);
+                        cairo_set_line_width(cr, stroke_w);
+                        cairo_rounded_corners(
+                            cr,
+                            x + inset,
+                            y + inset,
+                            fmax(0.0, w - stroke_w),
+                            fmax(0.0, h - stroke_w),
+                            tl > 0.0 ? fmax(0.0, tl - inset) : 0.0,
+                            tr > 0.0 ? fmax(0.0, tr - inset) : 0.0,
+                            br > 0.0 ? fmax(0.0, br - inset) : 0.0,
+                            bl > 0.0 ? fmax(0.0, bl - inset) : 0.0
                         );
                         cairo_stroke(cr);
                     }
@@ -1366,4 +1454,16 @@ int32_t sgui_set_a11y_tree(uint32_t window_id, const uint8_t *nodes, size_t node
     (void)nodes;
     (void)nodes_len;
     return 0;
+}
+
+void sgui_window_set_chrome(uint32_t win_id, uint32_t dark_mode, double sidebar_width, uint32_t vibrancy_enabled) {
+    (void)win_id;
+    (void)dark_mode;
+    (void)sidebar_width;
+    (void)vibrancy_enabled;
+}
+
+void sgui_window_action(uint32_t win_id, uint32_t action) {
+    (void)win_id;
+    (void)action;
 }

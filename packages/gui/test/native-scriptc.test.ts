@@ -18,6 +18,8 @@ import {
 class MockNativeDriver extends NativeDriver {
 	clipboardValue = "initial";
 	lastIme = { windowId: 0, x: 0, y: 0, width: 0, height: 0 };
+	lastChrome: { windowId: number; darkMode: number; sidebarWidth: number; vibrancyEnabled: number } | undefined = undefined;
+	lastActions: number[] = [];
 	lastPresentedBytes = 0;
 
 	init(): number {
@@ -33,6 +35,14 @@ class MockNativeDriver extends NativeDriver {
 	windowDestroy(_windowId: number): void {}
 
 	windowSetTitle(_windowId: number, _title: string): void {}
+
+	windowSetChrome(windowId: number, darkMode: number, sidebarWidth: number, vibrancyEnabled: number): void {
+		this.lastChrome = { windowId, darkMode, sidebarWidth, vibrancyEnabled };
+	}
+
+	windowAction(_windowId: number, action: number): void {
+		this.lastActions.push(action);
+	}
 
 	windowGetMetrics(_windowId: number, outMetrics: Uint8Array): number {
 		const view = new DataView(outMetrics.buffer, outMetrics.byteOffset, SGUI_WINDOW_METRICS_SIZE);

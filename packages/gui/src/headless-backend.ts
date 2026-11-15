@@ -35,6 +35,12 @@ export interface HeadlessBackendOptions {
 	readonly platform?: string;
 }
 
+export interface HeadlessWindowChromeState {
+	readonly darkMode: boolean;
+	readonly sidebarWidth: number;
+	readonly vibrancyEnabled: boolean;
+}
+
 interface HeadlessWindowState {
 	id: number;
 	title: string;
@@ -50,6 +56,8 @@ interface HeadlessWindowState {
 	frameCount: number;
 	lastFrame: Uint8Array | undefined;
 	a11yNodes: GuiA11yNode[];
+	chrome: HeadlessWindowChromeState | undefined;
+	windowActions: number[];
 }
 
 function charAdvance(ch: string, fontFamily: number, fontSize: number, fontWeight: number): number {
@@ -232,7 +240,7 @@ export class HeadlessBackend extends GuiBackend {
 			height: options.height > 0 ? options.height : this.defaultOpts.height,
 			scale: this.defaultOpts.scale,
 			insetLeft: this.defaultOpts.insetLeft,
-			titlebarHeight: options.titlebarHidden ? this.defaultOpts.titlebarHeight : 0,
+			titlebarHeight: options.titlebarHidden || options.unifiedTitlebar ? this.defaultOpts.titlebarHeight : 0,
 			darkMode: this.defaultOpts.darkMode,
 			focused: this.defaultOpts.focused,
 			cursor: SGUI_CURSOR_ARROW,
@@ -240,6 +248,8 @@ export class HeadlessBackend extends GuiBackend {
 			frameCount: 0,
 			lastFrame: undefined,
 			a11yNodes: [],
+			chrome: undefined,
+			windowActions: [],
 		});
 		return id;
 	}
@@ -255,8 +265,29 @@ export class HeadlessBackend extends GuiBackend {
 		}
 	}
 
+	setWindowChrome(windowId: number, darkMode: boolean, sidebarWidth: number, vibrancyEnabled: boolean): void {
+		const win = this.windows.get(windowId);
+		if (win === undefined) return;
+		win.darkMode = darkMode;
+		win.chrome = { darkMode, sidebarWidth, vibrancyEnabled };
+	}
+
+	windowAction(windowId: number, action: number): void {
+		const win = this.windows.get(windowId);
+		if (win === undefined) return;
+		win.windowActions.push(action);
+	}
+
 	getWindowTitle(windowId: number): string | undefined {
 		return this.windows.get(windowId)?.title;
+	}
+
+	getWindowChrome(windowId = 1): HeadlessWindowChromeState | undefined {
+		return this.windows.get(windowId)?.chrome;
+	}
+
+	getWindowActions(windowId = 1): readonly number[] {
+		return this.windows.get(windowId)?.windowActions ?? [];
 	}
 
 	getWindowMetrics(windowId: number): WindowMetrics {

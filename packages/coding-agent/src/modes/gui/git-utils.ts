@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync, closeSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -39,7 +39,7 @@ const IGNORED_WORKSPACE_DIRS = new Set<string>([
 	".DS_Store",
 ]);
 
-const EXTENSION_LANGUAGES: Record<string, string> = {
+const EXTENSION_LANGUAGES: Record<string, string | undefined> = {
 	".ts": "typescript",
 	".tsx": "tsx",
 	".mts": "typescript",
@@ -93,27 +93,73 @@ interface ExecResult {
 
 function runProcess(command: string, args: readonly string[], cwd: string): Promise<ExecResult> {
 	return new Promise((resolvePromise) => {
-		execFile(
-			command,
-			[...args],
-			{ cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: "utf8" },
-			(error, stdout, stderr) => {
-				if (error) {
-					const code = typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1;
-					resolvePromise({
-						stdout: typeof stdout === "string" ? stdout : "",
-						stderr: typeof stderr === "string" && stderr.length > 0 ? stderr : error.message,
-						exitCode: code,
+		let settled = false;
+		const stdoutChunks: Buffer[] = [];
+		const stderrChunks: Buffer[] = [];
+		let stdoutBytes = 0;
+		let stderrBytes = 0;
+		const finish = (res: ExecResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolvePromise(res);
+		};
+		const child = spawn(command, [...args], {
+			cwd,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const timer = setTimeout(() => {
+			if (settled) return;
+			try {
+				child.kill("SIGTERM");
+			} catch {}
+			finish({
+				stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+				stderr: `${command} timed out after ${GIT_TIMEOUT_MS}ms`,
+				exitCode: 1,
+			});
+		}, GIT_TIMEOUT_MS);
+		if (child.stdout) {
+			child.stdout.on("data", (chunk: Buffer | string) => {
+				const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+				stdoutBytes += buf.length;
+				if (stdoutBytes <= GIT_MAX_BUFFER) {
+					stdoutChunks.push(buf);
+				} else {
+					try {
+						child.kill("SIGTERM");
+					} catch {}
+					finish({
+						stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+						stderr: `${command} stdout exceeded ${GIT_MAX_BUFFER} bytes`,
+						exitCode: 1,
 					});
-					return;
 				}
-				resolvePromise({
-					stdout: typeof stdout === "string" ? stdout : "",
-					stderr: typeof stderr === "string" ? stderr : "",
-					exitCode: 0,
-				});
-			},
-		);
+			});
+		}
+		if (child.stderr) {
+			child.stderr.on("data", (chunk: Buffer | string) => {
+				const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+				stderrBytes += buf.length;
+				if (stderrBytes <= GIT_MAX_BUFFER) {
+					stderrChunks.push(buf);
+				}
+			});
+		}
+		child.on("error", (err) => {
+			finish({
+				stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+				stderr: err.message,
+				exitCode: 1,
+			});
+		});
+		child.on("close", (code) => {
+			finish({
+				stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+				stderr: Buffer.concat(stderrChunks).toString("utf8"),
+				exitCode: typeof code === "number" ? code : 1,
+			});
+		});
 	});
 }
 
@@ -502,18 +548,27 @@ export async function scanWorkspaceFiles(
 
 	async function walk(dirPath: string, depth: number): Promise<void> {
 		if (depth > maxDepth || entries.length >= maxEntries) return;
-		let dirents: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
+		const sorted: Array<{ name: string; isDir: boolean; isFile: boolean }> = [];
 		try {
-			dirents = await readdir(dirPath, { withFileTypes: true });
+			const dirents = await readdir(dirPath, { withFileTypes: true });
+			for (const d of dirents) {
+				sorted.push({
+					name: d.name,
+					isDir: d.isDirectory(),
+					isFile: d.isFile(),
+				});
+			}
 		} catch {
 			return;
 		}
 
-		const sorted = [...dirents].sort((a, b) => {
-			const aDir = a.isDirectory();
-			const bDir = b.isDirectory();
-			if (aDir !== bDir) return aDir ? -1 : 1;
-			return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+		sorted.sort((a, b) => {
+			if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+			const aLower = a.name.toLowerCase();
+			const bLower = b.name.toLowerCase();
+			if (aLower < bLower) return -1;
+			if (aLower > bLower) return 1;
+			return a.name.localeCompare(b.name);
 		});
 
 		for (const item of sorted) {
@@ -522,9 +577,8 @@ export async function scanWorkspaceFiles(
 
 			const fullPath = join(dirPath, item.name);
 			const relPath = relative(cwd, fullPath).replace(/\\/g, "/");
-			const isDir = item.isDirectory();
 
-			if (isDir) {
+			if (item.isDir) {
 				entries.push({
 					name: item.name,
 					path: fullPath,
@@ -536,7 +590,7 @@ export async function scanWorkspaceFiles(
 				if (depth < maxDepth) {
 					await walk(fullPath, depth + 1);
 				}
-			} else if (item.isFile()) {
+			} else if (item.isFile) {
 				let sizeBytes: number | undefined;
 				try {
 					sizeBytes = statSync(fullPath).size;

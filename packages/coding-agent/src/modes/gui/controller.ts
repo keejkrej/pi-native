@@ -648,11 +648,19 @@ function computeSessionUsageTotals(session: AgentSession): {
 	};
 }
 
+/** Look up an optional custom session title without triggering unchecked Record string assertions in scriptc. */
+function getSessionCustomName(names: Record<string, string>, sessionId: string): string | undefined {
+	for (const [key, value] of Object.entries(names)) {
+		if (key === sessionId) return value;
+	}
+	return undefined;
+}
+
 function deriveSessionTitle(
 	info: Pick<SessionInfo, "id" | "name" | "firstMessage">,
 	layout: GuiLayoutPreferences,
 ): string {
-	const custom = layout.sessionCustomNames[info.id];
+	const custom = getSessionCustomName(layout.sessionCustomNames, info.id);
 	if (custom && custom.trim().length > 0) return custom.trim();
 	if (info.name && info.name.trim().length > 0) return info.name.trim();
 	const firstLine = info.firstMessage.split(/\r?\n/)[0]?.trim() ?? "";
@@ -1536,7 +1544,9 @@ export class RealGuiSessionController implements GuiSessionController {
 
 		const sessionId = session.sessionId;
 		const sessionName =
-			this.layout.sessionCustomNames[sessionId] ?? session.sessionName ?? session.sessionManager.getSessionName();
+			getSessionCustomName(this.layout.sessionCustomNames, sessionId) ??
+			session.sessionName ??
+			session.sessionManager.getSessionName();
 
 		return {
 			cwd: this.currentCwd,
@@ -1799,14 +1809,13 @@ export class RealGuiSessionController implements GuiSessionController {
 		const activeId = session.sessionId;
 		const byPath = new Map<string, SessionInfo>();
 
-		const lists = await Promise.allSettled([
-			SessionManager.list(this.currentCwd, sessionDir),
-			includeAllProjects ? SessionManager.listAll() : Promise.resolve([] as SessionInfo[]),
+		const [projectSessions, allSessions] = await Promise.all([
+			SessionManager.list(this.currentCwd, sessionDir).catch((): SessionInfo[] => []),
+			includeAllProjects ? SessionManager.listAll().catch((): SessionInfo[] => []) : Promise.resolve([] as SessionInfo[]),
 		]);
 
-		for (const res of lists) {
-			if (res.status !== "fulfilled") continue;
-			for (const info of res.value) {
+		for (const list of [projectSessions, allSessions]) {
+			for (const info of list) {
 				if (!byPath.has(info.path)) {
 					byPath.set(info.path, info);
 				}
@@ -2400,7 +2409,7 @@ export class MockGuiSessionController implements GuiSessionController {
 			},
 			sessionId: current.id,
 			sessionFile: current.sessionFile,
-			sessionName: this.layout.sessionCustomNames[current.id] ?? current.title,
+			sessionName: getSessionCustomName(this.layout.sessionCustomNames, current.id) ?? current.title,
 			gitBranch: this.gitBranch,
 			isGitRepo: true,
 			contextUsage: this.getContextUsage(),
@@ -2710,7 +2719,7 @@ export class MockGuiSessionController implements GuiSessionController {
 				sessionFile: rec.sessionFile,
 				cwd: rec.cwd,
 				workspaceName: getWorkspaceName(rec.cwd),
-				title: this.layout.sessionCustomNames[rec.id] ?? rec.title,
+				title: getSessionCustomName(this.layout.sessionCustomNames, rec.id) ?? rec.title,
 				createdAt: rec.createdAt,
 				updatedAt: rec.updatedAt,
 				messageCount: rec.transcript.length,

@@ -73,6 +73,7 @@ import {
 	VirtualList,
 	VStack,
 } from "scriptc-ui";
+import { createNativeBackend } from "scriptc-ui/native";
 
 import { AnthropicHttpClient } from "../packages/ai/src/api/anthropic-http.ts";
 import { getJsonSchemaToolParameters } from "../packages/ai/src/api/constrained-sampling.ts";
@@ -826,6 +827,9 @@ async function main(): Promise<void> {
 
 	// 19. scriptc-ui + packages/coding-agent/src/modes/gui
 	await runCase("package:scriptc-ui+coding-agent-gui", async () => {
+		const nativeBackend = createNativeBackend("darwin");
+		assert(typeof nativeBackend.windowAction === "function", "createNativeBackend missing windowAction");
+
 		const accent = oklchColor(0.68, 0.16, 250);
 		const hex = colorToHex(accent);
 		assert(hex.startsWith("#") && hex.length >= 7, `unexpected colorToHex: ${hex}`);

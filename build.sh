@@ -12,7 +12,6 @@ fi
 
 EMIT_WORKERS="${SCRIPTC_EMIT_WORKERS:-1}"
 EXAMPLES=(counter tasks desktop bench demo hopper gallery)
-FFI_DARWIN="packages/pi-native-ffi/ffi/darwin.json"
 FFI_DARWIN_GUI="packages/pi-native-ffi/ffi/darwin-gui.json"
 
 reap_daemons() {
@@ -29,10 +28,15 @@ build_native_pinative() {
 build_native_sgui() {
 	if [ "$(uname -s)" = "Darwin" ]; then
 		local lib="packages/gui/native/darwin/build/libsgui.a"
-		if [ ! -f "$lib" ] || [ "packages/gui/native/darwin/src/darwin.m" -nt "$lib" ] || [ "packages/gui/native/include/sgui.h" -nt "$lib" ]; then
+		if [ ! -f "$lib" ] || [ "packages/gui/native/darwin/src/darwin.m" -nt "$lib" ] || [ "packages/gui/native/include/sgui.h" -nt "$lib" ] || [ "packages/gui/native/darwin/build.sh" -nt "$lib" ]; then
 			./packages/gui/native/darwin/build.sh
 		fi
 	fi
+}
+
+build_native_libs() {
+	build_native_sgui
+	build_native_pinative
 }
 
 run_scriptc() {
@@ -45,7 +49,7 @@ cleanup_artifacts() {
 }
 
 run_with_extensions() {
-	build_native_pinative
+	build_native_libs
 	reap_daemons
 	if command -v bun >/dev/null 2>&1; then
 		SCRIPTC="$SCRIPTC" SCRIPTC_EMIT_WORKERS="$EMIT_WORKERS" bun scripts/build-with-extensions.ts "$@"
@@ -61,29 +65,8 @@ build_pi() {
 		return
 	fi
 	mkdir -p dist
-	build_native_pinative
-	reap_daemons
-	local ffi_args=()
-	if [ "$(uname -s)" = "Darwin" ]; then
-		ffi_args=(--ffi "$FFI_DARWIN")
-	fi
-	run_scriptc build \
-		--node-islands=off \
-		--optimization=dev \
-		--strip \
-		--no-keep-llvm \
-		--no-shape-overlay \
-		packages/coding-agent/src/cli.ts \
-		"${ffi_args[@]}" \
-		-o dist/pi
-	cleanup_artifacts dist/pi
-	reap_daemons
-}
-
-build_gui() {
-	mkdir -p dist
-	build_native_sgui
-	build_native_pinative
+	rm -f dist/pi-gui
+	build_native_libs
 	reap_daemons
 	local ffi_args=()
 	if [ "$(uname -s)" = "Darwin" ]; then
@@ -95,10 +78,10 @@ build_gui() {
 		--strip \
 		--no-keep-llvm \
 		--no-shape-overlay \
-		packages/coding-agent/src/gui-cli.ts \
+		packages/coding-agent/src/cli.ts \
 		"${ffi_args[@]}" \
-		-o dist/pi-gui
-	cleanup_artifacts dist/pi-gui
+		-o dist/pi
+	cleanup_artifacts dist/pi
 	reap_daemons
 }
 
@@ -122,11 +105,11 @@ build_examples() {
 }
 
 run_coverage() {
-	build_native_pinative
+	build_native_libs
 	reap_daemons
 	local ffi_args=()
 	if [ "$(uname -s)" = "Darwin" ]; then
-		ffi_args=(--ffi "$FFI_DARWIN")
+		ffi_args=(--ffi "$FFI_DARWIN_GUI")
 	fi
 	run_scriptc coverage \
 		--node-islands=off \
@@ -138,11 +121,11 @@ run_coverage() {
 
 run_test() {
 	mkdir -p dist
-	build_native_pinative
+	build_native_libs
 	reap_daemons
 	local ffi_args=()
 	if [ "$(uname -s)" = "Darwin" ]; then
-		ffi_args=(--ffi "$FFI_DARWIN")
+		ffi_args=(--ffi "$FFI_DARWIN_GUI")
 	fi
 	run_scriptc build \
 		--node-islands=off \
@@ -170,15 +153,11 @@ case "${1:-all}" in
 		shift
 		build_pi "$@"
 		;;
-	gui)
-		build_gui
-		;;
 	examples)
 		build_examples
 		;;
 	all)
 		build_pi
-		build_gui
 		build_examples
 		;;
 	coverage)
@@ -191,7 +170,7 @@ case "${1:-all}" in
 		run_clean
 		;;
 	*)
-		echo "Usage: $0 {all|pi [--with-ext <file.ts> ...]|gui|examples|coverage|test|clean}" >&2
+		echo "Usage: $0 {all|pi [--with-ext <file.ts> ...]|examples|coverage|test|clean}" >&2
 		exit 2
 		;;
 esac

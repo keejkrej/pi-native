@@ -11,6 +11,7 @@ export default function groovy(hljs: HLJSApi): LanguageDetail {
 
   return {
     name: "Groovy",
+    aliases: ["gradle"],
     keywords: {
       literal: "true false null",
       built_in: "this super",

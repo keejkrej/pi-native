@@ -41,7 +41,7 @@ export default function bash(hljs: HLJSApi): LanguageDetail {
 
   return {
     name: "Bash",
-    aliases: ["sh", "zsh"],
+    aliases: ["sh", "zsh", "shell", "console"],
     keywords: {
       $pattern: /\b[a-z._-]+\b/,
       keyword:

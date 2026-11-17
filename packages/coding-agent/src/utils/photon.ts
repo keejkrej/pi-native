@@ -1,5 +1,5 @@
 /**
- * Image processing stub interface (WASM photon disabled in pi-native).
+ * Image processing stub interface (WASM photon disabled in pi-ts).
  */
 
 export interface PhotonImageType {

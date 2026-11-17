@@ -10,7 +10,7 @@ import {
 	normalizeContext,
 	PI_ATTRIBUTION,
 	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@pi-ts/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";

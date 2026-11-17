@@ -46,7 +46,7 @@ import {
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_MONO,
 	SGUI_FONT_REGULAR,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import { openGitBranchModal, openGitCommitModal } from "./overlays.ts";
 import type {
 	GuiChangedFile,

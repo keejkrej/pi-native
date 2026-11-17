@@ -43,7 +43,7 @@ import {
 	SGUI_A11Y_STATE_SELECTED,
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_REGULAR,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import {
 	formatRelativeTimeShort,
 	lookupSessionCustomName,

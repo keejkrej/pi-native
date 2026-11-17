@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@pi-ts/agent-core";
 import {
 	Badge,
 	Box,
@@ -22,7 +22,7 @@ import {
 	Text,
 	TruncatedText,
 	VStack,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import { createBannerCard } from "./cards.ts";
 import {
 	createWakuComposer,
@@ -783,7 +783,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		{
 			title: "App",
 			items: [
-				{ kind: "action", label: "About pi-native", role: "about" },
+				{ kind: "action", label: "About pi-ts", role: "about" },
 				{ kind: "separator" },
 				{ kind: "action", label: "Toggle Theme", shortcut: "mod+t", onSelect: toggleTheme },
 				{ kind: "action", label: "Settings", shortcut: "mod+,", onSelect: openSettingsModalOverlay },

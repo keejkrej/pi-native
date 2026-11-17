@@ -12,7 +12,7 @@ import {
 	type McpOAuthConfig as McpOAuthFields,
 	type McpStdioServerConfig as McpStdioServerFields,
 	validateMcpServerConfig as validateMcpServerFields,
-} from "@earendil-works/pi-mcp";
+} from "@pi-ts/mcp";
 
 /**
  * Regular expression for a tool name pattern where `*` matches any characters, as `toolExposure`,

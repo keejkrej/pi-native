@@ -765,7 +765,7 @@ export abstract class TUI extends Container {
 	setLayoutRoot(_component: Component | ComponentLike | undefined): void {}
 }
 
-export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
+export const VIEWPORT_TUI = Symbol.for("@pi-ts/tui/viewport");
 
 export type ViewportTUI = TUI & {
 	readonly [VIEWPORT_TUI]: true;

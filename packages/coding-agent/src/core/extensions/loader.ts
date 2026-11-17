@@ -4,10 +4,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Provider } from "@earendil-works/pi-ai";
-import { mcpNamespace } from "@earendil-works/pi-mcp";
-import type { KeyId } from "@earendil-works/pi-tui";
-import { isNativeDarwinAvailable } from "../../../../pi-native-ffi/src/index.ts";
+import type { Provider } from "@pi-ts/ai";
+import { mcpNamespace } from "@pi-ts/mcp";
+import type { KeyId } from "@pi-ts/tui";
+import { isNativeDarwinAvailable } from "@pi-ts/ffi";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import { pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -523,7 +523,7 @@ async function loadExtensionsInternal(
 		if (!nativeAvailable) {
 			warnings.push({
 				path: extPath,
-				warning: "External JS/TS extensions are not supported in pi-native; use MCP or ACP instead.",
+				warning: "External JS/TS extensions are not supported in pi-ts; use MCP or ACP instead.",
 			});
 			continue;
 		}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -199,13 +199,17 @@ describe("NativeBackend FFI adapter marshaling", () => {
 });
 
 function findScriptcBinary(): string | undefined {
+	const whichResult = spawnSync("which", ["scriptc"], { encoding: "utf8" });
+	const whichPath = whichResult.status === 0 ? whichResult.stdout.trim() : undefined;
 	const candidates = [
+		process.env.SCRIPTC,
 		process.env.SCRIPTC_BIN,
 		resolve(import.meta.dirname, "../../../node_modules/.bin/scriptc"),
-		"/Users/jack/workspace/pi-native/node_modules/.bin/scriptc",
+		whichPath,
+		join(homedir(), ".local/share/mise/installs/node/24/bin/scriptc"),
 	];
 	for (const candidate of candidates) {
-		if (candidate !== undefined && existsSync(candidate)) {
+		if (candidate !== undefined && candidate.length > 0 && existsSync(candidate)) {
 			return candidate;
 		}
 	}

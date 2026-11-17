@@ -5,7 +5,7 @@
  */
 
 import { basename } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@pi-ts/agent-core";
 import {
 	Box,
 	Button,
@@ -51,7 +51,7 @@ import {
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_MONO,
 	SGUI_FONT_REGULAR,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import type {
 	GuiChangedFile,
 	GuiContextUsage,

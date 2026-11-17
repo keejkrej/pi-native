@@ -3,7 +3,7 @@
  */
 
 import { join } from "node:path";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@pi-ts/agent-core";
 import type { TSchema } from "typebox";
 import type {
 	AnyModel,
@@ -17,7 +17,7 @@ import type {
 	ModelType,
 	TextContent,
 	Usage,
-} from "@earendil-works/pi-ai";
+} from "@pi-ts/ai";
 import { getDocsPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolInfo, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";

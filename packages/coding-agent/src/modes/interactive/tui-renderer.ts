@@ -16,7 +16,7 @@ import {
 	type TuiMouseEventResult,
 	type TuiStopOptions,
 	type WheelScrollLines,
-} from "@earendil-works/pi-tui";
+} from "@pi-ts/tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { keyDisplayText } from "./components/keybinding-hints.ts";

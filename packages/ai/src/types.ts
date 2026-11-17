@@ -1,4 +1,4 @@
-import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
+import type { TelemetrySpan } from "@pi-ts/telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
@@ -774,7 +774,7 @@ export type ConstrainedSamplingConfig =
 
 /**
  * A tool the model may call. `parameters` is the JSON Schema of its arguments: pi-schema's builders (which also type
- * the arguments, see `Static` in `@earendil-works/pi-schema`), TypeBox schemas, or any JSON Schema object.
+ * the arguments, see `Static` in `@pi-ts/schema`), TypeBox schemas, or any JSON Schema object.
  */
 export interface Tool<TParameters extends object = object> {
 	name: string;

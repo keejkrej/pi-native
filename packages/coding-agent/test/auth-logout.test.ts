@@ -1,4 +1,4 @@
-import { type Credential, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { type Credential, InMemoryModelsStore } from "@pi-ts/ai";
 import { describe, expect, test, vi } from "vitest";
 import { runAuthLogout } from "../src/cli/auth-logout.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";

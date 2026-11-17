@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
-import { darkGuiTheme, GuiApp, type GuiA11yNode, HeadlessBackend } from "scriptc-ui";
-import { createNativeBackend } from "scriptc-ui/native";
+import { darkGuiTheme, GuiApp, type GuiA11yNode, HeadlessBackend } from "@pi-ts/gui";
+import { createNativeBackend } from "@pi-ts/gui/native";
 import { setupCli } from "./cli/setup.ts";
 import {
 	createRealGuiSessionController,
@@ -11,7 +11,7 @@ import {
 } from "./modes/gui/index.ts";
 
 /**
- * Parse CLI flags for the pi-native desktop GUI entrypoint.
+ * Parse CLI flags for the pi-ts desktop GUI entrypoint.
  */
 export function parseGuiCliArgs(argv: readonly string[], baseCwd = process.cwd()): GuiCliArgs {
 	let headlessSmoke = false;
@@ -125,7 +125,7 @@ export async function runHeadlessSmoke(cwd: string): Promise<HeadlessSmokeReport
 	const app = new GuiApp({
 		backend,
 		theme: darkGuiTheme,
-		window: { title: "pi-native", width: 1120, height: 760 },
+		window: { title: "pi-ts", width: 1120, height: 760 },
 		frameIntervalMs: 8,
 	});
 	const controller = new MockGuiSessionController({
@@ -262,7 +262,7 @@ export async function runNativeSmoke(cwd: string): Promise<NativeSmokeReport> {
 		backend,
 		theme: darkGuiTheme,
 		window: {
-			title: "pi-native (smoke)",
+			title: "pi-ts (smoke)",
 			width: 1120,
 			height: 760,
 			resizable: true,
@@ -312,7 +312,7 @@ export async function runInteractiveGui(args: GuiCliArgs): Promise<void> {
 		backend,
 		theme: darkGuiTheme,
 		window: {
-			title: `pi-native — ${args.cwd}`,
+			title: `pi-ts — ${args.cwd}`,
 			width: 1120,
 			height: 760,
 			resizable: true,

@@ -1,12 +1,12 @@
-declare function piNativeAvailable(): number;
-declare function piNativeReadScratch(out: Uint8Array): number;
-declare function piNativeClipboardGetText(): number;
-declare function piNativeClipboardSetText(text: string): number;
-declare function piNativeClipboardGetImagePng(): number;
-declare function piNativeClipboardGetFilePaths(): number;
-declare function piNativeIsModifierPressed(name: string): number;
-declare function piNativeImageInspect(bytes: Uint8Array, out: Uint8Array): number;
-declare function piNativeImageTransform(
+declare function piFfiAvailable(): number;
+declare function piFfiReadScratch(out: Uint8Array): number;
+declare function piFfiClipboardGetText(): number;
+declare function piFfiClipboardSetText(text: string): number;
+declare function piFfiClipboardGetImagePng(): number;
+declare function piFfiClipboardGetFilePaths(): number;
+declare function piFfiIsModifierPressed(name: string): number;
+declare function piFfiImageInspect(bytes: Uint8Array, out: Uint8Array): number;
+declare function piFfiImageTransform(
 	bytes: Uint8Array,
 	targetWidth: number,
 	targetHeight: number,
@@ -14,16 +14,16 @@ declare function piNativeImageTransform(
 	jpegQuality: number,
 	applyOrientation: number,
 ): number;
-declare function piNativeWordSegment(text: string): number;
-declare function piNativeJscCreate(): number;
-declare function piNativeJscEval(
+declare function piFfiWordSegment(text: string): number;
+declare function piFfiJscCreate(): number;
+declare function piFfiJscEval(
 	vmId: number,
 	code: string,
 	sourceUrl: string,
 	timeoutMs: number,
 	outTag: Uint8Array,
 ): number;
-declare function piNativeJscDestroy(vmId: number): void;
+declare function piFfiJscDestroy(vmId: number): void;
 
 export interface NativeImageInfo {
 	width: number;
@@ -48,7 +48,7 @@ const wordLikeRe = /[\p{L}\p{N}]/u;
 function readScratchBytes(len: number): Uint8Array {
 	if (len <= 0) return new Uint8Array(0);
 	const out = new Uint8Array(len);
-	const copied = piNativeReadScratch(out);
+	const copied = piFfiReadScratch(out);
 	if (copied <= 0) return new Uint8Array(0);
 	return copied === len ? out : out.subarray(0, copied);
 }
@@ -67,7 +67,7 @@ export function isNativeDarwinAvailable(): boolean {
 	}
 	if (cachedFfiAvailable === null) {
 		try {
-			cachedFfiAvailable = piNativeAvailable() === 1;
+			cachedFfiAvailable = piFfiAvailable() === 1;
 		} catch {
 			cachedFfiAvailable = false;
 		}
@@ -77,7 +77,7 @@ export function isNativeDarwinAvailable(): boolean {
 
 export function nativeClipboardGetText(): string | null {
 	if (!isNativeDarwinAvailable()) return null;
-	const len = piNativeClipboardGetText();
+	const len = piFfiClipboardGetText();
 	if (len === -1) return null;
 	if (len < -1) {
 		throw new Error("Failed to read clipboard text from Darwin pasteboard");
@@ -88,12 +88,12 @@ export function nativeClipboardGetText(): string | null {
 
 export function nativeClipboardSetText(text: string): boolean {
 	if (!isNativeDarwinAvailable()) return false;
-	return piNativeClipboardSetText(text) === 1;
+	return piFfiClipboardSetText(text) === 1;
 }
 
 export function nativeClipboardGetImagePng(): Uint8Array | null {
 	if (!isNativeDarwinAvailable()) return null;
-	const len = piNativeClipboardGetImagePng();
+	const len = piFfiClipboardGetImagePng();
 	if (len === -1) return null;
 	if (len < -1) {
 		throw new Error("Failed to read clipboard image from Darwin pasteboard");
@@ -105,7 +105,7 @@ export function nativeClipboardGetImagePng(): Uint8Array | null {
 
 export function nativeClipboardGetFilePaths(): string[] | null {
 	if (!isNativeDarwinAvailable()) return null;
-	const len = piNativeClipboardGetFilePaths();
+	const len = piFfiClipboardGetFilePaths();
 	if (len === -1) return null;
 	if (len < -1) {
 		throw new Error("Failed to read clipboard file paths from Darwin pasteboard");
@@ -118,13 +118,13 @@ export function nativeClipboardGetFilePaths(): string[] | null {
 
 export function nativeIsModifierPressed(name: "shift" | "command" | "control" | "option"): boolean {
 	if (!isNativeDarwinAvailable()) return false;
-	return piNativeIsModifierPressed(name) === 1;
+	return piFfiIsModifierPressed(name) === 1;
 }
 
 export function nativeImageInspect(bytes: Uint8Array): NativeImageInfo | null {
 	if (!isNativeDarwinAvailable() || bytes.byteLength === 0) return null;
 	const out = new Uint8Array(12);
-	if (piNativeImageInspect(bytes, out) !== 0) return null;
+	if (piFfiImageInspect(bytes, out) !== 0) return null;
 	const width = readU32Le(out, 0);
 	const height = readU32Le(out, 4);
 	const orientation = readU32Le(out, 8);
@@ -150,7 +150,7 @@ export function nativeImageTransform(
 	const fmtCode = format === "jpeg" ? 1 : 0;
 	const q = Number.isFinite(jpegQuality) ? Math.min(100, Math.max(0, Math.round(jpegQuality))) : 85;
 	const applyFlag = applyOrientation ? 1 : 0;
-	const len = piNativeImageTransform(bytes, w, h, fmtCode, q, applyFlag);
+	const len = piFfiImageTransform(bytes, w, h, fmtCode, q, applyFlag);
 	if (len <= 0) return null;
 	const out = readScratchBytes(len);
 	return out.byteLength > 0 ? out : null;
@@ -159,7 +159,7 @@ export function nativeImageTransform(
 export function nativeWordSegment(text: string): NativeWordSegment[] | null {
 	if (!isNativeDarwinAvailable()) return null;
 	if (text.length === 0) return [];
-	const byteLen = piNativeWordSegment(text);
+	const byteLen = piFfiWordSegment(text);
 	if (byteLen < 0 || byteLen % 12 !== 0) return null;
 	const raw = readScratchBytes(byteLen);
 	if (raw.byteLength !== byteLen) return null;
@@ -191,7 +191,7 @@ export function nativeWordSegment(text: string): NativeWordSegment[] | null {
 
 export function nativeJscCreate(): number {
 	if (!isNativeDarwinAvailable()) return -1;
-	return piNativeJscCreate();
+	return piFfiJscCreate();
 }
 
 export function nativeJscEval(
@@ -209,7 +209,7 @@ export function nativeJscEval(
 	const outTag = new Uint8Array(1);
 	const url = sourceUrl ?? "";
 	const ms = timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : -1;
-	const byteLen = piNativeJscEval(vmId, code, url, ms, outTag);
+	const byteLen = piFfiJscEval(vmId, code, url, ms, outTag);
 	if (byteLen < 0) {
 		return { ok: false, error: `Invalid or destroyed JSC VM id: ${String(vmId)}` };
 	}
@@ -227,5 +227,5 @@ export function nativeJscEval(
 export function nativeJscDestroy(vmId: number): void {
 	if (!isNativeDarwinAvailable()) return;
 	if (!Number.isInteger(vmId) || vmId < 1) return;
-	piNativeJscDestroy(vmId);
+	piFfiJscDestroy(vmId);
 }

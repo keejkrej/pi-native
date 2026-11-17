@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Component, truncateToWidth, visibleWidth } from "@pi-ts/tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";

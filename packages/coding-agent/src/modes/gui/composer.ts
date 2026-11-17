@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@pi-ts/agent-core";
 import {
 	type A11yActionKind,
 	type AutocompleteItem,
@@ -51,14 +51,14 @@ import {
 	VectorIcon,
 	VStack,
 	withAlpha,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import {
 	isNativeDarwinAvailable,
 	nativeClipboardGetFilePaths,
 	nativeClipboardGetImagePng,
 	nativeClipboardGetText,
 	nativeImageInspect,
-} from "../../../../pi-native-ffi/src/index.ts";
+} from "@pi-ts/ffi";
 import {
 	ClickableContainer,
 	createExtensionWidgetCard,

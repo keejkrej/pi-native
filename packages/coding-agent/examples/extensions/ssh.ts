@@ -13,7 +13,7 @@
  *   - bash on remote
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 import {
 	type BashOperations,
 	createBashTool,
@@ -23,7 +23,7 @@ import {
 	type EditOperations,
 	type ReadOperations,
 	type WriteOperations,
-} from "@earendil-works/pi-coding-agent";
+} from "@pi-ts/coding-agent";
 
 async function sshExec(pi: ExtensionAPI, remote: string, command: string): Promise<string> {
 	const res = await pi.exec("ssh", [remote, command]);

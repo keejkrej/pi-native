@@ -27,13 +27,13 @@ import {
 	type ResourceTemplate,
 	StdioTransport,
 	StreamableHttpTransport,
-} from "@earendil-works/pi-mcp";
+} from "@pi-ts/mcp";
 import {
 	type McpAuthProvider,
 	McpOAuthAuthorizationRequiredError,
 	type McpOAuthSettings,
 	type OAuthChallenge,
-} from "@earendil-works/pi-mcp/oauth";
+} from "@pi-ts/mcp/oauth";
 import { VERSION } from "../../config.ts";
 import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../../core/resolve-config-value.ts";
 import { sliceTail } from "../../core/tools/truncate.ts";
@@ -43,7 +43,7 @@ import { createMcpAuthProvider, type McpOAuthCredentialStore } from "./oauth.ts"
 import type { McpResourceServer } from "./resources.ts";
 import type { McpToolCaller } from "./tools.ts";
 
-export { McpSignInCancelledError } from "@earendil-works/pi-mcp/oauth";
+export { McpSignInCancelledError } from "@pi-ts/mcp/oauth";
 export { McpServerLog } from "./log.ts";
 export { McpOAuthCredentialStore, signInMcpServer } from "./oauth.ts";
 

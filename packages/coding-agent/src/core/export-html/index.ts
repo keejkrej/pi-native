@@ -1,5 +1,5 @@
-import type { AgentState } from "@earendil-works/pi-agent-core";
-import { stripSchemaMetaKeys } from "@earendil-works/pi-ai/utils/json-schema";
+import type { AgentState } from "@pi-ts/agent-core";
+import { stripSchemaMetaKeys } from "@pi-ts/ai/utils/json-schema";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";

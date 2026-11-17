@@ -22,7 +22,7 @@ Call `pi.registerProvider()` from the extension factory. Pi waits for asynchrono
 
 There are two registration forms:
 
-- Register a complete `Provider` from `@earendil-works/pi-ai` for native authentication, filtering, discovery, refresh, and streaming behavior.
+- Register a complete `Provider` from `@pi-ts/ai` for native authentication, filtering, discovery, refresh, and streaming behavior.
 - Register a provider name with `ProviderConfig` for the legacy configuration form used by existing extensions.
 
 Prefer a complete provider for new integrations that own more than static endpoint and model metadata. Pi composes `models.json` overrides above a registered native provider.
@@ -34,7 +34,7 @@ Registering only `baseUrl` or `headers` for an existing provider preserves its b
 Register only the fields that should change. This keeps the provider's built-in catalog, authentication, API implementation, and compatibility settings:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.registerProvider("anthropic", {
@@ -53,7 +53,7 @@ Use this form for a proxy or gateway that preserves the upstream protocol. Do no
 When a service implements a supported protocol but has its own model catalog, register the endpoint and only the models the service actually exposes:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.registerProvider("acme", {

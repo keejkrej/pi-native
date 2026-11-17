@@ -1,6 +1,6 @@
 /**
- * scriptc-ui public API entrypoint (pure TypeScript + headless/abstract backend).
- * For native FFI backend instantiation, import createNativeBackend from "scriptc-ui/native".
+ * @pi-ts/gui public API entrypoint (pure TypeScript + headless/abstract backend).
+ * For native FFI backend instantiation, import createNativeBackend from "@pi-ts/gui/native".
  */
 
 export {

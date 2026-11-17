@@ -1,22 +1,22 @@
 /**
- * JavaScriptCore external JS/TS extension host for pi-native.
+ * JavaScriptCore external JS/TS extension host for pi-ts.
  *
  * Executes bundled extension modules inside isolated JavaScriptCore VMs via
- * @earendil-works/pi-native-ffi (with zero Node islands) and bridges the full
+ * @pi-ts/ffi (with zero Node islands) and bridges the full
  * ExtensionAPI, virtual host modules, and async host-call pump loop.
  */
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Api, Provider } from "@earendil-works/pi-ai";
-import type { ComponentLike, KeyId } from "@earendil-works/pi-tui";
+import type { Api, Provider } from "@pi-ts/ai";
+import type { ComponentLike, KeyId } from "@pi-ts/tui";
 import {
 	nativeJscCreate,
 	nativeJscDestroy,
 	nativeJscEval,
 	type NativeJscEvalResult,
-} from "../../../../pi-native-ffi/src/index.ts";
+} from "@pi-ts/ffi";
 import {
 	APP_NAME,
 	CONFIG_DIR_NAME,
@@ -1844,32 +1844,24 @@ function buildJscBootstrapSource(): string {
         };
         return { TypeCompiler, default: TypeCompiler };
       }
-      case "@earendil-works/pi-agent-core":
-      case "@mariozechner/pi-agent-core":
+      case "@pi-ts/agent-core":
         return { default: {} };
-      case "@earendil-works/pi-tui":
-      case "@mariozechner/pi-tui":
+      case "@pi-ts/tui":
         return PiTuiMod;
-      case "@earendil-works/pi-ai":
-      case "@mariozechner/pi-ai":
-      case "@earendil-works/pi-ai/compat":
-      case "@mariozechner/pi-ai/compat":
+      case "@pi-ts/ai":
+      case "@pi-ts/ai/compat":
         return PiAiMod;
-      case "@earendil-works/pi-ai/models":
-      case "@mariozechner/pi-ai/models":
+      case "@pi-ts/ai/models":
         return { getModels: PiAiMod.getModels, getModel: PiAiMod.getModel, getProviders: PiAiMod.getProviders, default: { getModels: PiAiMod.getModels, getModel: PiAiMod.getModel, getProviders: PiAiMod.getProviders } };
-      case "@earendil-works/pi-ai/oauth":
-      case "@mariozechner/pi-ai/oauth":
+      case "@pi-ts/ai/oauth":
         return {
           loginAnthropic: () => Promise.reject(new Error("OAuth login must run in host UI")),
           loginOpenAICodex: () => Promise.reject(new Error("OAuth login must run in host UI")),
           default: {},
         };
-      case "@earendil-works/pi-ai/providers/all":
-      case "@mariozechner/pi-ai/providers/all":
+      case "@pi-ts/ai/providers/all":
         return { registerBuiltInApiProviders() {}, default: { registerBuiltInApiProviders() {} } };
-      case "@earendil-works/pi-coding-agent":
-      case "@mariozechner/pi-coding-agent":
+      case "@pi-ts/coding-agent":
         return PiCodingAgentMod;
       default:
         break;

@@ -40,8 +40,8 @@ import {
 	ToolCallArgumentsStream,
 	type ToolResultMessage,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+} from "@pi-ts/ai";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 
 type ContentBlockParam =
 	| { type: "text"; text: string; cache_control?: { type: "ephemeral" } }

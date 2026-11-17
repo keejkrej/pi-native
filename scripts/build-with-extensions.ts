@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Zig-style static AOT extension compiler for pi-native.
+ * Zig-style static AOT extension compiler for pi-ts.
  *
  * Generates a temporary TypeScript entrypoint statically importing the chosen
  * extensions and passes them via MainOptions.extensionFactories so scriptc
@@ -34,7 +34,7 @@ function findRepoRoot(startDir: string): string {
 		}
 		const parent = path.dirname(dir);
 		if (parent === dir) {
-			throw new Error("Could not locate pi-native repository root (missing packages/coding-agent/src/main.ts)");
+			throw new Error("Could not locate pi-ts repository root (missing packages/coding-agent/src/main.ts)");
 		}
 		dir = parent;
 	}
@@ -50,7 +50,7 @@ function printHelp(): void {
 			"  --ext, --with-ext <path>        Extension entry file or package directory (repeatable)",
 			"  -o, --out <path>                Output binary path (default: dist/pi)",
 			"  --optimization <dev|release|speed>  scriptc optimization level (default: dev)",
-			"  --ffi <path>                    FFI descriptor JSON (default: packages/pi-native-ffi/ffi/darwin-gui.json if present)",
+			"  --ffi <path>                    FFI descriptor JSON (default: packages/ffi/ffi/darwin-gui.json if present)",
 			"  --no-ffi                        Do not auto-pass --ffi",
 			"  --scriptc <path>                Path to scriptc compiler binary",
 			"  --dry-run                       Print generated entry and command without building",
@@ -354,7 +354,7 @@ export function runBuildWithExtensions(argv: string[]): void {
 	const createdScriptcDir = fs.readdirSync(scriptcDir).length === 0;
 	const tempEntry = path.join(scriptcDir, `pi-with-extensions-${process.pid}.ts`);
 
-	const defaultFfi = path.join(repoRoot, "packages", "pi-native-ffi", "ffi", "darwin-gui.json");
+	const defaultFfi = path.join(repoRoot, "packages", "ffi", "ffi", "darwin-gui.json");
 	const ffiArg = opts.noFfi
 		? undefined
 		: opts.ffiPath

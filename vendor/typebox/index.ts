@@ -1,9 +1,9 @@
 /**
  * Pure TypeScript vendored subset of TypeBox (v1.x schema builders & types).
- * Zero third-party dependencies; `Static<T>` re-exported from `@earendil-works/pi-schema`.
+ * Zero third-party dependencies; `Static<T>` re-exported from `@pi-ts/schema`.
  */
 
-import type { Schema, Static } from "@earendil-works/pi-schema";
+import type { Schema, Static } from "@pi-ts/schema";
 
 export type { Static };
 

@@ -36,7 +36,7 @@ import {
 	type VectorIconName,
 	VStack,
 	withAlpha,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import type {
 	GuiAttachmentItem,
 	GuiChangedFile,
@@ -1155,7 +1155,7 @@ export function createWelcomeCard(initialTheme: GuiTheme, initialStatus: GuiSess
 		color: theme.textBright,
 	});
 	const subtitle = new Text({
-		text: "Interactive desktop session powered by scriptc-ui.",
+		text: "Interactive desktop session powered by @pi-ts/gui.",
 		fontSize: theme.fontSizeSmall,
 		color: theme.textMuted,
 	});

@@ -1,4 +1,4 @@
-import type { Box, TuiMouseEvent } from "@earendil-works/pi-tui";
+import type { Box, TuiMouseEvent } from "@pi-ts/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { MarkdownTransformContext, MarkdownTransformer } from "../src/core/extensions/types.ts";
 import { BranchSummaryMessageComponent } from "../src/modes/interactive/components/branch-summary-message.ts";

@@ -1,5 +1,5 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { GuiTheme } from "scriptc-ui";
+import type { ThinkingLevel } from "@pi-ts/agent-core";
+import type { GuiTheme } from "@pi-ts/gui";
 
 /**
  * Compact summary of an available model exposed to the GUI model picker and header.

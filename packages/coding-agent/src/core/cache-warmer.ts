@@ -13,7 +13,7 @@ import {
 	isCacheWarmingReplayable,
 	type Model,
 	type ModelsSimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@pi-ts/ai";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { SessionEntry, SessionManager, UsageEntry } from "./session-manager.ts";
 import type { CacheWarmingMode } from "./settings-manager.ts";

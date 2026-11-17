@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Container } from "@earendil-works/pi-tui";
+import { Container } from "@pi-ts/tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { Extension, MarkdownMessageType, MarkdownTransformer } from "../src/core/extensions/types.ts";

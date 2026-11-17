@@ -27,8 +27,8 @@
  */
 
 import { join, resolve } from "node:path";
-import { createMcpToolName, mcpNamespace } from "@earendil-works/pi-mcp";
-import type { SelectItem } from "@earendil-works/pi-tui";
+import { createMcpToolName, mcpNamespace } from "@pi-ts/mcp";
+import type { SelectItem } from "@pi-ts/tui";
 import type { TSchema } from "typebox";
 import { getAgentDir } from "../../config.ts";
 import type {

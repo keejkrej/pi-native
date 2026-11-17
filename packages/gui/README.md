@@ -1,4 +1,4 @@
-# @pi-native/gui
+# @pi-ts/gui
 
 Native cross-platform GUI toolkit written in pure TypeScript for `scriptc` native executables and Node tests, with zero WebView, Chromium, or embedded JS engine runtime.
 
@@ -14,7 +14,7 @@ Native cross-platform GUI toolkit written in pure TypeScript for `scriptc` nativ
 
 ## Usage
 
-Import core widgets and headless utilities from `@pi-native/gui`, and native windowing from `@pi-native/gui/native`:
+Import core widgets and headless utilities from `@pi-ts/gui`, and native windowing from `@pi-ts/gui/native`:
 
 ```ts
 import { Button, GuiApp, VStack } from "../src/index.ts";

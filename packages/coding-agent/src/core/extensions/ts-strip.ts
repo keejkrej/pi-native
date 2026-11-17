@@ -1,6 +1,6 @@
 /**
  * Pure TypeScript lexical/syntactic stripper, ESM-to-CommonJS transformer,
- * and local dependency graph bundler for external extensions in pi-native.
+ * and local dependency graph bundler for external extensions in pi-ts.
  *
  * Designed for scriptc (--node-islands=off): zero third-party parsers,
  * zero Node vm/compiler dependencies, zero Proxy/Reflect usage.
@@ -207,14 +207,10 @@ const BUILTIN_NODE_MODULES = new Set([
 ]);
 
 export const HOST_VIRTUAL_PACKAGES = new Set([
-	"@earendil-works/pi-coding-agent",
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-tui",
-	"@earendil-works/pi-agent-core",
-	"@mariozechner/pi-coding-agent",
-	"@mariozechner/pi-ai",
-	"@mariozechner/pi-tui",
-	"@mariozechner/pi-agent-core",
+	"@pi-ts/coding-agent",
+	"@pi-ts/ai",
+	"@pi-ts/tui",
+	"@pi-ts/agent-core",
 	"typebox",
 	"@sinclair/typebox",
 ]);

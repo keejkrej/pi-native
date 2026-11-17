@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isNativeDarwinAvailable, nativeImageInspect, nativeImageTransform } from "../../../pi-native-ffi/src/index.ts";
+import { isNativeDarwinAvailable, nativeImageInspect, nativeImageTransform } from "@pi-ts/ffi";
 import { parseImageDimensions, stripPngOrientationChunks } from "./image-dimensions.ts";
 
 export interface ImageResizeOptions {

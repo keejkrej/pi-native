@@ -5,7 +5,7 @@ import {
 	nativeClipboardGetText,
 	nativeClipboardSetText,
 	nativeIsModifierPressed,
-} from "../../pi-native-ffi/src/index.ts";
+} from "@pi-ts/ffi";
 
 export type ModifierKey = "shift" | "command" | "control" | "option";
 

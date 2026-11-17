@@ -5,7 +5,7 @@
  *   pi -e examples/extensions/mac-system-theme.ts
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 
 async function isDarkMode(pi: ExtensionAPI): Promise<boolean> {
 	try {

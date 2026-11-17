@@ -1,4 +1,4 @@
-import { Component } from "@earendil-works/pi-tui";
+import { Component } from "@pi-ts/tui";
 import { theme } from "../theme/theme.ts";
 
 /**

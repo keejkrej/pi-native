@@ -8,7 +8,7 @@ import {
 	type Schema,
 	type Static,
 	type StaticObject,
-} from "@earendil-works/pi-schema";
+} from "@pi-ts/schema";
 
 export interface OpenObjectOptions extends Annotations {
 	readonly additionalProperties?: true;

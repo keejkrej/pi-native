@@ -10,7 +10,7 @@ import {
 	type StaticObject,
 	str,
 	union,
-} from "@earendil-works/pi-schema";
+} from "@pi-ts/schema";
 import { openObject as object } from "./schema-builders.ts";
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;

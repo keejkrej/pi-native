@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@pi-ts/agent-core";
+import type { Api, ImageContent, Model, TextContent } from "@pi-ts/ai";
 import { getAgentDir } from "../../config.ts";
 import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
 import {
@@ -2641,14 +2641,14 @@ export class MockGuiSessionController implements GuiSessionController {
 					toolCallId,
 					toolName: "read",
 					argsText: 'path: "package.json"',
-					outputText: '{\n  "name": "pi-native"',
+					outputText: '{\n  "name": "pi-ts"',
 				});
 				await this.waitStep();
 				this.emit({
 					type: "tool_end",
 					toolCallId,
 					toolName: "read",
-					outputText: '{\n  "name": "pi-native",\n  "private": true\n}',
+					outputText: '{\n  "name": "pi-ts",\n  "private": true\n}',
 					isError: false,
 					durationMs: 18,
 				});
@@ -2898,7 +2898,7 @@ export class MockGuiSessionController implements GuiSessionController {
 			truncated: false,
 			lineCount: 1,
 			language: "json",
-			content: '{ "name": "pi-native" }',
+			content: '{ "name": "pi-ts" }',
 		};
 	}
 

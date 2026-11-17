@@ -1,5 +1,5 @@
 import { eastAsianWidth } from "get-east-asian-width";
-import { isNativeDarwinAvailable, nativeWordSegment } from "../../pi-native-ffi/src/index.ts";
+import { isNativeDarwinAvailable, nativeWordSegment } from "@pi-ts/ffi";
 
 export interface WordSegmenter {
 	segment(input: string): Iterable<Intl.SegmentData>;

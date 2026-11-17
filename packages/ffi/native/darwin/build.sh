@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="$SCRIPT_DIR/src/pi_native_darwin.m"
+SRC="$SCRIPT_DIR/src/pi_ffi_darwin.m"
 BUILD_DIR="$SCRIPT_DIR/build"
-OBJ="$BUILD_DIR/pi_native_darwin.o"
-ARCHIVE="$BUILD_DIR/libpinative.a"
+OBJ="$BUILD_DIR/pi_ffi_darwin.o"
+ARCHIVE="$BUILD_DIR/libpiffi.a"
 
 mkdir -p "$BUILD_DIR"
 

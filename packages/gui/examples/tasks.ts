@@ -794,7 +794,7 @@ function createTasksApp(
   appRef = new GuiApp({
     backend,
     window: {
-      title: "Tasks — scriptc-ui",
+      title: "Tasks — @pi-ts/gui",
       width: 640,
       height: 580,
       resizable: true,

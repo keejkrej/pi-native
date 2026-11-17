@@ -1,13 +1,13 @@
 /** Immutable, credential-blind models.json snapshot. */
 
-import type { ProviderCompat } from "@earendil-works/pi-ai/providers/compat-schema";
+import type { ProviderCompat } from "@pi-ts/ai/providers/compat-schema";
 import type {
 	ModelCost,
 	ModelInputLimits,
 	ModelInputModality,
 	ModelPromptCache,
 	ThinkingLevelMap,
-} from "@earendil-works/pi-ai/providers/model-schema";
+} from "@pi-ts/ai/providers/model-schema";
 import { readFile } from "node:fs/promises";
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";

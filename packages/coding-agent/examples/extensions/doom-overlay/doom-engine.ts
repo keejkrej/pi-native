@@ -2,9 +2,9 @@
  * DOOM Engine - WebAssembly wrapper for doomgeneric
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface DoomModule {
@@ -46,32 +46,54 @@ export class DoomEngine {
 
 	async init(): Promise<void> {
 		// Locate WASM build
-		const __dirname = dirname(fileURLToPath(import.meta.url));
-		const buildDir = join(__dirname, "doom", "build");
-		const doomJsPath = join(buildDir, "doom.js");
+		const __dirname = path.dirname(fileURLToPath(import.meta.url));
+		const buildDir = path.join(__dirname, "doom", "build");
+		const doomJsPath = path.join(buildDir, "doom.js");
 
-		if (!existsSync(doomJsPath)) {
-			throw new Error(`WASM not found at ${doomJsPath}. Run ./doom/build.sh first`);
+		type CreateDoomModule = (config: unknown) => Promise<DoomModule>;
+		const preloadedFactory = (globalThis as { createDoomModule?: CreateDoomModule }).createDoomModule;
+		let createDoomModule = preloadedFactory;
+
+		if (!createDoomModule) {
+			if (!fs.existsSync(doomJsPath)) {
+				throw new Error(`DOOM WASM build not found at ${doomJsPath}. Run ./doom/build.sh first`);
+			}
+			if (typeof WebAssembly !== "object" || typeof WebAssembly.instantiate !== "function") {
+				throw new Error("DOOM requires WebAssembly support, which is unavailable in this sandbox runtime.");
+			}
+
+			// Evaluate Emscripten CJS loader with sandboxed built-in shims instead of node:module createRequire
+			const doomJsCode = fs.readFileSync(doomJsPath, "utf-8");
+			const moduleExports: { exports: unknown } = { exports: {} };
+			const sandboxRequire = (id: string): unknown => {
+				if (id === "fs" || id === "node:fs") return fs;
+				if (id === "path" || id === "node:path") return path;
+				if (id === "crypto" || id === "node:crypto") return crypto;
+				throw new Error(`DOOM sandbox engine does not support CJS module "${id}"`);
+			};
+			try {
+				const moduleFunc = new Function("module", "exports", "__dirname", "__filename", "require", doomJsCode);
+				moduleFunc(moduleExports, moduleExports.exports, buildDir, doomJsPath, sandboxRequire);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				throw new Error(`Failed to load DOOM CJS engine (${doomJsPath}): ${msg}`);
+			}
+			if (typeof moduleExports.exports !== "function") {
+				throw new Error(`Invalid DOOM engine module exports in ${doomJsPath}`);
+			}
+			createDoomModule = moduleExports.exports as CreateDoomModule;
 		}
 
 		// Read WAD file
-		const wadData = readFileSync(this.wadPath);
+		const wadData = fs.readFileSync(this.wadPath);
 		const wadArray = Array.from(new Uint8Array(wadData));
 
-		// Load WASM module - eval to bypass jiti completely
-		const doomJsCode = readFileSync(doomJsPath, "utf-8");
-		const moduleExports: { exports: unknown } = { exports: {} };
-		const nativeRequire = createRequire(doomJsPath);
-		const moduleFunc = new Function("module", "exports", "__dirname", "__filename", "require", doomJsCode);
-		moduleFunc(moduleExports, moduleExports.exports, buildDir, doomJsPath, nativeRequire);
-		const createDoomModule = moduleExports.exports as (config: unknown) => Promise<DoomModule>;
-
 		const moduleConfig = {
-			locateFile: (path: string) => {
-				if (path.endsWith(".wasm")) {
-					return join(buildDir, path);
+			locateFile: (filePath: string) => {
+				if (filePath.endsWith(".wasm")) {
+					return path.join(buildDir, filePath);
 				}
-				return path;
+				return filePath;
 			},
 			print: () => {},
 			printErr: () => {},

@@ -13,6 +13,11 @@ extern "C" {
 #define SGUI_WIN_RESIZABLE         2u
 #define SGUI_WIN_UNIFIED_TITLEBAR  4u
 
+/* Window actions for sgui_window_action */
+#define SGUI_WIN_ACTION_DRAG         1u
+#define SGUI_WIN_ACTION_ZOOM         2u
+#define SGUI_WIN_ACTION_MINIATURIZE  3u
+
 /* Font families and style flags */
 #define SGUI_FONT_REGULAR          0u
 #define SGUI_FONT_MONO             1u
@@ -35,14 +40,16 @@ extern "C" {
 #define SGUI_MOD_SUPER             8u
 
 /* Draw opcodes (all commands padded to 8-byte alignment) */
-#define SGUI_CMD_CLEAR             1u
-#define SGUI_CMD_FILL_RECT         2u
-#define SGUI_CMD_STROKE_RECT       3u
-#define SGUI_CMD_PUSH_CLIP         4u
-#define SGUI_CMD_POP_CLIP          5u
-#define SGUI_CMD_DRAW_TEXT         6u
-#define SGUI_CMD_DRAW_LINE         7u
-#define SGUI_CMD_DRAW_IMAGE_RGBA   8u
+#define SGUI_CMD_CLEAR              1u
+#define SGUI_CMD_FILL_RECT          2u
+#define SGUI_CMD_STROKE_RECT        3u
+#define SGUI_CMD_PUSH_CLIP          4u
+#define SGUI_CMD_POP_CLIP           5u
+#define SGUI_CMD_DRAW_TEXT          6u
+#define SGUI_CMD_DRAW_LINE          7u
+#define SGUI_CMD_DRAW_IMAGE_RGBA    8u
+#define SGUI_CMD_FILL_RECT_CORNERS  9u
+#define SGUI_CMD_STROKE_RECT_CORNERS 10u
 
 /* Event kinds (all events padded to 8-byte alignment) */
 #define SGUI_EVT_CLOSE             1u
@@ -196,6 +203,8 @@ void sgui_set_cursor(uint32_t window_id, uint32_t cursor_kind);
 void sgui_set_ime_rect(uint32_t window_id, double x, double y, double width, double height);
 int32_t sgui_set_app_menu(const uint8_t *spec, size_t spec_len);
 int32_t sgui_set_a11y_tree(uint32_t window_id, const uint8_t *nodes, size_t nodes_len);
+void sgui_window_set_chrome(uint32_t win_id, uint32_t dark_mode, double sidebar_width, uint32_t vibrancy_enabled);
+void sgui_window_action(uint32_t win_id, uint32_t action);
 
 #ifdef __cplusplus
 }

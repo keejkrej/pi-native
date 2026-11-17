@@ -137,6 +137,10 @@ class GuiAppHost extends GuiHost {
 	setImeRect(x: number, y: number, width: number, height: number): void {
 		this.app.updateImeRect(x, y, width, height);
 	}
+
+	windowAction(action: number): void {
+		this.app.windowAction(action);
+	}
 }
 
 export class GuiApp {
@@ -149,7 +153,7 @@ export class GuiApp {
 	private readonly autoTheme: boolean;
 	private readonly frameIntervalMs: number;
 	private readonly onCloseCallback: (() => boolean | undefined) | undefined;
-	private readonly onKeyCallback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined;
+	private onKeyCallback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined;
 
 	private themeValue: GuiTheme;
 	private rootComponent: GuiComponent | undefined;
@@ -240,6 +244,15 @@ export class GuiApp {
 		this.backend.setWindowTitle(this.windowId, title);
 	}
 
+	setWindowChrome(darkMode: boolean, sidebarWidth: number, vibrancyEnabled: boolean): void {
+		this.backend.setWindowChrome(this.windowId, darkMode, sidebarWidth, vibrancyEnabled);
+		this.needsRender = true;
+	}
+
+	windowAction(action: number): void {
+		this.backend.windowAction(this.windowId, action);
+	}
+
 	setAppMenu(menus: readonly MenuSpec[]): void {
 		const normalized: MenuSpec[] = [];
 		for (let i = 0; i < menus.length; i++) {
@@ -251,6 +264,13 @@ export class GuiApp {
 			});
 		}
 		this.backend.setAppMenu(normalized);
+	}
+
+	/**
+	 * Register or clear the app-level fallback key handler.
+	 */
+	setOnKey(callback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined): void {
+		this.onKeyCallback = callback;
 	}
 
 	private dispatchEditorMenuRole(action: EditorKeybindingAction): void {

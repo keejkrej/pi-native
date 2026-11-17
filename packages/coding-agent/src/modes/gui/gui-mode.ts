@@ -4,48 +4,69 @@ import {
 	Badge,
 	Box,
 	Button,
-	CombinedAutocompleteProvider,
 	darkGuiTheme,
-	Divider,
 	Editor,
 	type GuiApp,
+	type GuiKeyEvent,
+	type GuiRenderContext,
 	type GuiTheme,
 	HStack,
 	lightGuiTheme,
-	Loader,
+	type Loader,
+	matchesKeyEvent,
 	type MenuSpec,
 	type OverlayHandle,
-	ScrollView,
-	type SelectItem,
-	SelectList,
-	type SettingItem,
-	SettingsList,
+	type Rect,
+	type ScrollView,
 	type SlashCommand,
-	Spacer,
 	Text,
 	TruncatedText,
-	VectorIcon,
 	VStack,
 } from "scriptc-ui";
+import { createBannerCard } from "./cards.ts";
 import {
-	type AssistantCardHandle,
-	createAssistantMessageCard,
-	createBannerCard,
-	createToolExecutionCard,
-	createUserMessageCard,
-	createWelcomeCard,
-	type ThemedCard,
-	type ToolCardHandle,
-} from "./cards.ts";
-import type { GuiControllerEvent, GuiSessionController, GuiSessionStatus, PiGuiOptions } from "./types.ts";
+	createWakuComposer,
+	createWakuFooterBar,
+	type WakuComposerHandle,
+	type WakuFooterBarHandle,
+} from "./composer.ts";
+import {
+	openCommandPalette,
+	openContextPopover,
+	openExtensionPromptModal,
+	openGitBranchModal,
+	openGitCommitModal,
+	openModelPicker,
+	openSessionPicker,
+	openSettingsModal,
+	resolveAppearanceTheme,
+} from "./overlays.ts";
+import { createWakuRightPanel, type WakuRightPanelHandle } from "./right-panel.ts";
+import { createWakuSidebar, type WakuSidebarHandle } from "./sidebar.ts";
+import { createWakuTranscriptView, type WakuTranscriptViewHandle } from "./transcript.ts";
+import type {
+	GuiControllerEvent,
+	GuiPendingPrompt,
+	GuiSessionController,
+	GuiSessionSnapshot,
+	GuiSessionStatus,
+	PiGuiOptions,
+} from "./types.ts";
+import {
+	createWakuHeaderBar,
+	createWakuToastBanner,
+	type WakuHeaderBarHandle,
+	type WakuToastBannerHandle,
+} from "./window-chrome.ts";
 
-class ThemeAwareRoot extends Box {
+class WakuShellRoot extends Box {
 	private readonly onThemeUpdated: (theme: GuiTheme) => void;
 
-	constructor(child: VStack, theme: GuiTheme, onThemeUpdated: (theme: GuiTheme) => void) {
+	constructor(child: HStack, theme: GuiTheme, onThemeUpdated: (theme: GuiTheme) => void) {
 		super({
 			background: theme.background,
 			padding: 0,
+			fillWidth: true,
 			child,
 		});
 		this.onThemeUpdated = onThemeUpdated;
@@ -53,23 +74,22 @@ class ThemeAwareRoot extends Box {
 
 	override onThemeChange(theme: GuiTheme): void {
 		super.onThemeChange(theme);
+		this.setBackground(theme.background);
 		this.onThemeUpdated(theme);
 	}
-}
-
-function formatCompactModelLabel(label: string): string {
-	if (label.length <= 34) return label;
-	return `${label.slice(0, 31)}...`;
-}
-
-function formatModelButtonLabel(status: GuiSessionStatus): string {
-	if (!status.activeModel) return "Model: Select";
-	return `Model: ${formatCompactModelLabel(status.activeModel.label)}`;
 }
 
 function formatWorkspaceBadgeLabel(cwd: string): string {
 	const name = basename(cwd);
 	return name.length > 0 ? name : cwd;
+}
+
+function formatHeaderTitle(status: GuiSessionStatus): string {
+	const custom = status.sessionName?.trim();
+	if (custom && custom.length > 0) {
+		return custom;
+	}
+	return formatWorkspaceBadgeLabel(status.cwd);
 }
 
 function isValidThinkingArg(value: string): value is ThinkingLevel {
@@ -83,8 +103,18 @@ function isValidThinkingArg(value: string): value is ThinkingLevel {
 	);
 }
 
+type ActiveOverlayKind =
+	| "command"
+	| "model"
+	| "session"
+	| "settings"
+	| "branch"
+	| "commit"
+	| "context"
+	| "extension";
+
 /**
- * Interactive control surface returned by mountPiGui for testing and lifecycle disposal.
+ * Interactive control surface returned by mountPiGui for testing, shell control, and lifecycle disposal.
  */
 export interface PiGuiHandle {
 	readonly app: GuiApp;
@@ -105,184 +135,385 @@ export interface PiGuiHandle {
 	readonly sendButton: Button;
 	readonly stopButton: Button;
 	readonly menus: readonly MenuSpec[];
-	openModelPicker(): void;
-	openSettings(): void;
-	closeOverlay(): void;
-	hasActiveOverlay(): boolean;
-	toggleTheme(): void;
-	submitText(text: string): Promise<void>;
-	dispose(): Promise<void>;
+	readonly sidebar: WakuSidebarHandle;
+	readonly headerBar: WakuHeaderBarHandle;
+	readonly rightPanel: WakuRightPanelHandle;
+	readonly transcriptView: WakuTranscriptViewHandle;
+	readonly composer: WakuComposerHandle;
+	readonly footerBar: WakuFooterBarHandle;
+	readonly openModelPicker: () => void;
+	readonly openSettings: () => void;
+	readonly openCommandPalette: () => void;
+	readonly openSessionPicker: () => void;
+	readonly openContextPopover: () => void;
+	readonly toggleSidebar: () => void;
+	readonly toggleRightPanel: (tab?: "changes" | "files" | "tree") => void;
+	readonly closeOverlay: () => void;
+	readonly hasActiveOverlay: () => boolean;
+	readonly toggleTheme: () => void;
+	readonly submitText: (text: string) => void;
+	readonly dispose: () => void;
 }
 
 /**
- * Mount the full pi-native coding agent desktop interface onto a GuiApp instance.
+ * Mount the full Waku 3-pane Pi Agent Studio GUI onto a GuiApp instance and bind it to a session controller.
  */
 export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
-	const { controller } = options;
+	const controller = options.controller;
+	const initialSnap = controller.getSnapshot();
+	const initialStatus = initialSnap.status;
 
-	if (options.initialTheme === "light") {
-		app.setTheme(lightGuiTheme);
-	} else if (options.initialTheme === "dark") {
-		app.setTheme(darkGuiTheme);
-	} else if (options.initialTheme !== undefined) {
-		app.setTheme(options.initialTheme);
+	let currentTheme: GuiTheme =
+		options.initialTheme !== undefined
+			? typeof options.initialTheme === "string"
+				? options.initialTheme === "light"
+					? lightGuiTheme
+					: darkGuiTheme
+				: options.initialTheme
+			: resolveAppearanceTheme(initialSnap.layout.appearance, app);
+
+	if (app.getTheme() !== currentTheme) {
+		app.setTheme(currentTheme);
 	}
 
-	let currentTheme = app.getTheme();
-	let autoScrollEnabled = options.autoScroll ?? true;
+	let activeOverlay: OverlayHandle | undefined;
+	let activeOverlayKind: ActiveOverlayKind | undefined;
+	let shownPromptId: string | undefined;
 	let disposed = false;
 
-	let activeOverlay: OverlayHandle | undefined;
-	let activeOverlayKind: "model" | "settings" | undefined;
-	let activeAssistantCard: AssistantCardHandle | undefined;
-	const activeToolCards = new Map<string, ToolCardHandle>();
-	const cards: ThemedCard[] = [];
-
-	const initialStatus = controller.getStatus();
-	app.setTitle(`pi-native — ${initialStatus.cwd}`);
-
-	const brandIcon = new VectorIcon({
-		name: "terminal",
-		size: 16,
-		color: currentTheme.accent,
-	});
 	const headerTitle = new Text({
-		text: "pi-native",
-		fontSize: 15,
-		fontWeight: 700,
-		color: currentTheme.text,
+		text: formatHeaderTitle(initialStatus),
+		fontSize: currentTheme.fontSizeHeading,
+		fontWeight: 600,
+		color: currentTheme.textBright,
 	});
 	const workspaceBadge = new Badge({
 		label: formatWorkspaceBadgeLabel(initialStatus.cwd),
-		leadingIcon: "folder",
 		variant: "neutral",
 	});
 	const cwdIndicator = new TruncatedText({
 		text: initialStatus.cwd,
 		fontSize: currentTheme.fontSizeSmall,
-	});
-	const statusLoader = new Loader({
-		message: initialStatus.statusMessage ?? "Ready",
-		size: 14,
-		running: initialStatus.isStreaming,
+		color: currentTheme.textMuted,
 	});
 
-	const providerBadge = new Badge({
-		label: initialStatus.activeModel?.provider ?? "unconfigured",
-		leadingIcon: "shield",
-		variant: initialStatus.authSummary.hasActiveAuth ? "success" : "warning",
-	});
-	const modelButton = new Button({
-		label: formatModelButtonLabel(initialStatus),
-		leadingIcon: "sparkles",
-		iconSize: 13,
-		variant: "secondary",
-		pill: true,
-		padding: { vertical: 5, horizontal: 11 },
-		onClick: () => openModelPicker(),
-	});
-	const thinkingButton = new Button({
-		label: `Thinking: ${initialStatus.thinkingLevel}`,
-		leadingIcon: "cpu",
-		iconSize: 13,
-		variant: "secondary",
-		pill: true,
-		padding: { vertical: 5, horizontal: 11 },
-		onClick: () => cycleThinkingLevel(),
-	});
-	const newSessionButton = new Button({
-		label: "New Session",
-		leadingIcon: "plus",
-		iconSize: 13,
-		variant: "ghost",
-		padding: { vertical: 5, horizontal: 9 },
-		onClick: () => {
-			void handleNewSession();
-		},
-	});
-	const themeButton = new Button({
-		label: "Toggle Theme",
-		leadingIcon: currentTheme.dark ? "sun" : "moon",
-		iconSize: 13,
-		variant: "ghost",
-		padding: { vertical: 5, horizontal: 9 },
-		onClick: () => toggleTheme(),
-	});
-	const settingsButton = new Button({
-		label: "Settings",
-		leadingIcon: "sliders",
-		iconSize: 13,
-		variant: "ghost",
-		padding: { vertical: 5, horizontal: 9 },
-		onClick: () => openSettings(),
-	});
+	const syncCompatMetadata = (status: GuiSessionStatus): void => {
+		headerTitle.setText(formatHeaderTitle(status));
+		workspaceBadge.setLabel(formatWorkspaceBadgeLabel(status.cwd));
+		cwdIndicator.setText(status.cwd);
+	};
 
-	const headerTopRow = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			brandIcon,
-			headerTitle,
-			workspaceBadge,
-			{ child: cwdIndicator, grow: 1, shrink: 1, minSize: 80 },
-			statusLoader,
-		],
-	});
-	const headerControlsRow = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			providerBadge,
-			modelButton,
-			thinkingButton,
-			{ child: new Spacer(), grow: 1 },
-			newSessionButton,
-			themeButton,
-			settingsButton,
-		],
-	});
-	const headerInnerStack = new VStack({
-		gap: 8,
-		children: [headerTopRow, headerControlsRow],
-	});
-	const headerBox = new Box({
-		padding: { top: 10, bottom: 10, left: 16, right: 16 },
-		background: currentTheme.surface,
-		child: headerInnerStack,
-	});
-	const headerDivider = new Divider({ direction: "horizontal" });
+	const syncWindowChrome = (snapshot: GuiSessionSnapshot, theme: GuiTheme): void => {
+		const sidebarWidth = snapshot.layout.sidebarCollapsed ? 0 : snapshot.layout.sidebarWidth || 260;
+		app.setWindowChrome(theme.dark, sidebarWidth, true);
+	};
 
-	const messagesStack = new VStack({
-		gap: 14,
-		padding: { top: 2, bottom: 12, left: 0, right: 0 },
-	});
-	const transcriptColumn = new Box({
-		maxWidth: 820,
-		fillWidth: true,
-		alignHorizontal: "center",
-		child: messagesStack,
-	});
-	const scrollView = new ScrollView({
-		follow: autoScrollEnabled ? "end" : "none",
-		primary: true,
-		padding: { top: 18, bottom: 18, left: 16, right: 16 },
-		child: transcriptColumn,
-	});
+	const shell: {
+		sidebar?: WakuSidebarHandle;
+		headerBar?: WakuHeaderBarHandle;
+		toastBanner?: WakuToastBannerHandle;
+		transcriptView?: WakuTranscriptViewHandle;
+		composer?: WakuComposerHandle;
+		footerBar?: WakuFooterBarHandle;
+		rightPanel?: WakuRightPanelHandle;
+	} = {};
 
-	const welcomeCard = createWelcomeCard(currentTheme, initialStatus);
-	const appendCard = (card: ThemedCard) => {
-		cards.push(card);
-		messagesStack.addChild(card.root);
-		if (autoScrollEnabled && scrollView.isFollowingEnd()) {
-			scrollView.scrollToEnd();
+	const closeOverlay = (): void => {
+		if (activeOverlay !== undefined) {
+			const handle = activeOverlay;
+			activeOverlay = undefined;
+			activeOverlayKind = undefined;
+			handle.hide();
+		} else {
+			activeOverlayKind = undefined;
+		}
+	};
+
+	const hasActiveOverlay = (): boolean => activeOverlay !== undefined;
+
+	const showManagedOverlay = (
+		kind: ActiveOverlayKind,
+		openFn: (onDismiss: () => void) => OverlayHandle,
+	): void => {
+		if (activeOverlayKind === kind && activeOverlay !== undefined) {
+			closeOverlay();
+			return;
+		}
+		closeOverlay();
+		activeOverlayKind = kind;
+		const created = openFn(() => {
+			if (activeOverlay === created) {
+				activeOverlay = undefined;
+				activeOverlayKind = undefined;
+				shell.composer?.focus();
+				app.invalidate();
+			}
+		});
+		// Synchronous dismiss callbacks may clear activeOverlay before openFn returns.
+		if (activeOverlayKind === kind) {
+			activeOverlay = created;
+		}
+	};
+
+	const applyThemeToShell = (theme: GuiTheme): void => {
+		currentTheme = theme;
+		headerTitle.setColor(theme.textBright);
+		shell.sidebar?.applyTheme(theme);
+		shell.headerBar?.applyTheme(theme);
+		shell.toastBanner?.applyTheme(theme);
+		shell.transcriptView?.applyTheme(theme);
+		shell.composer?.applyTheme(theme);
+		shell.footerBar?.applyTheme(theme);
+		shell.rightPanel?.applyTheme(theme);
+		syncWindowChrome(controller.getSnapshot(), theme);
+		app.invalidate();
+	};
+
+	const setThemeAndPersist = (nextTheme: GuiTheme): void => {
+		currentTheme = nextTheme;
+		const nextAppearance = nextTheme.dark ? "dark" : "light";
+		if (controller.getSnapshot().layout.appearance !== nextAppearance) {
+			controller.updateLayoutPreferences({ appearance: nextAppearance });
+		}
+		app.setTheme(nextTheme);
+	};
+
+	const toggleTheme = (): void => {
+		const nextTheme = currentTheme.dark ? lightGuiTheme : darkGuiTheme;
+		setThemeAndPersist(nextTheme);
+	};
+
+	const toggleSidebar = (): void => {
+		const cur = controller.getSnapshot().layout.sidebarCollapsed;
+		const nextLayout = controller.updateLayoutPreferences({ sidebarCollapsed: !cur });
+		const snap = { ...controller.getSnapshot(), layout: nextLayout };
+		shell.sidebar?.update(snap);
+		shell.headerBar?.update(snap);
+		syncWindowChrome(snap, currentTheme);
+		app.invalidate();
+	};
+
+	const toggleRightPanel = (tab?: "changes" | "files" | "tree"): void => {
+		const layout = controller.getSnapshot().layout;
+		if (tab !== undefined) {
+			const shouldOpen = !layout.rightPanelOpen || layout.rightPanelTab !== tab;
+			const nextLayout = controller.updateLayoutPreferences({
+				rightPanelOpen: shouldOpen,
+				rightPanelTab: tab,
+			});
+			const snap = { ...controller.getSnapshot(), layout: nextLayout };
+			shell.rightPanel?.update(snap);
+			shell.headerBar?.update(snap);
+		} else {
+			const nextLayout = controller.updateLayoutPreferences({ rightPanelOpen: !layout.rightPanelOpen });
+			const snap = { ...controller.getSnapshot(), layout: nextLayout };
+			shell.rightPanel?.update(snap);
+			shell.headerBar?.update(snap);
 		}
 		app.invalidate();
 	};
-	appendCard(welcomeCard);
 
-	if (initialStatus.modelFallbackMessage) {
-		appendCard(createBannerCard(currentTheme, "Model Notice", initialStatus.modelFallbackMessage, "notice"));
-	}
+	const openModelPickerModal = (): void => {
+		showManagedOverlay("model", (onDismiss) =>
+			openModelPicker(app, controller, {
+				onOpenSettings: () => openSettingsModalOverlay(),
+				onDismiss,
+			}),
+		);
+	};
+
+	const openSessionPickerModal = (): void => {
+		showManagedOverlay("session", (onDismiss) => openSessionPicker(app, controller, { onDismiss }));
+	};
+
+	const openSettingsModalOverlay = (): void => {
+		showManagedOverlay("settings", (onDismiss) =>
+			openSettingsModal(app, controller, {
+				onOpenModelPicker: () => openModelPickerModal(),
+				onToggleTheme: toggleTheme,
+				onDismiss,
+			}),
+		);
+	};
+
+	const openGitBranchModalOverlay = (): void => {
+		showManagedOverlay("branch", (onDismiss) => openGitBranchModal(app, controller, { onDismiss }));
+	};
+
+	const openGitCommitModalOverlay = (): void => {
+		showManagedOverlay("commit", (onDismiss) => openGitCommitModal(app, controller, { onDismiss }));
+	};
+
+	const openContextPopoverOverlay = (anchorRect?: Rect): void => {
+		showManagedOverlay("context", (onDismiss) => openContextPopover(app, controller, { anchorRect, onDismiss }));
+	};
+
+	const openCommandPaletteModal = (): void => {
+		showManagedOverlay("command", (onDismiss) =>
+			openCommandPalette(app, controller, {
+				onNewSession: async () => {
+					await controller.newSession();
+				},
+				onOpenSessionPicker: openSessionPickerModal,
+				onForkSession: async () => {
+					await controller.forkSession();
+				},
+				onCompactContext: () => controller.compactSession(),
+				onToggleSidebar: toggleSidebar,
+				onToggleRightPanel: () => toggleRightPanel(),
+				onSwitchRightTab: (tab) => {
+					const nextLayout = controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: tab });
+					const snap = { ...controller.getSnapshot(), layout: nextLayout };
+					shell.rightPanel?.setActiveTab(tab);
+					shell.rightPanel?.update(snap);
+					shell.headerBar?.update(snap);
+				},
+				onToggleDiffMode: () => {
+					const cur = controller.getSnapshot().layout.diffViewMode;
+					const nextMode = cur === "unified" ? "split" : "unified";
+					const nextLayout = controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: "changes", diffViewMode: nextMode });
+					const snap = { ...controller.getSnapshot(), layout: nextLayout };
+					shell.rightPanel?.update(snap);
+					shell.headerBar?.update(snap);
+				},
+				onToggleTheme: toggleTheme,
+				onOpenGitBranch: openGitBranchModalOverlay,
+				onOpenGitCommit: openGitCommitModalOverlay,
+				onOpenModelPicker: openModelPickerModal,
+				onCycleThinking: () => {
+					const status = controller.getStatus();
+					const levels = status.availableThinkingLevels;
+					if (levels.length > 0) {
+						const idx = levels.indexOf(status.thinkingLevel);
+						const next = levels[(idx + 1) % levels.length] ?? levels[0];
+						if (next !== undefined) {
+							controller.setThinkingLevel(next);
+						}
+					}
+				},
+				onOpenSettings: openSettingsModalOverlay,
+				onDismiss,
+			}),
+		);
+	};
+
+	const maybeOpenPendingPrompt = (snapshot: GuiSessionSnapshot, explicitPrompt?: GuiPendingPrompt): void => {
+		const prompt = explicitPrompt ?? snapshot.pendingPrompts[0];
+		if (prompt === undefined || prompt.id === shownPromptId) {
+			return;
+		}
+		if (activeOverlay !== undefined && activeOverlayKind !== "extension") {
+			return;
+		}
+		shownPromptId = prompt.id;
+		showManagedOverlay("extension", (onDismiss) =>
+			openExtensionPromptModal(app, controller, prompt, {
+				onDismiss: () => {
+					shownPromptId = undefined;
+					onDismiss();
+				},
+			}),
+		);
+	};
+
+	const resolveSlashModel = (args: string): boolean => {
+		const query = args.trim().toLowerCase();
+		const models = controller.getAvailableModels();
+		let match = models.find((m) => m.label.toLowerCase() === query || m.id.toLowerCase() === query);
+		if (match === undefined) {
+			match = models.find((m) => m.label.toLowerCase().includes(query) || m.name.toLowerCase().includes(query));
+		}
+		if (match === undefined) {
+			shell.transcriptView?.messagesStack.addChild(
+				createBannerCard(currentTheme, "Model Not Found", `No available model matches "${args.trim()}".`, "warning")
+					.root,
+			);
+			return true;
+		}
+		void controller.selectModel(match.provider, match.id);
+		return true;
+	};
+
+	const handleSlashCommand = (cmdName: string, cmdArgs: string): boolean => {
+		const normalized = cmdName.trim().toLowerCase();
+		if (normalized === "new") {
+			void controller.newSession();
+			return true;
+		}
+		if (normalized === "clear") {
+			controller.clearMessages();
+			return true;
+		}
+		if (normalized === "model") {
+			if (cmdArgs.length === 0) {
+				openModelPickerModal();
+			} else {
+				resolveSlashModel(cmdArgs);
+			}
+			return true;
+		}
+		if (normalized === "thinking") {
+			const status = controller.getStatus();
+			const levels = status.availableThinkingLevels;
+			if (cmdArgs.length === 0) {
+				if (levels.length > 0) {
+					const idx = levels.indexOf(status.thinkingLevel);
+					const next = levels[(idx + 1) % levels.length] ?? levels[0];
+					if (next !== undefined) {
+						controller.setThinkingLevel(next);
+					}
+				}
+			} else if (isValidThinkingArg(cmdArgs)) {
+				controller.setThinkingLevel(cmdArgs);
+			} else {
+				shell.transcriptView?.messagesStack.addChild(
+					createBannerCard(
+						currentTheme,
+						"Invalid Thinking Level",
+						`Supported levels: ${levels.join(", ")}`,
+						"warning",
+					).root,
+				);
+			}
+			return true;
+		}
+		if (normalized === "theme") {
+			const arg = cmdArgs.toLowerCase();
+			if (arg === "dark") {
+				setThemeAndPersist(darkGuiTheme);
+			} else if (arg === "light") {
+				setThemeAndPersist(lightGuiTheme);
+			} else {
+				toggleTheme();
+			}
+			return true;
+		}
+		if (normalized === "compact") {
+			void controller.compactSession(cmdArgs.length > 0 ? cmdArgs : undefined);
+			return true;
+		}
+		if (normalized === "fork") {
+			void controller.forkSession();
+			return true;
+		}
+		if (normalized === "sessions" || normalized === "resume") {
+			openSessionPickerModal();
+			return true;
+		}
+		if (normalized === "branch") {
+			openGitBranchModalOverlay();
+			return true;
+		}
+		if (normalized === "commit") {
+			openGitCommitModalOverlay();
+			return true;
+		}
+		if (normalized === "settings") {
+			openSettingsModalOverlay();
+			return true;
+		}
+		return false;
+	};
 
 	const slashCommands: readonly SlashCommand[] = [
 		{ name: "new", description: "Start a new conversation session" },
@@ -323,706 +554,227 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 				return items.length > 0 ? items : null;
 			},
 		},
-		{ name: "quit", description: "Quit pi-native" },
+		{ name: "compact", description: "Compact session context" },
+		{ name: "fork", description: "Fork conversation into a new branch/session" },
+		{ name: "sessions", description: "Open session switcher" },
+		{ name: "branch", description: "Manage Git branches" },
+		{ name: "commit", description: "Commit workspace changes" },
+		{ name: "settings", description: "Open GUI settings modal" },
 	];
 
-	const autocompleteProvider = new CombinedAutocompleteProvider(slashCommands, initialStatus.cwd);
-
-	const editor = new Editor({
-		placeholder: "Ask pi anything, or type / for commands...",
-		minHeight: 54,
-		maxHeight: 160,
-		submitOnEnter: true,
-		clearOnSubmit: true,
-		autocompleteProvider,
-		onSubmit: (submitted) => {
-			void submitText(submitted);
+	const sidebar = createWakuSidebar(app, controller, {
+		vibrancyEnabled: true,
+		onNewSession: () => {
+			void controller.newSession();
+		},
+		onToggleSidebar: toggleSidebar,
+		onOpenSettings: openSettingsModalOverlay,
+		onToggleTheme: toggleTheme,
+		onResize: (width) => {
+			const snap = controller.getSnapshot();
+			if (!snap.layout.sidebarCollapsed) {
+				app.setWindowChrome(currentTheme.dark, width, true);
+			}
+		},
+		onResizeEnd: () => {
+			syncWindowChrome(controller.getSnapshot(), currentTheme);
 		},
 	});
+	shell.sidebar = sidebar;
 
-	const composerHint = new Text({
-		text: "Enter to send · Shift+Enter newline · / for commands",
-		fontSize: currentTheme.fontSizeSmall,
-		color: currentTheme.textMuted,
+	const headerBar = createWakuHeaderBar(app, controller, {
+		onToggleSidebar: toggleSidebar,
+		onNewSession: () => {
+			void controller.newSession();
+		},
+		onGoBack: () => {
+			void controller.goBack();
+		},
+		onGoForward: () => {
+			void controller.goForward();
+		},
+		onOpenGitBranch: openGitBranchModalOverlay,
+		onToggleRightPanel: () => toggleRightPanel(),
 	});
-	const sendButton = new Button({
-		label: "Send",
-		leadingIcon: "send",
-		iconSize: 13,
-		variant: "primary",
-		pill: true,
-		padding: { vertical: 6, horizontal: 14 },
-		onClick: () => {
-			const text = editor.getText().trim();
-			if (text.length === 0) return;
-			editor.addToHistory(text);
-			editor.setText("");
-			void submitText(text);
+	shell.headerBar = headerBar;
+
+	const toastBanner = createWakuToastBanner(app, controller, { autoDismissMs: 5000 });
+	shell.toastBanner = toastBanner;
+
+	const transcriptView = createWakuTranscriptView(app, controller, {
+		maxColumnWidth: 760,
+		initialTheme: currentTheme,
+		onSelectPrompt: (promptText) => {
+			shell.composer?.setText(promptText);
+			shell.composer?.focus();
+		},
+		onForkFromMessage: () => {
+			void controller.forkSession();
+		},
+		onOpenFile: (filePath) => {
+			const nextLayout = controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: "files" });
+			const snap = { ...controller.getSnapshot(), layout: nextLayout };
+			shell.rightPanel?.update(snap);
+			headerBar.update(snap);
+			if (filePath.length > 0) {
+				shell.rightPanel?.selectFile(filePath);
+			}
+		},
+		onViewDiff: (_toolName, filePath) => {
+			if (filePath !== undefined && filePath.length > 0) {
+				shell.rightPanel?.selectFile(filePath);
+				headerBar.update(controller.getSnapshot());
+			} else {
+				const nextLayout = controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: "changes" });
+				const snap = { ...controller.getSnapshot(), layout: nextLayout };
+				shell.rightPanel?.update(snap);
+				headerBar.update(snap);
+			}
+		},
+		onOpenChangedFile: (filePath) => {
+			shell.rightPanel?.selectFile(filePath);
+			headerBar.update(controller.getSnapshot());
 		},
 	});
-	const stopButton = new Button({
-		label: "Stop",
-		leadingIcon: "stop",
-		iconSize: 13,
-		variant: "danger",
-		pill: true,
-		padding: { vertical: 6, horizontal: 12 },
-		disabled: !initialStatus.isStreaming,
-		onClick: () => {
-			void handleStop();
+	shell.transcriptView = transcriptView;
+
+	const composer = createWakuComposer(app, controller, {
+		initialTheme: currentTheme,
+		slashCommands,
+		onOpenModelPicker: openModelPickerModal,
+		onOpenAttachDialog: () => {
+			shell.composer?.focus();
 		},
+		onSlashCommand: handleSlashCommand,
 	});
+	shell.composer = composer;
 
-	const composerToolbar = new HStack({
-		gap: 8,
-		align: "center",
-		padding: { top: 2, bottom: 2, left: 6, right: 2 },
-		children: [composerHint, { child: new Spacer(), grow: 1 }, stopButton, sendButton],
-	});
-	const composerStack = new VStack({
-		gap: 6,
-		children: [editor, composerToolbar],
-	});
-	const composerCard = new Box({
-		padding: 6,
-		background: currentTheme.surfaceElevated,
-		borderColor: currentTheme.border,
-		borderWidth: 1,
-		radius: 14,
-		shadow: "sm",
-		child: composerStack,
-	});
-	const composerColumn = new Box({
-		maxWidth: 820,
-		fillWidth: true,
-		alignHorizontal: "center",
-		child: composerCard,
-	});
-	const composerRegion = new Box({
-		padding: { top: 4, bottom: 14, left: 16, right: 16 },
-		child: composerColumn,
-	});
+	if (options.initialAttachments !== undefined) {
+		for (let i = 0; i < options.initialAttachments.length; i++) {
+			const att = options.initialAttachments[i];
+			if (att !== undefined) {
+				composer.addAttachment(att);
+			}
+		}
+	}
 
-	const mainStack = new VStack({
+	const footerBar = createWakuFooterBar(controller, {
+		initialTheme: currentTheme,
+		onWorkspaceClick: () => toggleRightPanel("files"),
+		onGitBranchClick: openGitBranchModalOverlay,
+		onContextClick: () => openContextPopoverOverlay(),
+	});
+	shell.footerBar = footerBar;
+
+	const rightPanel = createWakuRightPanel(app, controller, {
+		onClose: () => toggleRightPanel(),
+		onOpenCommitModal: openGitCommitModalOverlay,
+		onOpenBranchModal: openGitBranchModalOverlay,
+	});
+	shell.rightPanel = rightPanel;
+
+	const centerColumn = new VStack({
 		gap: 0,
+		align: "stretch",
 		children: [
-			headerBox,
-			headerDivider,
-			{ child: scrollView, grow: 1, shrink: 1, minSize: 120 },
-			composerRegion,
+			headerBar.root,
+			{ child: transcriptView.root, grow: 1, shrink: 1 },
+			composer.root,
+			footerBar.root,
 		],
 	});
 
-	const syncChromeTheme = (theme: GuiTheme) => {
-		currentTheme = theme;
-		rootBox.setBackground(theme.background);
-		headerBox.setBackground(theme.surface);
-		brandIcon.setColor(theme.accent);
-		headerTitle.setColor(theme.text);
-		themeButton.setLeadingIcon(theme.dark ? "sun" : "moon");
-		composerCard.setBackground(theme.surfaceElevated);
-		composerCard.setBorder(theme.border, 1, 14);
-		composerHint.setColor(theme.textMuted);
-		for (const card of cards) {
-			card.applyTheme(theme);
-		}
-		app.invalidate();
+	const shellRow = new HStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			sidebar.root,
+			{ child: centerColumn, grow: 1, shrink: 1 },
+			rightPanel.root,
+		],
+	});
+
+	const root = new WakuShellRoot(shellRow, currentTheme, applyThemeToShell);
+	app.setRoot(root);
+	syncWindowChrome(initialSnap, currentTheme);
+
+	// Compat handle shims synced with controller + Waku controls without cluttering the desktop a11y tree.
+	const newSessionButton = new Button({
+		label: "New Session",
+		variant: "ghost",
+		onClick: () => {
+			void controller.newSession();
+		},
+	});
+	const themeButton = new Button({
+		label: "Toggle Theme",
+		variant: "ghost",
+		onClick: toggleTheme,
+	});
+	const settingsButton = new Button({
+		label: "Settings",
+		variant: "ghost",
+		onClick: openSettingsModalOverlay,
+	});
+	const sendButton = new Button({
+		label: "Send",
+		variant: "primary",
+		onClick: () => composer.submitCurrent("auto"),
+	});
+
+	const submitText = (text: string): void => {
+		composer.setText(text);
+		composer.submitCurrent("auto");
 	};
 
-	const rootBox = new ThemeAwareRoot(mainStack, currentTheme, syncChromeTheme);
-
-	const updateHeaderFromStatus = (status: GuiSessionStatus) => {
-		workspaceBadge.setLabel(formatWorkspaceBadgeLabel(status.cwd));
-		providerBadge.setLabel(status.activeModel?.provider ?? "unconfigured");
-		providerBadge.setVariant(status.authSummary.hasActiveAuth ? "success" : "warning");
-		modelButton.setLabel(formatModelButtonLabel(status));
-		thinkingButton.setLabel(`Thinking: ${status.thinkingLevel}`);
-		cwdIndicator.setText(status.cwd);
-		stopButton.setDisabled(!status.isStreaming);
-		welcomeCard.update(status);
-
-		const nextMsg = status.statusMessage ?? (status.isStreaming ? "Streaming..." : "Ready");
-		statusLoader.setMessage(nextMsg);
-		if (status.isStreaming) {
-			if (!statusLoader.isRunning()) {
-				statusLoader.start(80);
-			}
-		} else if (statusLoader.isRunning()) {
-			statusLoader.stop();
-		}
-		app.invalidate();
-	};
-
-	const resetConversation = (reason: "new" | "clear") => {
-		activeAssistantCard = undefined;
-		activeToolCards.clear();
-		cards.length = 0;
-		messagesStack.clear();
-		appendCard(welcomeCard);
-		welcomeCard.update(controller.getStatus());
-		const msg = reason === "new" ? "Started a new session." : "Cleared conversation messages.";
-		appendCard(createBannerCard(currentTheme, "Session", msg, "notice"));
-	};
-
-	const closeOverlay = () => {
-		if (!activeOverlay) return;
-		const overlay = activeOverlay;
-		activeOverlay = undefined;
-		activeOverlayKind = undefined;
-		overlay.dispose();
-		app.setFocus(editor);
-		app.invalidate();
-	};
-
-	const openModelPicker = () => {
-		if (activeOverlayKind === "model") {
-			closeOverlay();
-			return;
-		}
-		closeOverlay();
-
-		const models = controller.getAvailableModels();
-		const status = controller.getStatus();
-		const activeLabel = status.activeModel?.label ?? "None";
-
-		const title = new Text({
-			text: "Switch Model",
-			fontSize: currentTheme.fontSizeHeading,
-			fontWeight: 700,
-			color: currentTheme.text,
-		});
-		const subtitle = new Text({
-			text: `Active: ${activeLabel} · Esc to cancel`,
-			fontSize: currentTheme.fontSizeSmall,
-			color: currentTheme.textMuted,
-			wrap: true,
-		});
-
-		const stackChildren: Array<Text | Divider | SelectList | Button> = [
-			title,
-			subtitle,
-			new Divider({ direction: "horizontal" }),
-		];
-
-		if (models.length === 0) {
-			stackChildren.push(
-				new Text({
-					text: "No authenticated models found. Configure credentials in ~/.pi/agent/auth.json.",
-					fontSize: currentTheme.fontSizeBody,
-					color: currentTheme.warning,
-					wrap: true,
-				}),
-			);
-			stackChildren.push(
-				new Button({
-					label: "Close",
-					variant: "secondary",
-					onClick: () => closeOverlay(),
-				}),
-			);
-		} else {
-			const items: SelectItem[] = models.map((m) => ({
-				value: `${m.provider}\0${m.id}`,
-				label: m.label,
-				description: m.description,
-			}));
-			const selectList = new SelectList({
-				items,
-				maxVisible: 12,
-				onSelect: (selected) => {
-					const sep = selected.value.indexOf("\0");
-					if (sep < 0) {
-						closeOverlay();
-						return;
-					}
-					const provider = selected.value.slice(0, sep);
-					const modelId = selected.value.slice(sep + 1);
-					closeOverlay();
-					void controller
-						.selectModel(provider, modelId)
-						.then(() => {
-							updateHeaderFromStatus(controller.getStatus());
-						})
-						.catch((err) => {
-							appendCard(
-								createBannerCard(
-									currentTheme,
-									"Model Switch Error",
-									err instanceof Error ? err.message : String(err),
-									"error",
-								),
-							);
-						});
-				},
-				onCancel: () => closeOverlay(),
-			});
-			stackChildren.push(selectList);
-		}
-
-		const modalBox = new Box({
-			padding: 16,
-			background: currentTheme.surfaceElevated,
-			borderColor: currentTheme.border,
-			borderWidth: 1,
-			radius: currentTheme.radiusLarge,
-			child: new VStack({ gap: 10, children: stackChildren }),
-		});
-
-		activeOverlayKind = "model";
-		activeOverlay = app.showOverlay(modalBox, {
-			anchor: "center",
-			width: 540,
-			maxHeight: 480,
-			radius: currentTheme.radiusLarge,
-			shadow: "lg",
-			modal: true,
-			dismissOnEscape: true,
-			dismissOnBackdropClick: true,
-			onDismiss: () => {
-				activeOverlay = undefined;
-				activeOverlayKind = undefined;
-				app.setFocus(editor);
-				app.invalidate();
-			},
-		});
-	};
-
-	const openSettings = () => {
-		if (activeOverlayKind === "settings") {
-			closeOverlay();
-			return;
-		}
-		closeOverlay();
-
-		const status = controller.getStatus();
-		const thinkingValues =
-			status.availableThinkingLevels.length > 0 ? [...status.availableThinkingLevels] : ["off"];
-
-		const settingItems: SettingItem[] = [
-			{
-				id: "appearance",
-				label: "Appearance",
-				description: "Switch between dark and light GUI theme",
-				currentValue: currentTheme.dark ? "dark" : "light",
-				values: ["dark", "light"],
-			},
-			{
-				id: "thinking",
-				label: "Thinking Level",
-				description: "Reasoning budget for supporting models",
-				currentValue: status.thinkingLevel,
-				values: thinkingValues,
-			},
-			{
-				id: "autoScroll",
-				label: "Auto-scroll",
-				description: "Keep conversation scrolled to latest output",
-				currentValue: autoScrollEnabled ? "true" : "false",
-				values: ["true", "false"],
-			},
-		];
-
-		const title = new Text({
-			text: "Settings",
-			fontSize: currentTheme.fontSizeHeading,
-			fontWeight: 700,
-			color: currentTheme.text,
-		});
-		const subtitle = new Text({
-			text: "Press Enter/Space or click a row to toggle · Esc to close",
-			fontSize: currentTheme.fontSizeSmall,
-			color: currentTheme.textMuted,
-			wrap: true,
-		});
-
-		const settingsList = new SettingsList({
-			items: settingItems,
-			enableSearch: false,
-			maxVisible: 8,
-			onChange: (id, newValue) => {
-				if (id === "appearance") {
-					app.setTheme(newValue === "light" ? lightGuiTheme : darkGuiTheme);
-				} else if (id === "thinking" && isValidThinkingArg(newValue)) {
-					controller.setThinkingLevel(newValue);
-					updateHeaderFromStatus(controller.getStatus());
-				} else if (id === "autoScroll") {
-					autoScrollEnabled = newValue === "true";
-					scrollView.setFollowMode(autoScrollEnabled ? "end" : "none");
-					if (autoScrollEnabled) {
-						scrollView.scrollToEnd();
-					}
-					app.invalidate();
-				}
-			},
-			onCancel: () => closeOverlay(),
-		});
-
-		const modalBox = new Box({
-			padding: 16,
-			background: currentTheme.surfaceElevated,
-			borderColor: currentTheme.border,
-			borderWidth: 1,
-			radius: currentTheme.radiusLarge,
-			child: new VStack({
-				gap: 10,
-				children: [title, subtitle, new Divider({ direction: "horizontal" }), settingsList],
-			}),
-		});
-
-		activeOverlayKind = "settings";
-		activeOverlay = app.showOverlay(modalBox, {
-			anchor: "center",
-			width: 500,
-			maxHeight: 420,
-			radius: currentTheme.radiusLarge,
-			shadow: "lg",
-			modal: true,
-			dismissOnEscape: true,
-			dismissOnBackdropClick: true,
-			onDismiss: () => {
-				activeOverlay = undefined;
-				activeOverlayKind = undefined;
-				app.setFocus(editor);
-				app.invalidate();
-			},
-		});
-	};
-
-	const toggleTheme = () => {
-		app.setTheme(currentTheme.dark ? lightGuiTheme : darkGuiTheme);
-	};
-
-	const cycleThinkingLevel = () => {
-		const status = controller.getStatus();
-		const levels = status.availableThinkingLevels;
-		if (levels.length <= 1) {
-			const current = levels[0] ?? "off";
-			appendCard(
-				createBannerCard(
-					currentTheme,
-					"Thinking Level",
-					`Active model supports only thinking level "${current}".`,
-					"notice",
-				),
-			);
-			return;
-		}
-		const idx = levels.indexOf(status.thinkingLevel);
-		const next = levels[(idx + 1) % levels.length] ?? levels[0] ?? "off";
-		controller.setThinkingLevel(next);
-		updateHeaderFromStatus(controller.getStatus());
-	};
-
-	const handleNewSession = async () => {
-		try {
-			const res = await controller.newSession();
-			if (!res.cancelled && controller.getStatus().isStreaming === false) {
-				updateHeaderFromStatus(controller.getStatus());
-			}
-		} catch (err) {
-			appendCard(
-				createBannerCard(
-					currentTheme,
-					"New Session Error",
-					err instanceof Error ? err.message : String(err),
-					"error",
-				),
-			);
-		}
-	};
-
-	const handleClearMessages = () => {
-		controller.clearMessages();
-	};
-
-	const handleStop = async () => {
-		try {
-			await controller.abort();
-		} catch (err) {
-			appendCard(
-				createBannerCard(
-					currentTheme,
-					"Abort Error",
-					err instanceof Error ? err.message : String(err),
-					"error",
-				),
-			);
-		}
-	};
-
-	const requestQuit = () => {
-		if (options.onRequestQuit) {
-			options.onRequestQuit();
-		} else {
-			app.stop();
-		}
-	};
-
-	const handleSlashCommand = async (rawCommand: string): Promise<void> => {
-		const withoutSlash = rawCommand.slice(1).trim();
-		const spaceIdx = withoutSlash.search(/\s/);
-		const cmd = (spaceIdx >= 0 ? withoutSlash.slice(0, spaceIdx) : withoutSlash).toLowerCase();
-		const arg = spaceIdx >= 0 ? withoutSlash.slice(spaceIdx + 1).trim() : "";
-
-		switch (cmd) {
-			case "new":
-				await handleNewSession();
-				return;
-
-			case "clear":
-				handleClearMessages();
-				return;
-
-			case "model": {
-				if (arg.length === 0) {
-					openModelPicker();
-					return;
-				}
-				const q = arg.toLowerCase();
-				const match = controller
-					.getAvailableModels()
-					.find(
-						(m) =>
-							m.label.toLowerCase() === q ||
-							m.id.toLowerCase() === q ||
-							m.label.toLowerCase().includes(q),
-					);
-				if (!match) {
-					appendCard(
-						createBannerCard(currentTheme, "Model Not Found", `No available model matching "${arg}".`, "error"),
-					);
-					return;
-				}
-				await controller.selectModel(match.provider, match.id);
-				appendCard(createBannerCard(currentTheme, "Model Switched", `Active model: ${match.label}`, "notice"));
-				return;
-			}
-
-			case "thinking": {
-				if (arg.length === 0) {
-					cycleThinkingLevel();
-					return;
-				}
-				const normalized = arg.toLowerCase();
-				if (!isValidThinkingArg(normalized)) {
-					appendCard(
-						createBannerCard(
-							currentTheme,
-							"Invalid Thinking Level",
-							`Unknown thinking level "${arg}". Use off, low, medium, or high.`,
-							"error",
-						),
-					);
-					return;
-				}
-				controller.setThinkingLevel(normalized);
-				updateHeaderFromStatus(controller.getStatus());
-				appendCard(
-					createBannerCard(
-						currentTheme,
-						"Thinking Level",
-						`Thinking level set to "${controller.getStatus().thinkingLevel}".`,
-						"notice",
-					),
-				);
-				return;
-			}
-
-			case "theme": {
-				const normalized = arg.toLowerCase();
-				if (normalized === "dark") {
-					app.setTheme(darkGuiTheme);
-				} else if (normalized === "light") {
-					app.setTheme(lightGuiTheme);
-				} else if (normalized.length === 0) {
-					toggleTheme();
-				} else {
-					appendCard(
-						createBannerCard(
-							currentTheme,
-							"Unknown Theme",
-							`Unsupported theme "${arg}". Use dark or light.`,
-							"error",
-						),
-					);
-					return;
-				}
-				return;
-			}
-
-			case "quit":
-			case "exit":
-				requestQuit();
-				return;
-
-			default:
-				appendCard(
-					createBannerCard(
-						currentTheme,
-						"Unknown Command",
-						`Unknown command "/${cmd}". Available: /new, /clear, /model, /thinking, /theme, /quit`,
-						"error",
-					),
-				);
-		}
-	};
-
-	const submitText = async (rawText: string): Promise<void> => {
+	const onControllerEvent = (event: GuiControllerEvent): void => {
 		if (disposed) return;
-		const trimmed = rawText.trim();
-		if (trimmed.length === 0) return;
-
-		if (trimmed.startsWith("/")) {
-			await handleSlashCommand(trimmed);
-			return;
-		}
-
-		try {
-			await controller.prompt(trimmed);
-		} catch (err) {
-			appendCard(
-				createBannerCard(
-					currentTheme,
-					"Request Error",
-					err instanceof Error ? err.message : String(err),
-					"error",
-				),
-			);
-			updateHeaderFromStatus(controller.getStatus());
-		}
-	};
-
-	const onControllerEvent = (event: GuiControllerEvent) => {
-		if (disposed) return;
+		const snap = event.snapshot ?? controller.getSnapshot();
+		syncCompatMetadata(snap.status);
 
 		switch (event.type) {
-			case "status_changed":
-				if (event.status) {
-					updateHeaderFromStatus(event.status);
-				} else {
-					updateHeaderFromStatus(controller.getStatus());
-				}
-				break;
-
-			case "user_message":
-				if (event.text) {
-					appendCard(createUserMessageCard(currentTheme, event.text));
-				}
-				break;
-
-			case "assistant_start":
-				activeAssistantCard = createAssistantMessageCard(currentTheme);
-				activeAssistantCard.update({
-					text: event.text ?? "",
-					thinking: event.thinking ?? "",
-					ended: false,
-				});
-				appendCard(activeAssistantCard);
-				break;
-
-			case "assistant_update":
-				if (!activeAssistantCard) {
-					activeAssistantCard = createAssistantMessageCard(currentTheme);
-					appendCard(activeAssistantCard);
-				}
-				activeAssistantCard.update({
-					text: event.text ?? "",
-					thinking: event.thinking ?? "",
-					ended: false,
-				});
-				if (autoScrollEnabled && scrollView.isFollowingEnd()) {
-					scrollView.scrollToEnd();
-				}
-				app.invalidate();
-				break;
-
-			case "assistant_end":
-				if (!activeAssistantCard) {
-					activeAssistantCard = createAssistantMessageCard(currentTheme);
-					appendCard(activeAssistantCard);
-				}
-				activeAssistantCard.update({
-					text: event.text ?? "",
-					thinking: event.thinking ?? "",
-					stopReason: event.stopReason ?? "stop",
-					errorMessage: event.errorMessage ?? "",
-					ended: true,
-				});
-				if (activeAssistantCard.isEmpty()) {
-					messagesStack.removeChild(activeAssistantCard.root);
-					const cardIdx = cards.indexOf(activeAssistantCard);
-					if (cardIdx >= 0) cards.splice(cardIdx, 1);
-				}
-				activeAssistantCard = undefined;
-				if (autoScrollEnabled && scrollView.isFollowingEnd()) {
-					scrollView.scrollToEnd();
-				}
-				app.invalidate();
-				break;
-
-			case "tool_start": {
-				const toolCallId = event.toolCallId ?? `tool-${Date.now()}`;
-				const card = createToolExecutionCard(
-					currentTheme,
-					event.toolName ?? "tool",
-					event.argsText ?? "",
-				);
-				activeToolCards.set(toolCallId, card);
-				appendCard(card);
-				break;
-			}
-
-			case "tool_update": {
-				const toolCallId = event.toolCallId ?? "";
-				const card = activeToolCards.get(toolCallId);
-				if (card) {
-					card.update({
-						argsText: event.argsText,
-						outputText: event.outputText,
-						ended: false,
-					});
-					if (autoScrollEnabled && scrollView.isFollowingEnd()) {
-						scrollView.scrollToEnd();
-					}
-					app.invalidate();
-				}
-				break;
-			}
-
-			case "tool_end": {
-				const toolCallId = event.toolCallId ?? "";
-				const card = activeToolCards.get(toolCallId);
-				if (card) {
-					card.update({
-						outputText: event.outputText,
-						ended: true,
-						isError: event.isError ?? false,
-						durationMs: event.durationMs,
-					});
-					activeToolCards.delete(toolCallId);
-					if (autoScrollEnabled && scrollView.isFollowingEnd()) {
-						scrollView.scrollToEnd();
-					}
-					app.invalidate();
-				}
-				break;
-			}
-
-			case "error":
-				appendCard(
-					createBannerCard(
-						currentTheme,
-						"Error",
-						event.errorMessage ?? "An unexpected error occurred.",
-						"error",
-					),
-				);
-				break;
-
+			case "snapshot":
 			case "session_reset":
-				resetConversation(event.resetReason ?? "new");
+				sidebar.update(snap);
+				headerBar.update(snap);
+				rightPanel.update(snap);
+				toastBanner.update(snap);
+				syncWindowChrome(snap, currentTheme);
+				maybeOpenPendingPrompt(snap);
+				break;
+			case "status_changed":
+				sidebar.update(snap);
+				headerBar.update(snap);
+				syncWindowChrome(snap, currentTheme);
+				break;
+			case "sessions_changed":
+				sidebar.update(snap);
+				headerBar.update(snap);
+				break;
+			case "workspace_changed":
+			case "tree_changed":
+				headerBar.update(snap);
+				rightPanel.update(snap);
+				break;
+			case "layout_changed": {
+				const targetTheme = resolveAppearanceTheme(snap.layout.appearance, app);
+				if (targetTheme !== currentTheme) {
+					app.setTheme(targetTheme);
+				}
+				sidebar.update(snap);
+				headerBar.update(snap);
+				rightPanel.update(snap);
+				syncWindowChrome(snap, currentTheme);
+				break;
+			}
+			case "extension_ui":
+				toastBanner.update(snap);
+				maybeOpenPendingPrompt(snap, event.pendingPrompt);
+				break;
+			default:
 				break;
 		}
+		app.invalidate();
 	};
 
 	const unsubscribeController = controller.subscribe(onControllerEvent);
@@ -1031,12 +783,12 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		{
 			title: "App",
 			items: [
-				{ kind: "action", label: "About", role: "about" },
+				{ kind: "action", label: "About pi-native", role: "about" },
 				{ kind: "separator" },
-				{ kind: "action", label: "Settings", shortcut: "mod+,", onSelect: () => openSettings() },
-				{ kind: "action", label: "Toggle Theme", shortcut: "mod+t", onSelect: () => toggleTheme() },
+				{ kind: "action", label: "Toggle Theme", shortcut: "mod+t", onSelect: toggleTheme },
+				{ kind: "action", label: "Settings", shortcut: "mod+,", onSelect: openSettingsModalOverlay },
 				{ kind: "separator" },
-				{ kind: "action", label: "Quit", shortcut: "mod+q", role: "quit", onSelect: () => requestQuit() },
+				{ kind: "action", label: "Quit", shortcut: "mod+q", role: "quit", onSelect: () => options.onRequestQuit?.() },
 			],
 		},
 		{
@@ -1047,17 +799,25 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 					label: "New Session",
 					shortcut: "mod+n",
 					onSelect: () => {
-						void handleNewSession();
+						void controller.newSession();
 					},
 				},
-				{ kind: "action", label: "Switch Model", shortcut: "mod+k", onSelect: () => openModelPicker() },
-				{ kind: "action", label: "Clear Messages", shortcut: "mod+l", onSelect: () => handleClearMessages() },
-				{ kind: "separator" },
+				{ kind: "action", label: "Command Palette", shortcut: "mod+shift+k", onSelect: openCommandPaletteModal },
+				{ kind: "action", label: "Switch Model", shortcut: "mod+k", onSelect: openModelPickerModal },
+				{ kind: "action", label: "Resume Session", shortcut: "mod+shift+o", onSelect: openSessionPickerModal },
+				{
+					kind: "action",
+					label: "Clear Messages",
+					shortcut: "mod+l",
+					onSelect: () => {
+						controller.clearMessages();
+					},
+				},
 				{
 					kind: "action",
 					label: "Stop Generation",
 					onSelect: () => {
-						void handleStop();
+						void controller.abort();
 					},
 				},
 			],
@@ -1065,6 +825,8 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		{
 			title: "Edit",
 			items: [
+				{ kind: "action", label: "Find in Transcript", shortcut: "mod+f", onSelect: () => transcriptView.openFindBar() },
+				{ kind: "separator" },
 				{ kind: "action", label: "Undo", shortcut: "mod+z", role: "undo" },
 				{ kind: "action", label: "Redo", shortcut: "mod+shift+z", role: "redo" },
 				{ kind: "separator" },
@@ -1077,24 +839,122 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		{
 			title: "Window",
 			items: [
-				{ kind: "action", label: "Minimize", shortcut: "mod+m", role: "minimize" },
-				{ kind: "action", label: "Zoom", role: "zoom" },
+				{ kind: "action", label: "Toggle Sidebar", shortcut: "mod+b", onSelect: toggleSidebar },
+				{ kind: "action", label: "Toggle Right Panel", shortcut: "mod+\\", onSelect: () => toggleRightPanel() },
 				{ kind: "separator" },
-				{ kind: "action", label: "Close", shortcut: "mod+w", role: "close" },
+				{ kind: "action", label: "Close Window", shortcut: "mod+w", role: "close" },
 			],
 		},
 	];
-
 	app.setAppMenu(menus);
-	app.setRoot(rootBox);
-	app.setFocus(editor);
-	app.invalidate();
 
+	app.setOnKey((event: GuiKeyEvent, ctx: GuiRenderContext) => {
+		if (event.phase === "up") return false;
+
+		if (event.key.toLowerCase() === "escape") {
+			if (activeOverlay !== undefined) {
+				closeOverlay();
+				return true;
+			}
+			if (transcriptView.handleShortcutKey(event, ctx)) {
+				return true;
+			}
+			if (controller.getStatus().isStreaming) {
+				void controller.abort();
+				return true;
+			}
+			return false;
+		}
+
+		if (matchesKeyEvent(event, "mod+k", process.platform)) {
+			openCommandPaletteModal();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+m", process.platform)) {
+			openModelPickerModal();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+shift+o", process.platform)) {
+			openSessionPickerModal();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+,", process.platform)) {
+			openSettingsModalOverlay();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+f", process.platform)) {
+			return transcriptView.handleShortcutKey(event, ctx);
+		}
+		if (matchesKeyEvent(event, "mod+b", process.platform)) {
+			toggleSidebar();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+\\", process.platform)) {
+			toggleRightPanel();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+n", process.platform)) {
+			void controller.newSession();
+			return true;
+		}
+		if (matchesKeyEvent(event, "mod+l", process.platform)) {
+			controller.clearMessages();
+			return true;
+		}
+
+		if (transcriptView.isFindBarOpen() && transcriptView.handleShortcutKey(event, ctx)) {
+			return true;
+		}
+
+		return false;
+	});
+
+	if (initialStatus.modelFallbackMessage) {
+		transcriptView.messagesStack.addChild(
+			createBannerCard(currentTheme, "Model Notice", initialStatus.modelFallbackMessage, "notice").root,
+		);
+	}
+	if (options.startupDiagnostics && options.startupDiagnostics.length > 0) {
+		for (let i = 0; i < options.startupDiagnostics.length; i++) {
+			const d = options.startupDiagnostics[i];
+			if (d === undefined) continue;
+			const variant = d.type === "error" ? "error" : d.type === "warning" ? "warning" : "notice";
+			transcriptView.messagesStack.addChild(createBannerCard(currentTheme, "Startup Diagnostic", d.message, variant).root);
+		}
+	}
+
+	composer.focus();
+
+	const initialQueue: string[] = [];
 	if (options.initialPrompt && options.initialPrompt.trim().length > 0) {
-		const initialPrompt = options.initialPrompt;
+		initialQueue.push(options.initialPrompt.trim());
+	}
+	if (options.initialMessages && options.initialMessages.length > 0) {
+		for (let i = 0; i < options.initialMessages.length; i++) {
+			const msg = options.initialMessages[i]?.trim();
+			if (msg && msg.length > 0 && msg !== options.initialPrompt?.trim()) {
+				initialQueue.push(msg);
+			}
+		}
+	}
+	if (initialQueue.length > 0) {
 		queueMicrotask(() => {
-			if (!disposed) {
-				void submitText(initialPrompt);
+			if (disposed) return;
+			const first = initialQueue[0];
+			if (first !== undefined) {
+				const atts = composer.getAttachments();
+				if (atts.length > 0) {
+					composer.clearAttachments();
+					void controller.sendUserMessage(first, { attachments: atts, deliverAs: "auto" });
+				} else {
+					void controller.sendUserMessage(first, { deliverAs: "auto" });
+				}
+			}
+			for (let i = 1; i < initialQueue.length; i++) {
+				const extra = initialQueue[i];
+				if (extra !== undefined) {
+					void controller.sendUserMessage(extra, { deliverAs: "followUp" });
+				}
 			}
 		});
 	}
@@ -1104,33 +964,50 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		controller,
 		headerTitle,
 		workspaceBadge,
-		providerBadge,
+		providerBadge: footerBar.providerBadge,
 		cwdIndicator,
-		modelButton,
-		thinkingButton,
+		modelButton: composer.modelButton,
+		thinkingButton: composer.thinkingButton,
 		newSessionButton,
 		themeButton,
 		settingsButton,
-		statusLoader,
-		scrollView,
-		messagesStack,
-		editor,
+		statusLoader: footerBar.statusLoader,
+		scrollView: transcriptView.scrollView,
+		messagesStack: transcriptView.messagesStack,
+		editor: composer.editor,
 		sendButton,
-		stopButton,
+		stopButton: composer.stopButton,
 		menus,
-		openModelPicker,
-		openSettings,
+		sidebar,
+		headerBar,
+		rightPanel,
+		transcriptView,
+		composer,
+		footerBar,
+		openModelPicker: openModelPickerModal,
+		openSettings: openSettingsModalOverlay,
+		openCommandPalette: openCommandPaletteModal,
+		openSessionPicker: openSessionPickerModal,
+		openContextPopover: () => openContextPopoverOverlay(),
+		toggleSidebar,
+		toggleRightPanel,
 		closeOverlay,
-		hasActiveOverlay: () => activeOverlay !== undefined,
+		hasActiveOverlay,
 		toggleTheme,
 		submitText,
-		async dispose() {
+		dispose: () => {
 			if (disposed) return;
 			disposed = true;
 			closeOverlay();
-			statusLoader.stop();
 			unsubscribeController();
-			await controller.dispose();
+			sidebar.dispose();
+			headerBar.dispose();
+			toastBanner.dispose();
+			transcriptView.dispose();
+			composer.dispose();
+			footerBar.dispose();
+			rightPanel.dispose();
+			app.setOnKey(undefined);
 		},
 	};
 }

@@ -11,9 +11,8 @@
  * Start pi with this extension:
  *   pi -e ./examples/extensions/git-merge-and-resolve.ts
  */
-import { createReadStream } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 interface ConflictBlock {
@@ -31,11 +30,12 @@ async function findConflicts(pi: ExtensionAPI, cwd: string): Promise<ConflictBlo
 	const blocks: ConflictBlock[] = [];
 	for (const file of stdout.trim().split("\n")) {
 		try {
-			const rl = createInterface({ input: createReadStream(join(cwd, file), "utf-8") });
+			const content = readFileSync(join(cwd, file), "utf-8");
+			const lines = content.split(/\r?\n/);
 			let lineNo = 0;
 			let blockStart: number | undefined;
 			let separatorLine: number | undefined;
-			for await (const line of rl) {
+			for (const line of lines) {
 				lineNo++;
 				if (line.startsWith("<<<<<<<")) {
 					blockStart = lineNo;

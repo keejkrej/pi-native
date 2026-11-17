@@ -30,20 +30,26 @@ export interface EditorPosition {
 	readonly col: number;
 }
 
+export type EditorVariant = "default" | "chromeless";
+
 export interface EditorOptions {
 	readonly initialValue?: string;
 	readonly placeholder?: string;
+	readonly variant?: EditorVariant;
 	readonly fontFamily?: FontFamilyId;
 	readonly fontSize?: number;
 	readonly padding?: PaddingInput;
 	readonly radius?: number;
 	readonly minHeight?: number;
 	readonly maxHeight?: number;
+	readonly minLines?: number;
+	readonly maxLines?: number;
 	readonly submitOnEnter?: boolean;
 	readonly clearOnSubmit?: boolean;
 	readonly autocompleteProvider?: AutocompleteProvider;
 	readonly onChange?: (text: string) => void;
 	readonly onSubmit?: (text: string) => void;
+	readonly onPaste?: (clipboardText: string, ctx: GuiRenderContext) => boolean | void;
 }
 
 interface EditorSnapshot {
@@ -114,12 +120,15 @@ export class Editor extends GuiComponent {
 	private preferredX: number | undefined;
 
 	private placeholder: string;
+	private variant: EditorVariant;
 	private fontFamily: FontFamilyId;
 	private fontSize: number | undefined;
 	private padding: Edges;
 	private radius: number | undefined;
 	private minHeight: number;
 	private maxHeight: number;
+	private minLines: number | undefined;
+	private maxLines: number | undefined;
 	private submitOnEnter: boolean;
 	private clearOnSubmit: boolean;
 	private autocompleteProvider: AutocompleteProvider | undefined;
@@ -146,6 +155,7 @@ export class Editor extends GuiComponent {
 
 	onChange: ((text: string) => void) | undefined;
 	onSubmit: ((text: string) => void) | undefined;
+	onPaste: ((clipboardText: string, ctx: GuiRenderContext) => boolean | void) | undefined;
 
 	constructor(options: EditorOptions = {}) {
 		super();
@@ -159,12 +169,15 @@ export class Editor extends GuiComponent {
 		this.preferredX = undefined;
 
 		this.placeholder = options.placeholder ?? "";
+		this.variant = options.variant ?? "default";
 		this.fontFamily = options.fontFamily ?? SGUI_FONT_REGULAR;
 		this.fontSize = options.fontSize;
-		this.padding = normalizeEdges(options.padding ?? 10);
+		this.padding = normalizeEdges(options.padding ?? (this.variant === "chromeless" ? 0 : 10));
 		this.radius = options.radius;
 		this.minHeight = options.minHeight ?? 42;
 		this.maxHeight = options.maxHeight ?? 240;
+		this.minLines = options.minLines;
+		this.maxLines = options.maxLines;
 		this.submitOnEnter = options.submitOnEnter ?? true;
 		this.clearOnSubmit = options.clearOnSubmit ?? false;
 		this.autocompleteProvider = options.autocompleteProvider;
@@ -191,8 +204,50 @@ export class Editor extends GuiComponent {
 
 		this.onChange = options.onChange;
 		this.onSubmit = options.onSubmit;
+		this.onPaste = options.onPaste;
 		this.focusable = true;
 		this.cursor = SGUI_CURSOR_IBEAM;
+	}
+
+	getVariant(): EditorVariant {
+		return this.variant;
+	}
+
+	setVariant(variant: EditorVariant): void {
+		if (this.variant === variant) return;
+		this.variant = variant;
+		this.invalidate();
+	}
+
+	setHeightBounds(minHeight: number, maxHeight: number): void {
+		this.minHeight = Math.max(0, minHeight);
+		this.maxHeight = Math.max(this.minHeight, maxHeight);
+		this.invalidate();
+	}
+
+	getLineCount(): number {
+		return this.lines.length;
+	}
+
+	getVisualLineCount(ctx: GuiRenderContext, maxWidth: number): number {
+		const style = this.textStyle(ctx);
+		const innerMaxW = Math.max(0, maxWidth - this.padding.left - this.padding.right);
+		return this.buildVisualLines(ctx, style, innerMaxW).length;
+	}
+
+	getAutoGrowHeight(ctx: GuiRenderContext, maxWidth: number, maxLinesOverride?: number): number {
+		const style = this.textStyle(ctx);
+		const lineHeight = ctx.measureText(style, 0, "Mg").lineHeight;
+		const innerMaxW = Math.max(0, maxWidth - this.padding.left - this.padding.right);
+		const vCount = this.buildVisualLines(ctx, style, innerMaxW).length;
+		const padY = this.padding.top + this.padding.bottom;
+		const effectiveMinH =
+			this.minLines !== undefined ? Math.max(this.minHeight, this.minLines * lineHeight + padY) : this.minHeight;
+		const capLines = maxLinesOverride ?? this.maxLines;
+		const effectiveMaxH =
+			capLines !== undefined ? Math.min(this.maxHeight, capLines * lineHeight + padY) : this.maxHeight;
+		const contentH = vCount * lineHeight + padY;
+		return clampNumber(contentH, effectiveMinH, Math.max(effectiveMinH, effectiveMaxH));
 	}
 
 	getText(): string {
@@ -508,10 +563,17 @@ export class Editor extends GuiComponent {
 			}
 		}
 		const naturalW = Math.max(220, maxLineW + this.padding.left + this.padding.right + 8);
+		const padY = this.padding.top + this.padding.bottom;
 		const vLines = this.buildVisualLines(ctx, style, innerMaxW);
-		const contentH = vLines.length * lineMetrics.lineHeight + this.padding.top + this.padding.bottom;
-		const limitH = maxHeight !== undefined ? Math.min(this.maxHeight, maxHeight) : this.maxHeight;
-		const h = clampNumber(contentH, this.minHeight, Math.max(this.minHeight, limitH));
+		const contentH = vLines.length * lineMetrics.lineHeight + padY;
+		const effectiveMinH =
+			this.minLines !== undefined
+				? Math.max(this.minHeight, this.minLines * lineMetrics.lineHeight + padY)
+				: this.minHeight;
+		const maxFromLines =
+			this.maxLines !== undefined ? Math.min(this.maxHeight, this.maxLines * lineMetrics.lineHeight + padY) : this.maxHeight;
+		const limitH = maxHeight !== undefined ? Math.min(maxFromLines, maxHeight) : maxFromLines;
+		const h = clampNumber(contentH, effectiveMinH, Math.max(effectiveMinH, limitH));
 		return { width: Math.min(maxWidth, naturalW), height: h };
 	}
 
@@ -520,21 +582,23 @@ export class Editor extends GuiComponent {
 		const r = this.layoutRect;
 		const focused = this.isFocused();
 		const radius = this.radius ?? ctx.theme.radiusMedium;
-		const wellBg = ctx.theme.dark ? ctx.theme.surfaceMuted : ctx.theme.surface;
 
-		if (focused) {
-			drawFocusHalo(ctx, r, radius, 0.22, 3);
+		if (this.variant !== "chromeless") {
+			const wellBg = ctx.theme.dark ? ctx.theme.surfaceMuted : ctx.theme.surface;
+			if (focused) {
+				drawFocusHalo(ctx, r, radius, 0.22, 3);
+			}
+			ctx.fillRect(r.x, r.y, r.width, r.height, wellBg, radius);
+			ctx.strokeRect(
+				r.x,
+				r.y,
+				r.width,
+				r.height,
+				focused ? ctx.theme.borderFocus : ctx.theme.border,
+				1,
+				radius,
+			);
 		}
-		ctx.fillRect(r.x, r.y, r.width, r.height, wellBg, radius);
-		ctx.strokeRect(
-			r.x,
-			r.y,
-			r.width,
-			r.height,
-			focused ? ctx.theme.borderFocus : ctx.theme.border,
-			1,
-			radius,
-		);
 
 		const inner: Rect = {
 			x: r.x + this.padding.left,
@@ -937,6 +1001,9 @@ export class Editor extends GuiComponent {
 		}
 		if (kb.matches(event, "paste")) {
 			const clip = ctx.getClipboardText();
+			if (this.onPaste !== undefined && this.onPaste(clip, ctx) === true) {
+				return true;
+			}
 			if (clip.length > 0) {
 				const sel = this.getSelectionRange();
 				this.replaceRange(sel.start, sel.end, clip, true);

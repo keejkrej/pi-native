@@ -15,6 +15,8 @@
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -25,9 +27,6 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { execSync } from "child_process";
-import { tmpdir } from "os";
-import { join } from "path";
 import { Type } from "typebox";
 
 const RgParams = Type.Object({
@@ -53,32 +52,33 @@ export default function (pi: ExtensionAPI) {
 		description: `Search file contents using ripgrep. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). If truncated, full output is saved to a temp file.`,
 		parameters: RgParams,
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const { pattern, path: searchPath, glob } = params;
 
-			// Build the ripgrep command
-			const args = ["rg", "--line-number", "--color=never"];
-			if (glob) args.push("--glob", glob);
-			args.push(pattern);
-			args.push(searchPath || ".");
+			// Build ripgrep arguments
+			const rgArgs = ["--line-number", "--color=never"];
+			if (glob) rgArgs.push("--glob", glob);
+			rgArgs.push(pattern);
+			rgArgs.push(searchPath || ".");
 
-			let output: string;
-			try {
-				output = execSync(args.join(" "), {
-					cwd: ctx.cwd,
-					encoding: "utf-8",
-					maxBuffer: 100 * 1024 * 1024, // 100MB buffer to capture full output
-				});
-			} catch (err: any) {
-				// ripgrep exits with 1 when no matches found
-				if (err.status === 1) {
-					return {
-						content: [{ type: "text", text: "No matches found" }],
-						details: { pattern, path: searchPath, glob, matchCount: 0 } as RgDetails,
-					};
-				}
-				throw new Error(`ripgrep failed: ${err.message}`);
+			const result = await pi.exec("rg", rgArgs, {
+				cwd: ctx.cwd,
+				signal,
+				maxBuffer: 100 * 1024 * 1024, // 100MB buffer to capture full output
+			});
+
+			// ripgrep exits with 1 when no matches found
+			if (result.code === 1) {
+				return {
+					content: [{ type: "text", text: "No matches found" }],
+					details: { pattern, path: searchPath, glob, matchCount: 0 } as RgDetails,
+				};
 			}
+			if (result.code !== 0) {
+				const reason = result.stderr.trim() || `exit code ${result.code}`;
+				throw new Error(`ripgrep failed: ${reason}`);
+			}
+			const output = result.stdout;
 
 			if (!output.trim()) {
 				return {

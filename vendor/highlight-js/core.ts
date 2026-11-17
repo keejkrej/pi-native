@@ -580,7 +580,9 @@ function compileModeTree(
     const compiledKw = compileKeywords(kwSpec, mode.lexemes, effectiveCi);
 
     const subLang = Array.isArray(mode.subLanguage)
-      ? mode.subLanguage[0]
+      ? mode.subLanguage.length > 0
+        ? mode.subLanguage[0]
+        : undefined
       : typeof mode.subLanguage === "string"
         ? mode.subLanguage
         : undefined;
@@ -873,15 +875,6 @@ export function createHljs(): HLJSApi {
           }
         }
 
-        if (!ignoreIllegals && mode.illegalRe) {
-          const m = nextMatchAtOrAfter(mode.illegalRe, code, pos, regexCache);
-          if (m && m.index < bestIndex) {
-            bestKind = "illegal";
-            bestIndex = m.index;
-            bestMatch = m;
-          }
-        }
-
         for (const child of mode.contains) {
           if (!child.beginRe) {
             continue;
@@ -892,6 +885,15 @@ export function createHljs(): HLJSApi {
             bestIndex = m.index;
             bestMatch = m;
             bestChild = child;
+          }
+        }
+
+        if (!ignoreIllegals && mode.illegalRe) {
+          const m = nextMatchAtOrAfter(mode.illegalRe, code, pos, regexCache);
+          if (m && m.index < bestIndex) {
+            bestKind = "illegal";
+            bestIndex = m.index;
+            bestMatch = m;
           }
         }
 
@@ -1014,7 +1016,7 @@ export function createHljs(): HLJSApi {
 
           // Advance at least 1 char if mode consumed nothing to prevent loops
           let nextPos = inner.endPos;
-          if (nextPos === pos && beginLen === 0) {
+          if (nextPos <= pos) {
             html += escapeHtml(code[pos] ?? "");
             pos++;
             continue;

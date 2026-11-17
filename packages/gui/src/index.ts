@@ -66,8 +66,20 @@ export {
 	fuzzyMatch,
 	type SlashCommand,
 } from "./components/autocomplete.ts";
-export { Button, type ButtonOptions, type ButtonVariant } from "./components/button.ts";
+export {
+	Button,
+	type ButtonOptions,
+	type ButtonVariant,
+	IconButton,
+	type IconButtonOptions,
+} from "./components/button.ts";
 export { Canvas, type CanvasOptions } from "./components/canvas.ts";
+export {
+	type CodeToken,
+	type CodeTokenKind,
+	tokenColorForKind,
+	tokenizeCodeLines,
+} from "./components/code-highlight.ts";
 export {
 	SegmentedControl,
 	type SegmentedControlOptions,
@@ -77,7 +89,7 @@ export {
 	Switch,
 	type SwitchOptions,
 } from "./components/controls.ts";
-export { Editor, type EditorOptions, type EditorPosition } from "./components/editor.ts";
+export { Editor, type EditorOptions, type EditorPosition, type EditorVariant } from "./components/editor.ts";
 export { Image, type ImageFitMode, type ImageOptions } from "./components/image.ts";
 export { Input, type InputOptions } from "./components/input.ts";
 export { type KillPushOptions, KillRing } from "./components/kill-ring.ts";
@@ -118,8 +130,18 @@ export {
 	type VectorPoint,
 } from "./components/vector.ts";
 export { VirtualList, type VirtualListOptions, type VirtualRange } from "./components/virtual-list.ts";
+export {
+	SplitResizeHandle,
+	type SplitResizeHandleOptions,
+	WindowDragArea,
+	type WindowDragAreaOptions,
+} from "./components/window-chrome.ts";
 export { GuiApp, type GuiAppOptions, type OverlayAnchor, type OverlayHandle, type OverlayOptions } from "./gui.ts";
-export { HeadlessBackend, type HeadlessBackendOptions } from "./headless-backend.ts";
+export {
+	HeadlessBackend,
+	type HeadlessBackendOptions,
+	type HeadlessWindowChromeState,
+} from "./headless-backend.ts";
 export {
 	type AppKeybindingAction,
 	DEFAULT_APP_KEYBINDINGS,
@@ -143,6 +165,7 @@ export {
 	Box,
 	type BoxOptions,
 	Container,
+	type CornerRadii,
 	Divider,
 	type DividerDirection,
 	type DividerOptions,
@@ -214,9 +237,11 @@ export {
 	SGUI_CMD_DRAW_LINE,
 	SGUI_CMD_DRAW_TEXT,
 	SGUI_CMD_FILL_RECT,
+	SGUI_CMD_FILL_RECT_CORNERS,
 	SGUI_CMD_POP_CLIP,
 	SGUI_CMD_PUSH_CLIP,
 	SGUI_CMD_STROKE_RECT,
+	SGUI_CMD_STROKE_RECT_CORNERS,
 	SGUI_CURSOR_ARROW,
 	SGUI_CURSOR_IBEAM,
 	SGUI_CURSOR_POINTER,
@@ -250,9 +275,21 @@ export {
 	SGUI_POINTER_MOVE,
 	SGUI_POINTER_UP,
 	SGUI_TEXT_METRICS_SIZE,
+	SGUI_WIN_ACTION_DRAG,
+	SGUI_WIN_ACTION_MINIATURIZE,
+	SGUI_WIN_ACTION_ZOOM,
 	SGUI_WIN_RESIZABLE,
 	SGUI_WIN_TITLEBAR_HIDDEN,
 	SGUI_WIN_UNIFIED_TITLEBAR,
 	SGUI_WINDOW_METRICS_SIZE,
 } from "./protocol.ts";
-export { darkGuiTheme, type GuiTheme, lightGuiTheme } from "./theme.ts";
+export {
+	DARK_THEME,
+	darkGuiTheme,
+	type GuiTheme,
+	LIGHT_THEME,
+	lightGuiTheme,
+	resolveTheme,
+	type ThemeMode,
+	type ThemePalette,
+} from "./theme.ts";

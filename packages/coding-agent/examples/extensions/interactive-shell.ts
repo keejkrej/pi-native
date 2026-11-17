@@ -20,7 +20,6 @@
  * If the agent runs an interactive command, it will fail (which is fine).
  */
 
-import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Default interactive commands - editors, pagers, git ops, TUIs
@@ -152,7 +151,8 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		// Use ctx.ui.custom() to get TUI access, then run the command
+		// Use ctx.ui.custom() to get TUI access, then run the command via pi.exec
+		let commandOutput = "";
 		const exitCode = await ctx.ui.custom<number | null>((tui, _theme, _kb, done) => {
 			// Stop TUI to release terminal
 			tui.stop();
@@ -160,29 +160,32 @@ export default function (pi: ExtensionAPI) {
 			// Clear screen
 			process.stdout.write("\x1b[2J\x1b[H");
 
-			// Run command with full terminal access
 			const shell = process.env.SHELL || "/bin/sh";
-			const result = spawnSync(shell, ["-c", command], {
-				stdio: "inherit",
-				env: process.env,
-			});
+			void pi
+				.exec(shell, ["-c", command], { cwd: ctx.cwd })
+				.then((result) => {
+					commandOutput = [result.stdout, result.stderr].filter(Boolean).join("\n").trimEnd();
+					tui.start();
+					tui.requestRender(true);
+					done(result.code);
+				})
+				.catch((err: unknown) => {
+					commandOutput = err instanceof Error ? err.message : String(err);
+					tui.start();
+					tui.requestRender(true);
+					done(1);
+				});
 
-			// Restart TUI
-			tui.start();
-			tui.requestRender(true);
-
-			// Signal completion
-			done(result.status);
-
-			// Return empty component (immediately disposed since done() was called)
+			// Return empty component until pi.exec completes and calls done()
 			return { render: () => [], invalidate: () => {} };
 		});
 
 		// Return result to prevent default bash handling
-		const output =
+		const statusSummary =
 			exitCode === 0
 				? "(interactive command completed successfully)"
 				: `(interactive command exited with code ${exitCode})`;
+		const output = commandOutput ? `${commandOutput}\n${statusSummary}` : statusSummary;
 
 		return {
 			result: {

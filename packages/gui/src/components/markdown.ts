@@ -7,17 +7,24 @@ import { type Color, withAlpha } from "../colors.ts";
 import {
 	type Edges,
 	GuiComponent,
+	type GuiPointerEvent,
+	type GuiPointerResult,
 	type GuiRenderContext,
 	normalizeEdges,
 	type PaddingInput,
+	pointInRect,
+	type Rect,
 	type Size,
 } from "../component.ts";
 import {
 	type GuiA11yNode,
 	SGUI_A11Y_STATE_ENABLED,
+	SGUI_CURSOR_POINTER,
 	SGUI_FONT_MONO,
 	SGUI_FONT_REGULAR,
 } from "../protocol.ts";
+import { type CodeToken, type CodeTokenKind, tokenColorForKind, tokenizeCodeLines } from "./code-highlight.ts";
+import { drawVectorIcon } from "./vector.ts";
 
 export interface InlineSpan {
 	readonly kind: "text" | "bold" | "italic" | "code" | "strike" | "link";
@@ -289,6 +296,18 @@ export interface MarkdownOptions {
 	readonly fontSize?: number;
 	readonly paragraphGap?: number;
 	readonly textColor?: Color;
+	/** Optional case-insensitive substring query highlighted across prose and code blocks. */
+	readonly searchQuery?: string;
+	/** Zero-based document-order index of the active search match (`activeSearchMatchBg`). */
+	readonly activeSearchMatch?: number;
+	/** Whether to draw the Waku header strip (language + Copy button) on fenced code blocks. Default: true. */
+	readonly showCodeHeader?: boolean;
+	/** Whether to apply syntax token coloring inside fenced code blocks. Default: true. */
+	readonly syntaxHighlight?: boolean;
+	/** Callback invoked when the user clicks the Copy button in a code block header. */
+	readonly onCopyCode?: (code: string, language: string) => void;
+	/** Optional custom syntax highlighter override returning tokens per source line. */
+	readonly codeHighlighter?: (code: string, language: string) => readonly (readonly CodeToken[])[];
 }
 
 function spanTextStyle(kind: InlineSpan["kind"], baseFontSize: number, boldWeight = 400): TextStyle {
@@ -383,12 +402,210 @@ function layoutInlineSpans(
 	return lines;
 }
 
+interface CodeBlockLayoutSegment {
+	readonly kind: CodeTokenKind;
+	readonly text: string;
+	readonly xOffset: number;
+	readonly width: number;
+}
+
+interface WrappedCodeBlockLine {
+	readonly segments: readonly CodeBlockLayoutSegment[];
+	readonly lineText: string;
+	readonly lineHeight: number;
+}
+
 interface LayoutBlockCacheEntry {
 	readonly block: MarkdownBlock;
 	readonly y: number;
 	readonly height: number;
 	readonly lines?: readonly WrappedSpanLine[];
+	readonly codeLines?: readonly WrappedCodeBlockLine[];
+	readonly hasHeader?: boolean;
 	readonly codeTextHeight?: number;
+}
+
+interface SearchMatchRange {
+	readonly start: number;
+	readonly end: number;
+}
+
+interface SearchMatchCounter {
+	index: number;
+}
+
+interface HighlightSegmentLike {
+	readonly text: string;
+	readonly xOffset: number;
+	readonly style: TextStyle;
+	readonly textPadLeft?: number;
+}
+
+const CODE_HEADER_HEIGHT = 28;
+const COPY_FEEDBACK_MS = 1600;
+
+function findSearchMatchRanges(text: string, queryLower: string): SearchMatchRange[] {
+	if (queryLower.length === 0 || text.length === 0) return [];
+	const lower = text.toLowerCase();
+	const out: SearchMatchRange[] = [];
+	let from = 0;
+	while (from <= lower.length - queryLower.length) {
+		const idx = lower.indexOf(queryLower, from);
+		if (idx < 0) break;
+		out.push({ start: idx, end: idx + queryLower.length });
+		from = idx + queryLower.length;
+	}
+	return out;
+}
+
+function renderLineSearchHighlights(
+	ctx: GuiRenderContext,
+	lineText: string,
+	segments: readonly HighlightSegmentLike[],
+	startX: number,
+	lineY: number,
+	lineHeight: number,
+	queryLower: string,
+	activeMatchIndex: number,
+	counter: SearchMatchCounter,
+): void {
+	if (queryLower.length === 0) return;
+	const ranges = findSearchMatchRanges(lineText, queryLower);
+	if (ranges.length === 0) return;
+
+	for (let r = 0; r < ranges.length; r++) {
+		const range = ranges[r];
+		if (range === undefined) continue;
+		const isActive = counter.index === activeMatchIndex;
+		counter.index += 1;
+		const bgColor = isActive ? ctx.theme.activeSearchMatchBg : ctx.theme.searchMatchBg;
+
+		let segCharStart = 0;
+		for (let s = 0; s < segments.length; s++) {
+			const seg = segments[s];
+			if (seg === undefined) continue;
+			const segCharEnd = segCharStart + seg.text.length;
+			const ovStart = Math.max(range.start, segCharStart);
+			const ovEnd = Math.min(range.end, segCharEnd);
+			if (ovEnd > ovStart) {
+				const localStart = ovStart - segCharStart;
+				const localEnd = ovEnd - segCharStart;
+				const baseX = startX + seg.xOffset + (seg.textPadLeft ?? 0);
+				const x0 = baseX + ctx.getTextCaretX(seg.style, seg.text, localStart);
+				const x1 = baseX + ctx.getTextCaretX(seg.style, seg.text, localEnd);
+				ctx.fillRect(x0, lineY + 1, Math.max(2, x1 - x0), Math.max(2, lineHeight - 2), bgColor, 3);
+			}
+			segCharStart = segCharEnd;
+		}
+	}
+}
+
+function fitCodePrefixLength(
+	ctx: GuiRenderContext,
+	codeStyle: TextStyle,
+	text: string,
+	availWidth: number,
+	allowEmpty: boolean,
+): number {
+	if (text.length === 0) return 0;
+	if (ctx.measureText(codeStyle, 0, text).width <= availWidth) {
+		return text.length;
+	}
+	let low = allowEmpty ? 0 : 1;
+	let high = text.length;
+	let best = low;
+	while (low <= high) {
+		const mid = Math.floor((low + high) * 0.5);
+		if (mid === 0) {
+			low = 1;
+			continue;
+		}
+		const w = ctx.measureText(codeStyle, 0, text.slice(0, mid)).width;
+		if (w <= availWidth) {
+			best = mid;
+			low = mid + 1;
+		} else {
+			high = mid - 1;
+		}
+	}
+	return best;
+}
+
+function rawLinesAsPlainTokens(code: string): readonly (readonly CodeToken[])[] {
+	const lines = code.split("\n");
+	const out: CodeToken[][] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i] ?? "";
+		out.push(line.length > 0 ? [{ kind: "plain", text: line }] : []);
+	}
+	return out;
+}
+
+function layoutCodeBlockLines(
+	ctx: GuiRenderContext,
+	code: string,
+	language: string,
+	maxWidth: number,
+	codeStyle: TextStyle,
+	syntaxHighlight: boolean,
+	customHighlighter: ((code: string, language: string) => readonly (readonly CodeToken[])[]) | undefined,
+): { readonly lines: readonly WrappedCodeBlockLine[]; readonly totalHeight: number } {
+	const budget = Math.max(40, maxWidth);
+	const lineHeight = ctx.measureText(codeStyle, 0, "Mg").lineHeight;
+	const tokenLines =
+		customHighlighter !== undefined
+			? customHighlighter(code, language)
+			: syntaxHighlight
+				? tokenizeCodeLines(code, language)
+				: rawLinesAsPlainTokens(code);
+
+	const wrapped: WrappedCodeBlockLine[] = [];
+	for (let li = 0; li < tokenLines.length; li++) {
+		const sourceTokens = tokenLines[li] ?? [];
+		let segs: CodeBlockLayoutSegment[] = [];
+		let lineText = "";
+		let cursorX = 0;
+
+		const flushVisualLine = (): void => {
+			wrapped.push({ segments: segs, lineText, lineHeight });
+			segs = [];
+			lineText = "";
+			cursorX = 0;
+		};
+
+		for (let ti = 0; ti < sourceTokens.length; ti++) {
+			const tok = sourceTokens[ti];
+			if (tok === undefined || tok.text.length === 0) continue;
+			let remaining = tok.text;
+			while (remaining.length > 0) {
+				const avail = Math.max(0, budget - cursorX);
+				const take = fitCodePrefixLength(ctx, codeStyle, remaining, avail, cursorX > 0);
+				if (take === 0) {
+					flushVisualLine();
+					continue;
+				}
+				const chunk = remaining.slice(0, take);
+				const chunkW = ctx.measureText(codeStyle, 0, chunk).width;
+				segs.push({
+					kind: tok.kind,
+					text: chunk,
+					xOffset: cursorX,
+					width: chunkW,
+				});
+				lineText += chunk;
+				cursorX += chunkW;
+				remaining = remaining.slice(take);
+				if (remaining.length > 0) {
+					flushVisualLine();
+				}
+			}
+		}
+
+		flushVisualLine();
+	}
+
+	const totalHeight = Math.max(lineHeight, wrapped.length * lineHeight);
+	return { lines: wrapped, totalHeight };
 }
 
 export class Markdown extends GuiComponent {
@@ -398,10 +615,23 @@ export class Markdown extends GuiComponent {
 	private fontSize: number | undefined;
 	private paragraphGap: number;
 	private textColor: Color | undefined;
+	private searchQuery: string;
+	private activeSearchMatch: number;
+	private showCodeHeader: boolean;
+	private syntaxHighlight: boolean;
+	private onCopyCode: ((code: string, language: string) => void) | undefined;
+	private codeHighlighter: ((code: string, language: string) => readonly (readonly CodeToken[])[]) | undefined;
 	private cachedWidth: number;
 	private cachedFontSize: number;
+	private cachedCodeFontSize: number;
+	private cachedShowCodeHeader: boolean;
+	private cachedSyntaxHighlight: boolean;
 	private cachedLayout: LayoutBlockCacheEntry[];
 	private cachedTotalHeight: number;
+	private hoveredCopyIndex = -1;
+	private pressedCopyIndex = -1;
+	private copiedBlockIndex = -1;
+	private copiedUntilMs = 0;
 
 	constructor(textOrOptions: string | MarkdownOptions = "") {
 		super();
@@ -412,8 +642,17 @@ export class Markdown extends GuiComponent {
 		this.fontSize = opts.fontSize;
 		this.paragraphGap = opts.paragraphGap ?? 10;
 		this.textColor = opts.textColor;
+		this.searchQuery = opts.searchQuery ?? "";
+		this.activeSearchMatch = opts.activeSearchMatch ?? 0;
+		this.showCodeHeader = opts.showCodeHeader ?? true;
+		this.syntaxHighlight = opts.syntaxHighlight ?? true;
+		this.onCopyCode = opts.onCopyCode;
+		this.codeHighlighter = opts.codeHighlighter;
 		this.cachedWidth = -1;
 		this.cachedFontSize = -1;
+		this.cachedCodeFontSize = -1;
+		this.cachedShowCodeHeader = this.showCodeHeader;
+		this.cachedSyntaxHighlight = this.syntaxHighlight;
 		this.cachedLayout = [];
 		this.cachedTotalHeight = 0;
 	}
@@ -427,6 +666,8 @@ export class Markdown extends GuiComponent {
 		this.textValue = text;
 		this.blocks = parseMarkdownBlocks(text);
 		this.cachedWidth = -1;
+		this.copiedBlockIndex = -1;
+		this.copiedUntilMs = 0;
 		this.invalidate();
 	}
 
@@ -434,13 +675,63 @@ export class Markdown extends GuiComponent {
 		this.setText(text);
 	}
 
+	getSearchQuery(): string {
+		return this.searchQuery;
+	}
+
+	setSearchQuery(query: string, activeMatchIndex?: number): void {
+		const nextActive = activeMatchIndex ?? this.activeSearchMatch;
+		if (this.searchQuery === query && this.activeSearchMatch === nextActive) return;
+		this.searchQuery = query;
+		this.activeSearchMatch = nextActive;
+		this.invalidate();
+	}
+
+	getActiveSearchMatch(): number {
+		return this.activeSearchMatch;
+	}
+
+	setActiveSearchMatch(index: number): void {
+		if (this.activeSearchMatch === index) return;
+		this.activeSearchMatch = index;
+		this.invalidate();
+	}
+
+	setOnCopyCode(callback: ((code: string, language: string) => void) | undefined): void {
+		this.onCopyCode = callback;
+	}
+
+	setShowCodeHeader(show: boolean): void {
+		if (this.showCodeHeader === show) return;
+		this.showCodeHeader = show;
+		this.cachedWidth = -1;
+		this.invalidate();
+	}
+
+	setSyntaxHighlight(enabled: boolean): void {
+		if (this.syntaxHighlight === enabled) return;
+		this.syntaxHighlight = enabled;
+		this.cachedWidth = -1;
+		this.invalidate();
+	}
+
 	private computeLayoutCache(ctx: GuiRenderContext, innerWidth: number): void {
 		const baseSize = this.fontSize ?? ctx.theme.fontSizeBody;
-		if (Math.abs(this.cachedWidth - innerWidth) <= 0.5 && this.cachedFontSize === baseSize) {
+		const codeSize = ctx.theme.fontSizeCode;
+		if (
+			Math.abs(this.cachedWidth - innerWidth) <= 0.5 &&
+			this.cachedFontSize === baseSize &&
+			this.cachedCodeFontSize === codeSize &&
+			this.cachedShowCodeHeader === this.showCodeHeader &&
+			this.cachedSyntaxHighlight === this.syntaxHighlight
+		) {
 			return;
 		}
 		this.cachedWidth = innerWidth;
 		this.cachedFontSize = baseSize;
+		this.cachedCodeFontSize = codeSize;
+		this.cachedShowCodeHeader = this.showCodeHeader;
+		this.cachedSyntaxHighlight = this.syntaxHighlight;
 		const entries: LayoutBlockCacheEntry[] = [];
 		let y = 0;
 
@@ -496,14 +787,30 @@ export class Markdown extends GuiComponent {
 				case "code": {
 					const codeStyle: TextStyle = {
 						fontFamily: SGUI_FONT_MONO,
-						fontSize: ctx.theme.fontSizeCode,
+						fontSize: codeSize,
 						fontWeight: 400,
 					};
-					const headerH = block.language.length > 0 ? 24 : 0;
+					const hasHeader = this.showCodeHeader;
+					const headerH = hasHeader ? CODE_HEADER_HEIGHT : 0;
 					const codeMaxW = Math.max(40, innerWidth - 24);
-					const codeMetrics = ctx.measureText(codeStyle, codeMaxW, block.code.length > 0 ? block.code : " ");
-					const totalH = headerH + codeMetrics.height + 20;
-					entries.push({ block, y, height: totalH, codeTextHeight: codeMetrics.height });
+					const laid = layoutCodeBlockLines(
+						ctx,
+						block.code,
+						block.language,
+						codeMaxW,
+						codeStyle,
+						this.syntaxHighlight,
+						this.codeHighlighter,
+					);
+					const totalH = headerH + laid.totalHeight + 20;
+					entries.push({
+						block,
+						y,
+						height: totalH,
+						codeLines: laid.lines,
+						hasHeader,
+						codeTextHeight: laid.totalHeight,
+					});
 					y += totalH + gapAfter;
 					break;
 				}
@@ -512,6 +819,40 @@ export class Markdown extends GuiComponent {
 
 		this.cachedLayout = entries;
 		this.cachedTotalHeight = y;
+	}
+
+	private copyButtonRectForEntry(
+		entry: LayoutBlockCacheEntry,
+		originX: number,
+		originY: number,
+		innerW: number,
+	): Rect | undefined {
+		if (entry.block.kind !== "code" || !entry.hasHeader) {
+			return undefined;
+		}
+		return {
+			x: originX + innerW - 30,
+			y: originY + entry.y + 3,
+			width: 24,
+			height: 22,
+		};
+	}
+
+	private hitTestCopyButton(x: number, y: number): number {
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return -1;
+		const innerW = Math.max(40, r.width - this.padding.left - this.padding.right);
+		const originX = r.x + this.padding.left;
+		const originY = r.y + this.padding.top;
+		for (let i = 0; i < this.cachedLayout.length; i++) {
+			const entry = this.cachedLayout[i];
+			if (entry === undefined) continue;
+			const rect = this.copyButtonRectForEntry(entry, originX, originY, innerW);
+			if (rect !== undefined && pointInRect(x, y, rect)) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
@@ -529,23 +870,58 @@ export class Markdown extends GuiComponent {
 		startX: number,
 		startY: number,
 		defaultColor: Color,
+		queryLower: string,
+		matchCounter: SearchMatchCounter,
 	): void {
 		let y = startY;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (line === undefined) continue;
+			let lineText = "";
+			const hlSegments: HighlightSegmentLike[] = [];
+			for (let j = 0; j < line.segments.length; j++) {
+				const seg = line.segments[j];
+				if (seg === undefined) continue;
+				const sx = startX + seg.xOffset;
+				if (seg.kind === "code") {
+					ctx.fillRect(sx, y + 1, seg.width, line.lineHeight - 2, ctx.theme.codeWash, 4);
+				}
+				lineText += seg.text;
+				hlSegments.push({
+					text: seg.text,
+					xOffset: seg.xOffset,
+					style: seg.style,
+					textPadLeft: seg.kind === "code" ? 3 : 0,
+				});
+			}
+
+			renderLineSearchHighlights(
+				ctx,
+				lineText,
+				hlSegments,
+				startX,
+				y,
+				line.lineHeight,
+				queryLower,
+				this.activeSearchMatch,
+				matchCounter,
+			);
+
 			for (let j = 0; j < line.segments.length; j++) {
 				const seg = line.segments[j];
 				if (seg === undefined) continue;
 				const sx = startX + seg.xOffset;
 				let color = defaultColor;
 				if (seg.kind === "code") {
-					ctx.fillRect(sx, y + 1, seg.width, line.lineHeight - 2, ctx.theme.codeBackground, 4);
 					ctx.drawStyledText(sx + 3, y, 0, ctx.theme.codeText, seg.style, seg.text);
 					continue;
 				}
 				if (seg.kind === "link") {
 					color = ctx.theme.link;
+				} else if (seg.kind === "bold") {
+					color = this.textColor ?? ctx.theme.textBright;
+				} else if (seg.kind === "italic") {
+					color = this.textColor ?? (defaultColor === ctx.theme.text ? ctx.theme.textSecondary : defaultColor);
 				}
 				ctx.drawStyledText(sx, y, 0, color, seg.style, seg.text);
 			}
@@ -562,6 +938,9 @@ export class Markdown extends GuiComponent {
 		const originX = r.x + this.padding.left;
 		const originY = r.y + this.padding.top;
 		const defaultColor = this.textColor ?? ctx.theme.text;
+		const headingDefaultColor = this.textColor ?? ctx.theme.textBright;
+		const queryLower = this.searchQuery.trim().toLowerCase();
+		const matchCounter: SearchMatchCounter = { index: 0 };
 
 		for (let i = 0; i < this.cachedLayout.length; i++) {
 			const entry = this.cachedLayout[i];
@@ -575,10 +954,23 @@ export class Markdown extends GuiComponent {
 					ctx.drawLine(originX, lineY, originX + innerW, lineY, ctx.theme.border, 1);
 					break;
 				}
-				case "heading":
+				case "heading": {
+					if (entry.lines !== undefined) {
+						this.renderInlineLines(
+							ctx,
+							entry.lines,
+							originX,
+							by,
+							headingDefaultColor,
+							queryLower,
+							matchCounter,
+						);
+					}
+					break;
+				}
 				case "paragraph": {
 					if (entry.lines !== undefined) {
-						this.renderInlineLines(ctx, entry.lines, originX, by, defaultColor);
+						this.renderInlineLines(ctx, entry.lines, originX, by, defaultColor, queryLower, matchCounter);
 					}
 					break;
 				}
@@ -593,7 +985,15 @@ export class Markdown extends GuiComponent {
 					);
 					ctx.fillRect(originX, by, 4, entry.height, ctx.theme.quoteBorder, 2);
 					if (entry.lines !== undefined) {
-						this.renderInlineLines(ctx, entry.lines, originX + 14, by + 4, ctx.theme.textMuted);
+						this.renderInlineLines(
+							ctx,
+							entry.lines,
+							originX + 14,
+							by + 4,
+							ctx.theme.textSecondary,
+							queryLower,
+							matchCounter,
+						);
 					}
 					break;
 				}
@@ -603,43 +1003,153 @@ export class Markdown extends GuiComponent {
 					const markerText = block.ordered ? block.marker : "\u2022";
 					ctx.drawStyledText(originX + 4, by, 0, ctx.theme.accent, markerStyle, markerText);
 					if (entry.lines !== undefined) {
-						this.renderInlineLines(ctx, entry.lines, originX + 22, by, defaultColor);
+						this.renderInlineLines(ctx, entry.lines, originX + 22, by, defaultColor, queryLower, matchCounter);
 					}
 					break;
 				}
 				case "code": {
-					ctx.fillRect(originX, by, innerW, entry.height, ctx.theme.codeBackground, ctx.theme.radiusMedium);
+					ctx.fillRect(originX, by, innerW, entry.height, ctx.theme.codeBlockBg, ctx.theme.radiusMedium);
 					ctx.strokeRect(originX, by, innerW, entry.height, ctx.theme.border, 1, ctx.theme.radiusMedium);
+
 					let codeTop = by + 10;
-					if (block.language.length > 0) {
+					if (entry.hasHeader) {
 						const langStyle: TextStyle = {
 							fontFamily: SGUI_FONT_MONO,
 							fontSize: ctx.theme.fontSizeSmall,
 							fontWeight: 600,
 						};
-						ctx.drawStyledText(originX + 12, by + 6, innerW - 24, ctx.theme.textMuted, langStyle, block.language);
-						ctx.drawLine(originX, by + 24, originX + innerW, by + 24, ctx.theme.border, 1);
-						codeTop = by + 32;
+						const langLabel = block.language.length > 0 ? block.language.toLowerCase() : "code";
+						ctx.drawStyledText(
+							originX + 12,
+							by + 7,
+							Math.max(40, innerW - 56),
+							ctx.theme.textMuted,
+							langStyle,
+							langLabel,
+						);
+						ctx.drawLine(originX, by + CODE_HEADER_HEIGHT, originX + innerW, by + CODE_HEADER_HEIGHT, ctx.theme.border, 1);
+
+						const btnRect = this.copyButtonRectForEntry(entry, originX, originY, innerW);
+						if (btnRect !== undefined) {
+							const isCopied = this.copiedBlockIndex === i && ctx.nowMs < this.copiedUntilMs;
+							const isBtnHovered = this.isHovered() && this.hoveredCopyIndex === i;
+							if (isBtnHovered || isCopied) {
+								ctx.fillRect(btnRect.x, btnRect.y, btnRect.width, btnRect.height, ctx.theme.hover, 4);
+							}
+							const iconColor = isCopied
+								? ctx.theme.accent
+								: isBtnHovered
+									? ctx.theme.textBright
+									: ctx.theme.textSecondary;
+							drawVectorIcon(ctx, isCopied ? "check" : "copy", btnRect.x + 5, btnRect.y + 4, 14, iconColor);
+						}
+						codeTop = by + CODE_HEADER_HEIGHT + 10;
 					}
+
 					const codeStyle: TextStyle = {
 						fontFamily: SGUI_FONT_MONO,
 						fontSize: ctx.theme.fontSizeCode,
 						fontWeight: 400,
 					};
-					if (block.code.length > 0) {
-						ctx.drawStyledText(
-							originX + 12,
-							codeTop,
-							Math.max(40, innerW - 24),
-							ctx.theme.codeText,
-							codeStyle,
-							block.code,
-						);
+					const codeLines = entry.codeLines ?? [];
+					let lineY = codeTop;
+					for (let li = 0; li < codeLines.length; li++) {
+						const cl = codeLines[li];
+						if (cl === undefined) continue;
+						if (queryLower.length > 0 && cl.lineText.length > 0) {
+							const hlSegs: HighlightSegmentLike[] = [];
+							for (let si = 0; si < cl.segments.length; si++) {
+								const seg = cl.segments[si];
+								if (seg === undefined) continue;
+								hlSegs.push({
+									text: seg.text,
+									xOffset: seg.xOffset,
+									style: codeStyle,
+								});
+							}
+							renderLineSearchHighlights(
+								ctx,
+								cl.lineText,
+								hlSegs,
+								originX + 12,
+								lineY,
+								cl.lineHeight,
+								queryLower,
+								this.activeSearchMatch,
+								matchCounter,
+							);
+						}
+						for (let si = 0; si < cl.segments.length; si++) {
+							const seg = cl.segments[si];
+							if (seg === undefined || seg.text.length === 0) continue;
+							const tokColor = tokenColorForKind(seg.kind, ctx.theme);
+							ctx.drawStyledText(originX + 12 + seg.xOffset, lineY, 0, tokColor, codeStyle, seg.text);
+						}
+						lineY += cl.lineHeight;
 					}
 					break;
 				}
 			}
 		}
+	}
+
+	override hitTest(x: number, y: number): GuiComponent | undefined {
+		if (!this.visible || !pointInRect(x, y, this.layoutRect)) {
+			return undefined;
+		}
+		return this.hitTestCopyButton(x, y) >= 0 ? this : undefined;
+	}
+
+	override handlePointer(event: GuiPointerEvent, ctx: GuiRenderContext): GuiPointerResult {
+		if (!this.visible) {
+			return { handled: false };
+		}
+		const idx = this.hitTestCopyButton(event.x, event.y);
+		if (event.phase === "move") {
+			if (this.hoveredCopyIndex !== idx) {
+				this.hoveredCopyIndex = idx;
+				this.invalidate();
+			}
+			return idx >= 0 ? { handled: false, cursor: SGUI_CURSOR_POINTER } : { handled: false };
+		}
+		if (event.phase === "down" && event.button === "left") {
+			if (idx >= 0) {
+				this.pressedCopyIndex = idx;
+				this.hoveredCopyIndex = idx;
+				this.invalidate();
+				return { handled: true, capture: this, cursor: SGUI_CURSOR_POINTER };
+			}
+			return { handled: false };
+		}
+		if (event.phase === "drag" && this.pressedCopyIndex >= 0) {
+			const nextHover = idx === this.pressedCopyIndex ? idx : -1;
+			if (this.hoveredCopyIndex !== nextHover) {
+				this.hoveredCopyIndex = nextHover;
+				this.invalidate();
+			}
+			return { handled: true, capture: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left" && this.pressedCopyIndex >= 0) {
+			const targetIdx = this.pressedCopyIndex;
+			this.pressedCopyIndex = -1;
+			this.hoveredCopyIndex = idx;
+			if (idx === targetIdx) {
+				const entry = this.cachedLayout[targetIdx];
+				if (entry !== undefined && entry.block.kind === "code") {
+					ctx.setClipboardText(entry.block.code);
+					this.onCopyCode?.(entry.block.code, entry.block.language);
+					this.copiedBlockIndex = targetIdx;
+					this.copiedUntilMs = ctx.nowMs + COPY_FEEDBACK_MS;
+				}
+			}
+			this.invalidate();
+			return {
+				handled: true,
+				releaseCapture: true,
+				cursor: idx >= 0 ? SGUI_CURSOR_POINTER : undefined,
+			};
+		}
+		return { handled: false };
 	}
 
 	override collectAccessibilityNodes(out: GuiA11yNode[], _ctx: GuiRenderContext): void {

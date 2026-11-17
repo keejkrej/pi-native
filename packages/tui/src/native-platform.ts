@@ -1,3 +1,12 @@
+import {
+	isNativeDarwinAvailable,
+	nativeClipboardGetFilePaths,
+	nativeClipboardGetImagePng,
+	nativeClipboardGetText,
+	nativeClipboardSetText,
+	nativeIsModifierPressed,
+} from "../../pi-native-ffi/src/index.ts";
+
 export type ModifierKey = "shift" | "command" | "control" | "option";
 
 export interface NativeClipboard {
@@ -11,16 +20,42 @@ export interface NativeClipboard {
 	setText?(text: string): Promise<void>;
 }
 
-type NativePlatformHelper = NativeClipboard & {
+export type NativePlatformHelper = NativeClipboard & {
 	enableVirtualTerminalInput?: () => boolean;
 	isModifierPressed?: (name: ModifierKey) => boolean;
 };
 
+const darwinPlatformHelper: NativePlatformHelper = {
+	async getText(): Promise<string | null | undefined> {
+		return nativeClipboardGetText();
+	},
+	async getImage(): Promise<Uint8Array | null | undefined> {
+		return nativeClipboardGetImagePng();
+	},
+	async getFilePaths(): Promise<string[] | null | undefined> {
+		return nativeClipboardGetFilePaths();
+	},
+	async setText(text: string): Promise<void> {
+		if (!nativeClipboardSetText(text)) {
+			throw new Error("Failed to set clipboard text");
+		}
+	},
+	isModifierPressed(name: ModifierKey): boolean {
+		return nativeIsModifierPressed(name);
+	},
+};
+
 export function getNativePlatformHelper(): NativePlatformHelper | undefined {
-	return undefined;
+	if (!isNativeDarwinAvailable()) {
+		return undefined;
+	}
+	return darwinPlatformHelper;
 }
 
 /** Load a clipboard helper without opening the display until a read is requested. */
-export function getNativeClipboard(): NativeClipboard | undefined {
-	return undefined;
+export function getNativeClipboard(): NativePlatformHelper | undefined {
+	if (!isNativeDarwinAvailable()) {
+		return undefined;
+	}
+	return darwinPlatformHelper;
 }

@@ -9,6 +9,10 @@ export const SGUI_WIN_TITLEBAR_HIDDEN = 1;
 export const SGUI_WIN_RESIZABLE = 2;
 export const SGUI_WIN_UNIFIED_TITLEBAR = 4;
 
+export const SGUI_WIN_ACTION_DRAG = 1;
+export const SGUI_WIN_ACTION_ZOOM = 2;
+export const SGUI_WIN_ACTION_MINIATURIZE = 3;
+
 export const SGUI_FONT_REGULAR: FontFamilyId = 0;
 export const SGUI_FONT_MONO: FontFamilyId = 1;
 
@@ -35,6 +39,8 @@ export const SGUI_CMD_POP_CLIP = 5;
 export const SGUI_CMD_DRAW_TEXT = 6;
 export const SGUI_CMD_DRAW_LINE = 7;
 export const SGUI_CMD_DRAW_IMAGE_RGBA = 8;
+export const SGUI_CMD_FILL_RECT_CORNERS = 9;
+export const SGUI_CMD_STROKE_RECT_CORNERS = 10;
 
 export const SGUI_WINDOW_METRICS_SIZE = 48;
 export const SGUI_TEXT_METRICS_SIZE = 36;
@@ -248,6 +254,31 @@ export type DrawCommand =
 			readonly pxW: number;
 			readonly pxH: number;
 			readonly pixels: Uint8Array;
+	  }
+	| {
+			readonly kind: "fillRectCorners";
+			readonly x: number;
+			readonly y: number;
+			readonly w: number;
+			readonly h: number;
+			readonly tl: number;
+			readonly tr: number;
+			readonly br: number;
+			readonly bl: number;
+			readonly rgba: number;
+	  }
+	| {
+			readonly kind: "strokeRectCorners";
+			readonly x: number;
+			readonly y: number;
+			readonly w: number;
+			readonly h: number;
+			readonly tl: number;
+			readonly tr: number;
+			readonly br: number;
+			readonly bl: number;
+			readonly strokeWidth: number;
+			readonly rgba: number;
 	  };
 
 export type GuiNativeEvent =
@@ -449,6 +480,60 @@ export class DrawCommandWriter {
 		this.writer.writeU32At(o + 60, 0);
 	}
 
+	fillRectCorners(
+		x: number,
+		y: number,
+		w: number,
+		h: number,
+		tl: number,
+		tr: number,
+		br: number,
+		bl: number,
+		rgba: number,
+	): void {
+		const o = this.writer.ensure(80);
+		this.writer.writeU32At(o, SGUI_CMD_FILL_RECT_CORNERS);
+		this.writer.writeU32At(o + 4, 80);
+		this.writer.writeF64At(o + 8, x);
+		this.writer.writeF64At(o + 16, y);
+		this.writer.writeF64At(o + 24, w);
+		this.writer.writeF64At(o + 32, h);
+		this.writer.writeF64At(o + 40, tl);
+		this.writer.writeF64At(o + 48, tr);
+		this.writer.writeF64At(o + 56, br);
+		this.writer.writeF64At(o + 64, bl);
+		this.writer.writeU32At(o + 72, rgba);
+		this.writer.writeU32At(o + 76, 0);
+	}
+
+	strokeRectCorners(
+		x: number,
+		y: number,
+		w: number,
+		h: number,
+		tl: number,
+		tr: number,
+		br: number,
+		bl: number,
+		strokeWidth: number,
+		rgba: number,
+	): void {
+		const o = this.writer.ensure(88);
+		this.writer.writeU32At(o, SGUI_CMD_STROKE_RECT_CORNERS);
+		this.writer.writeU32At(o + 4, 88);
+		this.writer.writeF64At(o + 8, x);
+		this.writer.writeF64At(o + 16, y);
+		this.writer.writeF64At(o + 24, w);
+		this.writer.writeF64At(o + 32, h);
+		this.writer.writeF64At(o + 40, tl);
+		this.writer.writeF64At(o + 48, tr);
+		this.writer.writeF64At(o + 56, br);
+		this.writer.writeF64At(o + 64, bl);
+		this.writer.writeF64At(o + 72, strokeWidth);
+		this.writer.writeU32At(o + 80, rgba);
+		this.writer.writeU32At(o + 84, 0);
+	}
+
 	pushClip(x: number, y: number, w: number, h: number): void {
 		const o = this.writer.ensure(40);
 		this.writer.writeU32At(o, SGUI_CMD_PUSH_CLIP);
@@ -591,6 +676,35 @@ export function decodeDrawCommands(bytes: Uint8Array): DrawCommand[] {
 					radius: view.getFloat64(offset + 40, true),
 					strokeWidth: view.getFloat64(offset + 48, true),
 					rgba: view.getUint32(offset + 56, true),
+				});
+				break;
+			case SGUI_CMD_FILL_RECT_CORNERS:
+				out.push({
+					kind: "fillRectCorners",
+					x: view.getFloat64(offset + 8, true),
+					y: view.getFloat64(offset + 16, true),
+					w: view.getFloat64(offset + 24, true),
+					h: view.getFloat64(offset + 32, true),
+					tl: view.getFloat64(offset + 40, true),
+					tr: view.getFloat64(offset + 48, true),
+					br: view.getFloat64(offset + 56, true),
+					bl: view.getFloat64(offset + 64, true),
+					rgba: view.getUint32(offset + 72, true),
+				});
+				break;
+			case SGUI_CMD_STROKE_RECT_CORNERS:
+				out.push({
+					kind: "strokeRectCorners",
+					x: view.getFloat64(offset + 8, true),
+					y: view.getFloat64(offset + 16, true),
+					w: view.getFloat64(offset + 24, true),
+					h: view.getFloat64(offset + 32, true),
+					tl: view.getFloat64(offset + 40, true),
+					tr: view.getFloat64(offset + 48, true),
+					br: view.getFloat64(offset + 56, true),
+					bl: view.getFloat64(offset + 64, true),
+					strokeWidth: view.getFloat64(offset + 72, true),
+					rgba: view.getUint32(offset + 80, true),
 				});
 				break;
 			case SGUI_CMD_PUSH_CLIP:

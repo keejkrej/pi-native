@@ -8,7 +8,7 @@ import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../co
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 
-export type Mode = "text" | "json" | "rpc";
+export type Mode = "text" | "json" | "rpc" | "gui";
 
 export interface Args {
 	provider?: string;
@@ -22,6 +22,7 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	gui?: boolean;
 	name?: string;
 	noSession?: boolean;
 	session?: string;
@@ -93,17 +94,19 @@ export function parseArgs(args: string[]): Args {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
+		} else if (arg === "--gui") {
+			result.gui = true;
 		} else if (arg === "--mode") {
 			const mode = args[i + 1];
 			if (mode === undefined || mode.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--mode requires text, json, or rpc" });
+				result.diagnostics.push({ type: "error", message: "--mode requires text, json, rpc, or gui" });
 				continue;
 			}
 			i++;
-			if (mode !== "text" && mode !== "json" && mode !== "rpc") {
+			if (mode !== "text" && mode !== "json" && mode !== "rpc" && mode !== "gui") {
 				result.diagnostics.push({
 					type: "error",
-					message: `Invalid mode "${mode}". Valid values: text, json, rpc`,
+					message: `Invalid mode "${mode}". Valid values: text, json, rpc, gui`,
 				});
 				continue;
 			}
@@ -303,7 +306,8 @@ ${chalk.bold("Options:")}
   --api-key <key>                API key (defaults to env vars)
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
-  --mode <mode>                  Output mode: text (default), json, or rpc
+  --mode <mode>                  Output mode: text (default), json, rpc, or gui
+  --gui                          Launch the native desktop GUI
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue the most recent session for the current directory
   --resume, -r                   Pick a session to resume

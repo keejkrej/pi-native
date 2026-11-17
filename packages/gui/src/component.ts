@@ -123,6 +123,7 @@ export abstract class GuiHost {
 	abstract getClipboardText(): string;
 	abstract setClipboardText(text: string): void;
 	abstract setImeRect(x: number, y: number, width: number, height: number): void;
+	abstract windowAction(action: number): void;
 }
 
 export class GuiRenderContext {
@@ -183,6 +184,10 @@ export class GuiRenderContext {
 		this.host.setImeRect(x, y, width, height);
 	}
 
+	windowAction(action: number): void {
+		this.host.windowAction(action);
+	}
+
 	measureText(style: TextStyle, maxWidth: number, text: string): TextMetrics {
 		return this.backend.measureText(style, maxWidth, text);
 	}
@@ -203,6 +208,37 @@ export class GuiRenderContext {
 	strokeRect(x: number, y: number, w: number, h: number, color: Color, strokeWidth = 1, radius = 0): void {
 		if (w <= 0 || h <= 0 || strokeWidth <= 0) return;
 		this.writer.strokeRect(x, y, w, h, radius, strokeWidth, packRgba(color));
+	}
+
+	fillRectCorners(
+		x: number,
+		y: number,
+		w: number,
+		h: number,
+		tl: number,
+		tr: number,
+		br: number,
+		bl: number,
+		color: Color,
+	): void {
+		if (w <= 0 || h <= 0) return;
+		this.writer.fillRectCorners(x, y, w, h, tl, tr, br, bl, packRgba(color));
+	}
+
+	strokeRectCorners(
+		x: number,
+		y: number,
+		w: number,
+		h: number,
+		tl: number,
+		tr: number,
+		br: number,
+		bl: number,
+		color: Color,
+		strokeWidth = 1,
+	): void {
+		if (w <= 0 || h <= 0 || strokeWidth <= 0) return;
+		this.writer.strokeRectCorners(x, y, w, h, tl, tr, br, bl, strokeWidth, packRgba(color));
 	}
 
 	drawLine(x1: number, y1: number, x2: number, y2: number, color: Color, strokeWidth = 1): void {

@@ -1,5 +1,6 @@
+import { spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
 import { homedir } from "node:os";
@@ -262,36 +263,153 @@ export class BedrockRuntimeServiceException extends Error {
 }
 
 // ============================================================================
-// INI Credentials & Region Resolution (Node runtime)
+// INI Credentials, Region & Enterprise Credential Chain Resolution
 // ============================================================================
 
-type IniSections = Map<string, Map<string, string>>;
+export type IniSections = Map<string, Map<string, string>>;
+
+export interface ParsedAwsIniFiles {
+	credentials?: IniSections;
+	config?: IniSections;
+}
+
+export interface ParseAwsIniFilesOptions {
+	env?: ProviderEnv;
+	credentialsFile?: string;
+	configFile?: string;
+	credentialsContent?: string;
+	configContent?: string;
+}
+
+export interface StsCredentialsResult extends BedrockCredentials {
+	expiration?: string;
+}
+
+export interface ResolveSsoCachedTokenOptions {
+	ssoSession?: string;
+	ssoStartUrl?: string;
+	ssoRegion: string;
+	ssoCacheDir?: string;
+	env?: ProviderEnv;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+	nowMs?: number;
+}
+
+export interface ResolveBedrockCredentialsParams {
+	optionsProfile?: string;
+	ambientProfile?: string;
+	envCredentials?: BedrockCredentials;
+	skipAuth: boolean;
+	env?: ProviderEnv;
+	region?: string;
+	signal?: AbortSignal;
+	fetchFn?: typeof globalThis.fetch;
+}
+
+interface CachedBedrockCredentials {
+	credentials: BedrockCredentials;
+	expiresAtMs: number;
+}
+
+const BEDROCK_CREDENTIAL_EXPIRY_LEEWAY_MS = 60_000;
+const DEFAULT_STS_EXPIRY_MS = 900_000;
+const AWS_CREDENTIAL_FETCH_TIMEOUT_MS = 15_000;
+const AWS_IMDS_TIMEOUT_MS = 1_500;
+const AWS_CREDENTIAL_PROCESS_TIMEOUT_MS = 30_000;
+
+const bedrockCredentialsCache = new Map<string, CachedBedrockCredentials>();
+
+/** Clears the in-memory Bedrock temporary credential cache (intended for tests). */
+export function clearBedrockCredentialsCache(): void {
+	bedrockCredentialsCache.clear();
+}
+
+function getAwsHomeDir(env?: ProviderEnv): string {
+	return env?.HOME || env?.USERPROFILE || homedir();
+}
+
+function normalizeIniSectionName(raw: string): string {
+	const trimmed = raw.trim();
+	if (/^profile\s+/.test(trimmed)) {
+		return `profile ${trimmed.replace(/^profile\s+/, "")}`;
+	}
+	if (/^sso-session\s+/.test(trimmed)) {
+		return `sso-session ${trimmed.replace(/^sso-session\s+/, "")}`;
+	}
+	return trimmed;
+}
+
+/** Parses AWS INI file text (`~/.aws/credentials` or `~/.aws/config`) into a section map. */
+export function parseAwsIniText(content: string): IniSections {
+	const sections: IniSections = new Map();
+	let current: Map<string, string> | undefined;
+	let currentSubPrefix: string | undefined;
+
+	for (const rawLine of content.split(/\r?\n/)) {
+		const trimmed = rawLine.trim();
+		if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+		if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+			const sectionName = normalizeIniSectionName(trimmed.slice(1, -1));
+			current = sections.get(sectionName) ?? new Map<string, string>();
+			sections.set(sectionName, current);
+			currentSubPrefix = undefined;
+			continue;
+		}
+		const eqIdx = trimmed.indexOf("=");
+		if (eqIdx === -1 || !current) continue;
+		const key = trimmed.slice(0, eqIdx).trim();
+		const value = trimmed.slice(eqIdx + 1).trim();
+		const isIndented = rawLine.length > rawLine.trimStart().length;
+		if (isIndented && currentSubPrefix) {
+			current.set(`${currentSubPrefix}.${key}`, value);
+			continue;
+		}
+		if (value === "") {
+			currentSubPrefix = key;
+		} else {
+			currentSubPrefix = undefined;
+			current.set(key, value);
+		}
+	}
+
+	return sections;
+}
 
 function parseIniFile(path: string): IniSections | undefined {
 	try {
 		if (!existsSync(path)) return undefined;
-		const content = readFileSync(path, "utf8");
-		const sections: IniSections = new Map();
-		let current: Map<string, string> | undefined;
-		for (const rawLine of content.split(/\r?\n/)) {
-			const line = rawLine.trim();
-			if (!line || line.startsWith("#") || line.startsWith(";")) continue;
-			if (line.startsWith("[") && line.endsWith("]")) {
-				const sectionName = line.slice(1, -1).trim();
-				current = sections.get(sectionName) ?? new Map<string, string>();
-				sections.set(sectionName, current);
-				continue;
-			}
-			const eqIdx = line.indexOf("=");
-			if (eqIdx === -1 || !current) continue;
-			const key = line.slice(0, eqIdx).trim();
-			const value = line.slice(eqIdx + 1).trim();
-			current.set(key, value);
-		}
-		return sections;
+		return parseAwsIniText(readFileSync(path, "utf8"));
 	} catch {
 		return undefined;
 	}
+}
+
+/** Parses AWS shared credentials and config INI files from disk or explicit text inputs. */
+export function parseAwsIniFiles(options?: ParseAwsIniFilesOptions): ParsedAwsIniFiles {
+	let credentials: IniSections | undefined;
+	if (options?.credentialsContent !== undefined) {
+		credentials = parseAwsIniText(options.credentialsContent);
+	} else if (typeof process !== "undefined") {
+		const home = getAwsHomeDir(options?.env);
+		const credsFile =
+			options?.credentialsFile ||
+			getProviderEnvValue("AWS_SHARED_CREDENTIALS_FILE", options?.env) ||
+			join(home, ".aws", "credentials");
+		credentials = parseIniFile(credsFile);
+	}
+
+	let config: IniSections | undefined;
+	if (options?.configContent !== undefined) {
+		config = parseAwsIniText(options.configContent);
+	} else if (typeof process !== "undefined") {
+		const home = getAwsHomeDir(options?.env);
+		const configFile =
+			options?.configFile || getProviderEnvValue("AWS_CONFIG_FILE", options?.env) || join(home, ".aws", "config");
+		config = parseIniFile(configFile);
+	}
+
+	return { credentials, config };
 }
 
 function getIniProfileSection(
@@ -312,15 +430,10 @@ function readAwsProfileConfig(
 	profileName: string,
 	env?: ProviderEnv,
 ): { credentials?: BedrockCredentials; region?: string } {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+	if (typeof process === "undefined") {
 		return {};
 	}
-	const home = homedir();
-	const credsFile = getProviderEnvValue("AWS_SHARED_CREDENTIALS_FILE", env) || join(home, ".aws", "credentials");
-	const configFile = getProviderEnvValue("AWS_CONFIG_FILE", env) || join(home, ".aws", "config");
-
-	const credsSections = parseIniFile(credsFile);
-	const configSections = parseIniFile(configFile);
+	const { credentials: credsSections, config: configSections } = parseAwsIniFiles({ env });
 	const credsProfile = getIniProfileSection(credsSections, profileName, false);
 	const configProfile = getIniProfileSection(configSections, profileName, true);
 
@@ -347,13 +460,963 @@ export function resolveBedrockProfileRegion(profileName: string | undefined, env
 	return readAwsProfileConfig(profileName, env).region;
 }
 
-export function resolveBedrockCredentials(params: {
-	optionsProfile?: string;
-	ambientProfile?: string;
-	envCredentials?: BedrockCredentials;
-	skipAuth: boolean;
-	env?: ProviderEnv;
+function toBedrockCredentials(creds: {
+	accessKeyId: string;
+	secretAccessKey: string;
+	sessionToken?: string;
 }): BedrockCredentials {
+	return {
+		accessKeyId: creds.accessKeyId,
+		secretAccessKey: creds.secretAccessKey,
+		...(creds.sessionToken ? { sessionToken: creds.sessionToken } : {}),
+	};
+}
+
+function parseExpirationMs(expiration: unknown, nowMs = Date.now()): number | undefined {
+	if (typeof expiration === "number" && Number.isFinite(expiration)) {
+		// AWS SSO returns ms; some helpers emit epoch seconds (< 1e12).
+		return expiration < 1e12 ? expiration * 1000 : expiration;
+	}
+	if (typeof expiration === "string") {
+		const trimmed = expiration.trim();
+		if (!trimmed) return undefined;
+		if (/^\d+$/.test(trimmed)) {
+			const num = Number.parseInt(trimmed, 10);
+			if (Number.isFinite(num)) {
+				return num < 1e12 ? num * 1000 : num;
+			}
+		}
+		const normalized = trimmed.endsWith("UTC") ? `${trimmed.slice(0, -3)}Z` : trimmed;
+		const parsed = Date.parse(normalized);
+		if (Number.isFinite(parsed)) {
+			return parsed;
+		}
+	}
+	void nowMs;
+	return undefined;
+}
+
+function getCachedBedrockCredentials(cacheKey: string): BedrockCredentials | undefined {
+	const cached = bedrockCredentialsCache.get(cacheKey);
+	if (!cached) return undefined;
+	if (Date.now() < cached.expiresAtMs - BEDROCK_CREDENTIAL_EXPIRY_LEEWAY_MS) {
+		return cached.credentials;
+	}
+	bedrockCredentialsCache.delete(cacheKey);
+	return undefined;
+}
+
+function setCachedBedrockCredentials(
+	cacheKey: string,
+	credentials: BedrockCredentials,
+	expiresAtMs: number | undefined,
+): BedrockCredentials {
+	const clean = toBedrockCredentials(credentials);
+	if (expiresAtMs !== undefined && Number.isFinite(expiresAtMs)) {
+		bedrockCredentialsCache.set(cacheKey, { credentials: clean, expiresAtMs });
+	}
+	return clean;
+}
+
+function decodeXmlEntities(value: string): string {
+	return value.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/g, (_match, entity: string) => {
+		switch (entity) {
+			case "amp":
+				return "&";
+			case "lt":
+				return "<";
+			case "gt":
+				return ">";
+			case "quot":
+				return '"';
+			case "apos":
+				return "'";
+			default:
+				if (entity.startsWith("#x")) {
+					const code = Number.parseInt(entity.slice(2), 16);
+					return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+				}
+				if (entity.startsWith("#")) {
+					const code = Number.parseInt(entity.slice(1), 10);
+					return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+				}
+				return _match;
+		}
+	});
+}
+
+function extractXmlTagText(xml: string, tagName: string): string | undefined {
+	const pattern = new RegExp(
+		`<(?:[a-zA-Z0-9_-]+:)?${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_-]+:)?${tagName}\\s*>`,
+	);
+	const match = pattern.exec(xml);
+	if (!match || match.length < 2 || match[1] === undefined) {
+		return undefined;
+	}
+	return decodeXmlEntities(match[1].trim());
+}
+
+/** Parses an AWS STS XML response (`AssumeRole` or `AssumeRoleWithWebIdentity`) into credentials. */
+export function parseStsCredentialsXml(xml: string): StsCredentialsResult {
+	const errorBlock = extractXmlTagText(xml, "Error");
+	if (errorBlock !== undefined) {
+		const code = extractXmlTagText(errorBlock, "Code") ?? "StsError";
+		const message = extractXmlTagText(errorBlock, "Message") ?? "AWS STS returned an error";
+		throw new Error(`AWS STS ${code}: ${message}`);
+	}
+
+	const credentialsScope = extractXmlTagText(xml, "Credentials") ?? xml;
+	const accessKeyId = extractXmlTagText(credentialsScope, "AccessKeyId");
+	const secretAccessKey = extractXmlTagText(credentialsScope, "SecretAccessKey");
+	const sessionToken = extractXmlTagText(credentialsScope, "SessionToken");
+	const expiration = extractXmlTagText(credentialsScope, "Expiration");
+
+	if (!accessKeyId || !secretAccessKey) {
+		throw new Error("Invalid AWS STS XML response: missing AccessKeyId or SecretAccessKey");
+	}
+
+	return {
+		accessKeyId,
+		secretAccessKey,
+		...(sessionToken ? { sessionToken } : {}),
+		...(expiration ? { expiration } : {}),
+	};
+}
+
+function buildAwsRegionalHost(service: string, region: string): string {
+	return `${service}.${region}.amazonaws.com${region.startsWith("cn-") ? ".cn" : ""}`;
+}
+
+async function executeAwsCredentialFetch(
+	fetchFn: typeof globalThis.fetch,
+	url: string,
+	init: { method: string; headers?: Record<string, string>; body?: string },
+	timeoutMs: number,
+	callerSignal?: AbortSignal,
+): Promise<Response> {
+	if (callerSignal?.aborted) {
+		throw makeAbortError();
+	}
+
+	const controller = new AbortController();
+	let timedOut = false;
+	const timer =
+		timeoutMs > 0 && Number.isFinite(timeoutMs)
+			? setTimeout(() => {
+					timedOut = true;
+					controller.abort();
+				}, timeoutMs)
+			: undefined;
+
+	const onAbort = () => controller.abort();
+	callerSignal?.addEventListener("abort", onAbort, { once: true });
+
+	try {
+		return await fetchFn.call(undefined, url, {
+			method: init.method,
+			...(init.headers ? { headers: init.headers } : {}),
+			...(init.body !== undefined ? { body: init.body } : {}),
+			signal: controller.signal,
+		});
+	} catch (error) {
+		if (callerSignal?.aborted) {
+			throw makeAbortError();
+		}
+		if (timedOut) {
+			throw new Error(`AWS credential request to ${url} timed out after ${timeoutMs}ms`);
+		}
+		throw error;
+	} finally {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+		}
+		callerSignal?.removeEventListener("abort", onAbort);
+	}
+}
+
+function formatStsHttpError(status: number, bodyText: string, action: string): Error {
+	if (bodyText.trim().startsWith("<")) {
+		try {
+			parseStsCredentialsXml(bodyText);
+		} catch (stsError) {
+			if (stsError instanceof Error && stsError.message.startsWith("AWS STS ")) {
+				return stsError;
+			}
+		}
+	}
+	return new Error(`AWS STS ${action} failed with HTTP ${status}: ${bodyText || "empty response"}`);
+}
+
+export async function assumeRoleWithWebIdentity(params: {
+	roleArn: string;
+	roleSessionName?: string;
+	webIdentityTokenFile?: string;
+	webIdentityToken?: string;
+	region?: string;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}): Promise<StsCredentialsResult> {
+	const region = params.region || "us-east-1";
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	let token = params.webIdentityToken?.trim();
+	if (!token) {
+		if (!params.webIdentityTokenFile) {
+			throw new Error("AWS WebIdentity authentication requires web_identity_token_file");
+		}
+		token = readFileSync(params.webIdentityTokenFile, "utf8").trim();
+	}
+	if (!token) {
+		throw new Error("AWS WebIdentity token file is empty");
+	}
+
+	const sessionName = params.roleSessionName || "pi-bedrock-session";
+	const stsUrl = `https://${buildAwsRegionalHost("sts", region)}/`;
+	const form = new URLSearchParams({
+		Action: "AssumeRoleWithWebIdentity",
+		Version: "2011-06-15",
+		RoleArn: params.roleArn,
+		RoleSessionName: sessionName,
+		WebIdentityToken: token,
+	});
+
+	const response = await executeAwsCredentialFetch(
+		fetchFn,
+		stsUrl,
+		{
+			method: "POST",
+			headers: {
+				"content-type": "application/x-www-form-urlencoded; charset=utf-8",
+				accept: "application/xml",
+			},
+			body: form.toString(),
+		},
+		AWS_CREDENTIAL_FETCH_TIMEOUT_MS,
+		params.signal,
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw formatStsHttpError(response.status, text, "AssumeRoleWithWebIdentity");
+	}
+	return parseStsCredentialsXml(text);
+}
+
+export async function assumeRole(params: {
+	roleArn: string;
+	roleSessionName?: string;
+	externalId?: string;
+	durationSeconds?: number;
+	region?: string;
+	sourceCredentials: BedrockCredentials;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}): Promise<StsCredentialsResult> {
+	const region = params.region || "us-east-1";
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	const stsUrl = new URL(`https://${buildAwsRegionalHost("sts", region)}/`);
+	const form = new URLSearchParams({
+		Action: "AssumeRole",
+		Version: "2011-06-15",
+		RoleArn: params.roleArn,
+		RoleSessionName: params.roleSessionName || "pi-bedrock-session",
+	});
+	if (params.externalId) {
+		form.set("ExternalId", params.externalId);
+	}
+	if (params.durationSeconds !== undefined && Number.isFinite(params.durationSeconds) && params.durationSeconds > 0) {
+		form.set("DurationSeconds", String(Math.floor(params.durationSeconds)));
+	}
+
+	const bodyText = form.toString();
+	const bodyBytes = new TextEncoder().encode(bodyText);
+	const signedHeaders = signAwsSigV4({
+		method: "POST",
+		url: stsUrl,
+		headers: {
+			"content-type": "application/x-www-form-urlencoded; charset=utf-8",
+			accept: "application/xml",
+		},
+		body: bodyBytes,
+		region,
+		service: "sts",
+		credentials: params.sourceCredentials,
+	});
+
+	const response = await executeAwsCredentialFetch(
+		fetchFn,
+		stsUrl.toString(),
+		{
+			method: "POST",
+			headers: signedHeaders,
+			body: bodyText,
+		},
+		AWS_CREDENTIAL_FETCH_TIMEOUT_MS,
+		params.signal,
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw formatStsHttpError(response.status, text, "AssumeRole");
+	}
+	return parseStsCredentialsXml(text);
+}
+
+function sha1Hex(value: string): string {
+	return createHash("sha1").update(value, "utf8").digest("hex");
+}
+
+function readJsonRecord(text: string, label: string): Record<string, unknown> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		throw new Error(`Invalid JSON in ${label}: ${msg}`);
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error(`Expected JSON object in ${label}`);
+	}
+	return parsed as Record<string, unknown>;
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Resolves and refreshes (if expired with refreshToken/clientId/clientSecret) an AWS SSO cached bearer token
+ * from `~/.aws/sso/cache/<sha1(sso_session || sso_start_url)>.json`.
+ */
+export async function resolveSsoCachedToken(options: ResolveSsoCachedTokenOptions): Promise<string> {
+	const cacheKeySource = options.ssoSession || options.ssoStartUrl;
+	if (!cacheKeySource) {
+		throw new Error("AWS SSO requires sso_session or sso_start_url");
+	}
+	const cacheDir = options.ssoCacheDir || join(getAwsHomeDir(options.env), ".aws", "sso", "cache");
+	const primaryPath = join(cacheDir, `${sha1Hex(cacheKeySource)}.json`);
+	const fallbackPath =
+		options.ssoSession && options.ssoStartUrl ? join(cacheDir, `${sha1Hex(options.ssoStartUrl)}.json`) : undefined;
+
+	let cachePath: string | undefined;
+	if (existsSync(primaryPath)) {
+		cachePath = primaryPath;
+	} else if (fallbackPath && existsSync(fallbackPath)) {
+		cachePath = fallbackPath;
+	}
+
+	if (!cachePath) {
+		throw new Error(`AWS SSO cached token not found at ${primaryPath}. Run "aws sso login".`);
+	}
+
+	const cachedObj = readJsonRecord(readFileSync(cachePath, "utf8"), `AWS SSO cache ${cachePath}`);
+	const accessToken = readOptionalString(cachedObj, "accessToken");
+	const expiresAtRaw = cachedObj.expiresAt;
+	const nowMs = options.nowMs ?? Date.now();
+	const expiresAtMs = parseExpirationMs(expiresAtRaw, nowMs);
+
+	const refreshToken = readOptionalString(cachedObj, "refreshToken");
+	const clientId = readOptionalString(cachedObj, "clientId");
+	const clientSecret = readOptionalString(cachedObj, "clientSecret");
+	const hasRefreshCreds = Boolean(refreshToken && clientId && clientSecret);
+	const leewayMs = hasRefreshCreds ? BEDROCK_CREDENTIAL_EXPIRY_LEEWAY_MS : 0;
+	const isExpired = expiresAtMs === undefined || nowMs >= expiresAtMs - leewayMs;
+
+	if (accessToken && !isExpired) {
+		return accessToken;
+	}
+
+	if (!refreshToken || !clientId || !clientSecret) {
+		throw new Error('AWS SSO token is missing or expired and cannot be refreshed. Run "aws sso login".');
+	}
+
+	const registrationExpiresAtMs = parseExpirationMs(cachedObj.registrationExpiresAt, nowMs);
+	if (registrationExpiresAtMs !== undefined && nowMs >= registrationExpiresAtMs) {
+		throw new Error('AWS SSO client registration is expired. Run "aws sso login".');
+	}
+
+	const fetchFn = options.fetchFn ?? globalThis.fetch;
+	const oidcUrl = `https://${buildAwsRegionalHost("oidc", options.ssoRegion)}/token`;
+	const response = await executeAwsCredentialFetch(
+		fetchFn,
+		oidcUrl,
+		{
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				accept: "application/json",
+			},
+			body: JSON.stringify({
+				clientId,
+				clientSecret,
+				grantType: "refresh_token",
+				refreshToken,
+			}),
+		},
+		AWS_CREDENTIAL_FETCH_TIMEOUT_MS,
+		options.signal,
+	);
+	const responseText = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(`AWS SSO OIDC token refresh failed (${response.status}): ${responseText}`);
+	}
+
+	const refreshedObj = readJsonRecord(responseText, "AWS SSO OIDC token response");
+	const newAccessToken =
+		readOptionalString(refreshedObj, "accessToken") ?? readOptionalString(refreshedObj, "access_token");
+	if (!newAccessToken) {
+		throw new Error("AWS SSO OIDC token response missing accessToken");
+	}
+	const expiresInRaw = refreshedObj.expiresIn ?? refreshedObj.expires_in;
+	const expiresInSec = typeof expiresInRaw === "number" && expiresInRaw > 0 ? expiresInRaw : 3600;
+	const newExpiresAt = new Date(nowMs + expiresInSec * 1000).toISOString();
+	const newRefreshToken =
+		readOptionalString(refreshedObj, "refreshToken") ??
+		readOptionalString(refreshedObj, "refresh_token") ??
+		refreshToken;
+
+	const updatedObj: Record<string, unknown> = {
+		...cachedObj,
+		accessToken: newAccessToken,
+		expiresAt: newExpiresAt,
+		refreshToken: newRefreshToken,
+	};
+	try {
+		writeFileSync(cachePath, JSON.stringify(updatedObj, null, 2), { encoding: "utf8", mode: 0o600 });
+	} catch {
+		// Best-effort cache update; ignore read-only filesystems.
+	}
+
+	return newAccessToken;
+}
+
+export async function fetchSsoRoleCredentials(params: {
+	ssoRegion: string;
+	accountId: string;
+	roleName: string;
+	accessToken: string;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}): Promise<{ credentials: BedrockCredentials; expiresAtMs?: number }> {
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	const portalHost = buildAwsRegionalHost("portal.sso", params.ssoRegion);
+	const url = `https://${portalHost}/federation/credentials?account_id=${encodeURIComponent(params.accountId)}&role_name=${encodeURIComponent(params.roleName)}`;
+	const response = await executeAwsCredentialFetch(
+		fetchFn,
+		url,
+		{
+			method: "GET",
+			headers: {
+				"x-amz-sso_bearer_token": params.accessToken,
+				accept: "application/json",
+			},
+		},
+		AWS_CREDENTIAL_FETCH_TIMEOUT_MS,
+		params.signal,
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(`AWS SSO federation credentials failed (${response.status}): ${text}`);
+	}
+
+	const payload = readJsonRecord(text, "AWS SSO federation response");
+	const rawRoleCreds = payload.roleCredentials;
+	if (!rawRoleCreds || typeof rawRoleCreds !== "object" || Array.isArray(rawRoleCreds)) {
+		throw new Error("AWS SSO federation response missing roleCredentials");
+	}
+	const roleCreds = rawRoleCreds as Record<string, unknown>;
+	const accessKeyId = readOptionalString(roleCreds, "accessKeyId");
+	const secretAccessKey = readOptionalString(roleCreds, "secretAccessKey");
+	const sessionToken = readOptionalString(roleCreds, "sessionToken");
+	if (!accessKeyId || !secretAccessKey) {
+		throw new Error("AWS SSO federation response missing accessKeyId or secretAccessKey");
+	}
+	const expiresAtMs = parseExpirationMs(roleCreds.expiration);
+	return {
+		credentials: toBedrockCredentials({ accessKeyId, secretAccessKey, sessionToken }),
+		expiresAtMs,
+	};
+}
+
+export async function executeCredentialProcess(
+	command: string,
+	options?: { env?: ProviderEnv; signal?: AbortSignal; timeoutMs?: number },
+): Promise<StsCredentialsResult> {
+	if (options?.signal?.aborted) {
+		throw makeAbortError();
+	}
+
+	const timeoutMs = options?.timeoutMs ?? AWS_CREDENTIAL_PROCESS_TIMEOUT_MS;
+	const mergedEnv: Record<string, string | undefined> =
+		typeof process !== "undefined" ? { ...process.env, ...(options?.env ?? {}) } : { ...(options?.env ?? {}) };
+
+	const stdout = await new Promise<string>((resolve, reject) => {
+		const isWin = typeof process !== "undefined" && process.platform === "win32";
+		const shellBin = isWin ? mergedEnv.ComSpec || "cmd.exe" : "/bin/sh";
+		const shellArgs = isWin ? ["/d", "/s", "/c", command] : ["-c", command];
+		const child = spawn(shellBin, shellArgs, {
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: mergedEnv,
+		});
+
+		const stdoutChunks: Buffer[] = [];
+		const stderrChunks: Buffer[] = [];
+		let settled = false;
+		let timedOut = false;
+
+		const cleanup = () => {
+			if (timer !== undefined) clearTimeout(timer);
+			options?.signal?.removeEventListener("abort", onAbort);
+		};
+
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			try {
+				child.kill("SIGTERM");
+			} catch {}
+			reject(makeAbortError());
+		};
+
+		const timer =
+			timeoutMs > 0 && Number.isFinite(timeoutMs)
+				? setTimeout(() => {
+						if (settled) return;
+						settled = true;
+						timedOut = true;
+						cleanup();
+						try {
+							child.kill("SIGTERM");
+						} catch {}
+						reject(new Error(`AWS credential_process timed out after ${timeoutMs}ms`));
+					}, timeoutMs)
+				: undefined;
+
+		options?.signal?.addEventListener("abort", onAbort, { once: true });
+
+		if (child.stdout) {
+			child.stdout.on("data", (chunk: Buffer | string) => {
+				stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+			});
+		}
+		if (child.stderr) {
+			child.stderr.on("data", (chunk: Buffer | string) => {
+				stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+			});
+		}
+		child.on("error", (err) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(err);
+		});
+		child.on("close", (code) => {
+			if (settled || timedOut) return;
+			settled = true;
+			cleanup();
+			if (code !== 0) {
+				const errText = Buffer.concat(stderrChunks).toString("utf8").trim();
+				reject(new Error(`AWS credential_process exited with code ${code ?? "unknown"}: ${errText}`));
+				return;
+			}
+			resolve(Buffer.concat(stdoutChunks).toString("utf8"));
+		});
+	});
+
+	const parsed = readJsonRecord(stdout, "AWS credential_process output");
+	if (parsed.Version !== 1) {
+		throw new Error(`Unsupported AWS credential_process Version: ${String(parsed.Version)}`);
+	}
+	const accessKeyId = readOptionalString(parsed, "AccessKeyId");
+	const secretAccessKey = readOptionalString(parsed, "SecretAccessKey");
+	if (!accessKeyId || !secretAccessKey) {
+		throw new Error("AWS credential_process output missing AccessKeyId or SecretAccessKey");
+	}
+	const sessionToken = readOptionalString(parsed, "SessionToken");
+	const expiration = readOptionalString(parsed, "Expiration");
+	return {
+		accessKeyId,
+		secretAccessKey,
+		...(sessionToken ? { sessionToken } : {}),
+		...(expiration ? { expiration } : {}),
+	};
+}
+
+export async function resolveEcsContainerCredentials(params: {
+	env?: ProviderEnv;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}): Promise<BedrockCredentials | undefined> {
+	const relUri = getProviderEnvValue("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", params.env);
+	const fullUri = getProviderEnvValue("AWS_CONTAINER_CREDENTIALS_FULL_URI", params.env);
+	if (!relUri && !fullUri) {
+		return undefined;
+	}
+
+	let targetUrl: string;
+	if (relUri) {
+		targetUrl = new URL(relUri.startsWith("/") ? relUri : `/${relUri}`, "http://169.254.170.2").toString();
+	} else {
+		const parsedUrl = new URL(fullUri!);
+		if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+			throw new Error(`Unsupported ECS credentials URI protocol: ${parsedUrl.protocol}`);
+		}
+		targetUrl = parsedUrl.toString();
+	}
+
+	const authTokenFile = getProviderEnvValue("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", params.env);
+	let authToken = authTokenFile ? readFileSync(authTokenFile, "utf8").trim() : undefined;
+	if (!authToken) {
+		authToken = getProviderEnvValue("AWS_CONTAINER_AUTHORIZATION_TOKEN", params.env);
+	}
+
+	const cacheKey = `ecs:${targetUrl}:${authTokenFile ?? ""}:${authToken ? "auth" : "none"}`;
+	const cached = getCachedBedrockCredentials(cacheKey);
+	if (cached) {
+		return cached;
+	}
+
+	const headers: Record<string, string> = { accept: "application/json" };
+	if (authToken) {
+		headers.Authorization = authToken;
+	}
+
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	const response = await executeAwsCredentialFetch(
+		fetchFn,
+		targetUrl,
+		{ method: "GET", headers },
+		AWS_CREDENTIAL_FETCH_TIMEOUT_MS,
+		params.signal,
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(`AWS ECS container credentials request failed (${response.status}): ${text}`);
+	}
+
+	const payload = readJsonRecord(text, "AWS ECS container credentials response");
+	const accessKeyId = readOptionalString(payload, "AccessKeyId");
+	const secretAccessKey = readOptionalString(payload, "SecretAccessKey");
+	const sessionToken = readOptionalString(payload, "Token") ?? readOptionalString(payload, "SessionToken");
+	if (!accessKeyId || !secretAccessKey) {
+		throw new Error("AWS ECS container credentials response missing AccessKeyId or SecretAccessKey");
+	}
+	const expiresAtMs = parseExpirationMs(payload.Expiration) ?? Date.now() + DEFAULT_STS_EXPIRY_MS;
+	return setCachedBedrockCredentials(cacheKey, { accessKeyId, secretAccessKey, sessionToken }, expiresAtMs);
+}
+
+export async function resolveEc2ImdsV2Credentials(params: {
+	env?: ProviderEnv;
+	fetchFn?: typeof globalThis.fetch;
+	signal?: AbortSignal;
+}): Promise<BedrockCredentials> {
+	const disabled = getProviderEnvValue("AWS_EC2_METADATA_DISABLED", params.env);
+	if (disabled && disabled.toLowerCase() === "true") {
+		throw new Error("EC2 instance metadata service is disabled via AWS_EC2_METADATA_DISABLED");
+	}
+
+	const rawEndpoint =
+		getProviderEnvValue("AWS_EC2_METADATA_SERVICE_ENDPOINT", params.env) || "http://169.254.169.254";
+	const baseEndpoint = rawEndpoint.replace(/\/+$/, "");
+	const cacheKey = `imds:${baseEndpoint}`;
+	const cached = getCachedBedrockCredentials(cacheKey);
+	if (cached) {
+		return cached;
+	}
+
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+	const tokenRes = await executeAwsCredentialFetch(
+		fetchFn,
+		`${baseEndpoint}/latest/api/token`,
+		{
+			method: "PUT",
+			headers: { "X-aws-ec2-metadata-token-ttl-seconds": "21600" },
+		},
+		AWS_IMDS_TIMEOUT_MS,
+		params.signal,
+	);
+	if (!tokenRes.ok) {
+		throw new Error(`EC2 IMDSv2 token request failed with HTTP ${tokenRes.status}`);
+	}
+	const imdsToken = (await tokenRes.text()).trim();
+	if (!imdsToken) {
+		throw new Error("EC2 IMDSv2 token endpoint returned an empty token");
+	}
+
+	const rolesRes = await executeAwsCredentialFetch(
+		fetchFn,
+		`${baseEndpoint}/latest/meta-data/iam/security-credentials/`,
+		{
+			method: "GET",
+			headers: { "X-aws-ec2-metadata-token": imdsToken },
+		},
+		AWS_IMDS_TIMEOUT_MS,
+		params.signal,
+	);
+	if (!rolesRes.ok) {
+		throw new Error(`EC2 IMDSv2 IAM role listing failed with HTTP ${rolesRes.status}`);
+	}
+	const rolesText = await rolesRes.text();
+	const roleName = rolesText
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.find((line) => line.length > 0);
+	if (!roleName) {
+		throw new Error("EC2 IMDSv2 returned no IAM role name");
+	}
+
+	const credsRes = await executeAwsCredentialFetch(
+		fetchFn,
+		`${baseEndpoint}/latest/meta-data/iam/security-credentials/${encodeURIComponent(roleName)}`,
+		{
+			method: "GET",
+			headers: { "X-aws-ec2-metadata-token": imdsToken },
+		},
+		AWS_IMDS_TIMEOUT_MS,
+		params.signal,
+	);
+	const credsText = await credsRes.text().catch(() => "");
+	if (!credsRes.ok) {
+		throw new Error(`EC2 IMDSv2 credentials request failed (${credsRes.status}): ${credsText}`);
+	}
+
+	const payload = readJsonRecord(credsText, "EC2 IMDSv2 credentials response");
+	const code = readOptionalString(payload, "Code");
+	if (code && code !== "Success") {
+		throw new Error(`EC2 IMDSv2 credentials returned Code=${code}`);
+	}
+	const accessKeyId = readOptionalString(payload, "AccessKeyId");
+	const secretAccessKey = readOptionalString(payload, "SecretAccessKey");
+	const sessionToken = readOptionalString(payload, "Token") ?? readOptionalString(payload, "SessionToken");
+	if (!accessKeyId || !secretAccessKey) {
+		throw new Error("EC2 IMDSv2 credentials missing AccessKeyId or SecretAccessKey");
+	}
+	const expiresAtMs = parseExpirationMs(payload.Expiration) ?? Date.now() + DEFAULT_STS_EXPIRY_MS;
+	return setCachedBedrockCredentials(cacheKey, { accessKeyId, secretAccessKey, sessionToken }, expiresAtMs);
+}
+
+function getEnvBedrockCredentials(env?: ProviderEnv): BedrockCredentials | undefined {
+	const accessKeyId = getProviderEnvValue("AWS_ACCESS_KEY_ID", env);
+	const secretAccessKey = getProviderEnvValue("AWS_SECRET_ACCESS_KEY", env);
+	if (!accessKeyId || !secretAccessKey) {
+		return undefined;
+	}
+	const sessionToken = getProviderEnvValue("AWS_SESSION_TOKEN", env);
+	return toBedrockCredentials({ accessKeyId, secretAccessKey, sessionToken });
+}
+
+function getEffectiveAwsRegion(explicitRegion?: string, profileRegion?: string, env?: ProviderEnv): string {
+	return (
+		profileRegion ||
+		explicitRegion ||
+		getProviderEnvValue("AWS_REGION", env) ||
+		getProviderEnvValue("AWS_DEFAULT_REGION", env) ||
+		"us-east-1"
+	);
+}
+
+async function resolveProfileCredentials(
+	profileName: string,
+	params: ResolveBedrockCredentialsParams,
+	visited: Set<string>,
+): Promise<BedrockCredentials | undefined> {
+	if (typeof process === "undefined") {
+		return undefined;
+	}
+	if (visited.has(profileName)) {
+		throw new Error(`Circular AWS profile reference detected: ${[...visited, profileName].join(" -> ")}`);
+	}
+	const nextVisited = new Set(visited);
+	nextVisited.add(profileName);
+
+	const { credentials: credsSections, config: configSections } = parseAwsIniFiles({ env: params.env });
+	const credsProfile = getIniProfileSection(credsSections, profileName, false);
+	const configProfile = getIniProfileSection(configSections, profileName, true);
+	if (!credsProfile && !configProfile) {
+		return undefined;
+	}
+
+	const getAttr = (key: string): string | undefined => credsProfile?.get(key) ?? configProfile?.get(key);
+	const profileRegion = configProfile?.get("region") ?? credsProfile?.get("region");
+	const stsRegion = getEffectiveAwsRegion(params.region, profileRegion, params.env);
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+
+	// 1. Role assumption (`role_arn` with `web_identity_token_file`, `source_profile`, or `credential_source`)
+	const roleArn = getAttr("role_arn");
+	if (roleArn) {
+		const roleSessionName = getAttr("role_session_name");
+		const webIdentityTokenFile = getAttr("web_identity_token_file");
+		if (webIdentityTokenFile) {
+			const cacheKey = `profile-wi:${profileName}:${roleArn}:${webIdentityTokenFile}:${stsRegion}`;
+			const cached = getCachedBedrockCredentials(cacheKey);
+			if (cached) return cached;
+			const stsCreds = await assumeRoleWithWebIdentity({
+				roleArn,
+				roleSessionName,
+				webIdentityTokenFile,
+				region: stsRegion,
+				fetchFn,
+				signal: params.signal,
+			});
+			return setCachedBedrockCredentials(
+				cacheKey,
+				stsCreds,
+				parseExpirationMs(stsCreds.expiration) ?? Date.now() + DEFAULT_STS_EXPIRY_MS,
+			);
+		}
+
+		const externalId = getAttr("external_id");
+		const durationRaw = getAttr("duration_seconds");
+		const durationSeconds = durationRaw ? Number.parseInt(durationRaw, 10) : undefined;
+		const sourceProfile = getAttr("source_profile");
+		const credentialSource = getAttr("credential_source");
+
+		let sourceCredentials: BedrockCredentials | undefined;
+		if (sourceProfile) {
+			sourceCredentials = await resolveProfileCredentials(sourceProfile, params, nextVisited);
+			if (!sourceCredentials) {
+				throw new Error(
+					`AWS profile "${profileName}" references source_profile "${sourceProfile}", which has no credentials`,
+				);
+			}
+		} else if (credentialSource) {
+			switch (credentialSource) {
+				case "Environment":
+					sourceCredentials = params.envCredentials ?? getEnvBedrockCredentials(params.env);
+					if (!sourceCredentials) {
+						throw new Error(
+							`AWS profile "${profileName}" uses credential_source=Environment, but AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not set`,
+						);
+					}
+					break;
+				case "EcsContainer":
+					sourceCredentials = await resolveEcsContainerCredentials({
+						env: params.env,
+						fetchFn,
+						signal: params.signal,
+					});
+					if (!sourceCredentials) {
+						throw new Error(
+							`AWS profile "${profileName}" uses credential_source=EcsContainer, but ECS container env vars are not set`,
+						);
+					}
+					break;
+				case "Ec2InstanceMetadata":
+					sourceCredentials = await resolveEc2ImdsV2Credentials({
+						env: params.env,
+						fetchFn,
+						signal: params.signal,
+					});
+					break;
+				default:
+					throw new Error(`Unsupported credential_source "${credentialSource}" in AWS profile "${profileName}"`);
+			}
+		} else {
+			throw new Error(
+				`AWS profile "${profileName}" specifies role_arn without source_profile, credential_source, or web_identity_token_file`,
+			);
+		}
+
+		const cacheKey = `profile-role:${profileName}:${roleArn}:${sourceCredentials.accessKeyId}:${sourceProfile ?? credentialSource ?? ""}:${externalId ?? ""}:${stsRegion}`;
+		const cached = getCachedBedrockCredentials(cacheKey);
+		if (cached) return cached;
+
+		const assumed = await assumeRole({
+			roleArn,
+			roleSessionName,
+			externalId,
+			durationSeconds: durationSeconds !== undefined && Number.isFinite(durationSeconds) ? durationSeconds : undefined,
+			region: stsRegion,
+			sourceCredentials,
+			fetchFn,
+			signal: params.signal,
+		});
+		return setCachedBedrockCredentials(
+			cacheKey,
+			assumed,
+			parseExpirationMs(assumed.expiration) ?? Date.now() + DEFAULT_STS_EXPIRY_MS,
+		);
+	}
+
+	// 2. Static credentials in INI section
+	const accessKeyId = getAttr("aws_access_key_id");
+	const secretAccessKey = getAttr("aws_secret_access_key");
+	if (accessKeyId && secretAccessKey) {
+		return toBedrockCredentials({
+			accessKeyId,
+			secretAccessKey,
+			sessionToken: getAttr("aws_session_token"),
+		});
+	}
+
+	// 3. `credential_process`
+	const credentialProcess = getAttr("credential_process");
+	if (credentialProcess) {
+		const cacheKey = `profile-proc:${profileName}:${credentialProcess}:${getAwsHomeDir(params.env)}`;
+		const cached = getCachedBedrockCredentials(cacheKey);
+		if (cached) return cached;
+		const procCreds = await executeCredentialProcess(credentialProcess, {
+			env: params.env,
+			signal: params.signal,
+		});
+		const expMs = parseExpirationMs(procCreds.expiration);
+		return expMs !== undefined
+			? setCachedBedrockCredentials(cacheKey, procCreds, expMs)
+			: toBedrockCredentials(procCreds);
+	}
+
+	// 4. AWS SSO (`sso_session` section or legacy `sso_start_url`)
+	const ssoSession = getAttr("sso_session");
+	const ssoAccountId = getAttr("sso_account_id");
+	const ssoRoleName = getAttr("sso_role_name");
+	const ssoSection = ssoSession
+		? (configSections?.get(`sso-session ${ssoSession}`) ?? credsSections?.get(`sso-session ${ssoSession}`))
+		: undefined;
+	const ssoStartUrl = ssoSection?.get("sso_start_url") ?? getAttr("sso_start_url");
+	const ssoRegion = ssoSection?.get("sso_region") ?? getAttr("sso_region");
+
+	if (ssoSession || ssoStartUrl || ssoAccountId || ssoRoleName) {
+		if (!ssoRegion || !ssoAccountId || !ssoRoleName || (!ssoSession && !ssoStartUrl)) {
+			throw new Error(
+				`Incomplete AWS SSO configuration in profile "${profileName}": requires sso_region, sso_account_id, sso_role_name, and sso_session or sso_start_url`,
+			);
+		}
+		const cacheKey = `profile-sso:${profileName}:${ssoSession ?? ""}:${ssoStartUrl ?? ""}:${ssoRegion}:${ssoAccountId}:${ssoRoleName}:${getAwsHomeDir(params.env)}`;
+		const cached = getCachedBedrockCredentials(cacheKey);
+		if (cached) return cached;
+
+		const bearerToken = await resolveSsoCachedToken({
+			ssoSession,
+			ssoStartUrl,
+			ssoRegion,
+			env: params.env,
+			fetchFn,
+			signal: params.signal,
+		});
+		const ssoResult = await fetchSsoRoleCredentials({
+			ssoRegion,
+			accountId: ssoAccountId,
+			roleName: ssoRoleName,
+			accessToken: bearerToken,
+			fetchFn,
+			signal: params.signal,
+		});
+		return setCachedBedrockCredentials(
+			cacheKey,
+			ssoResult.credentials,
+			ssoResult.expiresAtMs ?? Date.now() + DEFAULT_STS_EXPIRY_MS,
+		);
+	}
+
+	return undefined;
+}
+
+export async function resolveBedrockCredentials(params: ResolveBedrockCredentialsParams): Promise<BedrockCredentials> {
+	if (params.signal?.aborted) {
+		throw makeAbortError();
+	}
+
+	// a) Skip-auth dummy credentials
 	if (params.skipAuth) {
 		return {
 			accessKeyId: "dummy-access-key",
@@ -361,19 +1424,77 @@ export function resolveBedrockCredentials(params: {
 		};
 	}
 
+	const fetchFn = params.fetchFn ?? globalThis.fetch;
+
+	// b) Explicit profile option / scoped AWS_PROFILE
 	if (params.optionsProfile) {
-		const fromProfile = readAwsProfileConfig(params.optionsProfile, params.env).credentials;
+		const fromProfile = await resolveProfileCredentials(params.optionsProfile, params, new Set());
 		if (fromProfile) return fromProfile;
 		throw new Error(`Could not load AWS credentials for profile "${params.optionsProfile}"`);
 	}
 
-	if (params.envCredentials) {
-		return params.envCredentials;
+	// c) Environment access keys (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)
+	const envCreds = params.envCredentials ?? getEnvBedrockCredentials(params.env);
+	if (envCreds) {
+		return envCreds;
 	}
 
-	const profileName = params.ambientProfile || "default";
-	const fromIni = readAwsProfileConfig(profileName, params.env).credentials;
-	if (fromIni) return fromIni;
+	// d) Environment WebIdentity (AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN)
+	const webIdentityTokenFile = getProviderEnvValue("AWS_WEB_IDENTITY_TOKEN_FILE", params.env);
+	const webIdentityRoleArn = getProviderEnvValue("AWS_ROLE_ARN", params.env);
+	if (webIdentityTokenFile && webIdentityRoleArn) {
+		const sessionName = getProviderEnvValue("AWS_ROLE_SESSION_NAME", params.env);
+		const stsRegion = getEffectiveAwsRegion(params.region, undefined, params.env);
+		const cacheKey = `env-wi:${webIdentityRoleArn}:${webIdentityTokenFile}:${sessionName ?? ""}:${stsRegion}`;
+		const cached = getCachedBedrockCredentials(cacheKey);
+		if (cached) return cached;
+		const stsCreds = await assumeRoleWithWebIdentity({
+			roleArn: webIdentityRoleArn,
+			roleSessionName: sessionName,
+			webIdentityTokenFile,
+			region: stsRegion,
+			fetchFn,
+			signal: params.signal,
+		});
+		return setCachedBedrockCredentials(
+			cacheKey,
+			stsCreds,
+			parseExpirationMs(stsCreds.expiration) ?? Date.now() + DEFAULT_STS_EXPIRY_MS,
+		);
+	}
+
+	// e) Active/default INI profile (`ambientProfile || "default"`)
+	const profileName = params.ambientProfile || getProviderEnvValue("AWS_PROFILE", params.env) || "default";
+	const fromIni = await resolveProfileCredentials(profileName, params, new Set());
+	if (fromIni) {
+		return fromIni;
+	}
+
+	// f) ECS Container Credentials
+	const fromEcs = await resolveEcsContainerCredentials({
+		env: params.env,
+		fetchFn,
+		signal: params.signal,
+	});
+	if (fromEcs) {
+		return fromEcs;
+	}
+
+	// g) EC2 IMDSv2 (unless AWS_EC2_METADATA_DISABLED === "true")
+	const imdsDisabled = getProviderEnvValue("AWS_EC2_METADATA_DISABLED", params.env);
+	if (!imdsDisabled || imdsDisabled.toLowerCase() !== "true") {
+		try {
+			return await resolveEc2ImdsV2Credentials({
+				env: params.env,
+				fetchFn,
+				signal: params.signal,
+			});
+		} catch (error) {
+			if (params.signal?.aborted) {
+				throw error;
+			}
+		}
+	}
 
 	throw new Error(
 		"Could not load AWS credentials for Amazon Bedrock. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or configure AWS_PROFILE.",

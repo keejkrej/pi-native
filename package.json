@@ -7,7 +7,6 @@
 		"clean": "./build.sh clean",
 		"build": "./build.sh all",
 		"build:native": "./build.sh pi",
-		"build:gui": "./build.sh gui",
 		"build:examples": "./build.sh examples",
 		"coverage": "./build.sh coverage",
 		"test": "./build.sh test"

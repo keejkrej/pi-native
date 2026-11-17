@@ -53,7 +53,9 @@ for (const [name, language] of Object.entries(eagerLanguages)) {
 let allLanguagesPromise: Promise<void> | undefined;
 
 export function loadAllHighlightLanguages(): Promise<void> {
-	allLanguagesPromise ??= Promise.resolve();
+	allLanguagesPromise ??= import("highlight.js").then((mod) => {
+		mod.registerAllLanguages();
+	});
 	return allLanguagesPromise;
 }
 

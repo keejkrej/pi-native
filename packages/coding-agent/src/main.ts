@@ -67,7 +67,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { InteractiveMode, runGuiMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -112,7 +112,10 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
-function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
+export function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
+	if (parsed.gui || parsed.mode === "gui") {
+		return "gui";
+	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -125,12 +128,17 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
+function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "gui"> {
 	return appMode === "json" ? "json" : "text";
 }
 
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
-	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
+	return (
+		!parsed.print &&
+		!parsed.gui &&
+		parsed.mode === undefined &&
+		(parsed.help === true || parsed.listModels !== undefined)
+	);
 }
 
 async function runAuthLoginCommand(args: string[]): Promise<number> {
@@ -700,7 +708,8 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
-	const shouldTakeOverStdout = appMode !== "interactive" && !isPlainRuntimeMetadataCommand(parsed);
+	const shouldTakeOverStdout =
+		appMode !== "interactive" && appMode !== "gui" && !isPlainRuntimeMetadataCommand(parsed);
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
 	}
@@ -727,7 +736,7 @@ export async function main(args: string[], options?: MainOptions) {
 		time("firstTimeSetup");
 	}
 
-	if (appMode === "interactive" && parsed.useTheme !== undefined) {
+	if ((appMode === "interactive" || appMode === "gui") && parsed.useTheme !== undefined) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
 
@@ -940,7 +949,7 @@ export async function main(args: string[], options?: MainOptions) {
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
-	const startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
+	let startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
 	const hasRuntimeErrors = runtime.diagnostics.some((diagnostic) => diagnostic.type === "error");
 
 	if (parsed.help) {
@@ -959,9 +968,9 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
+	// Read piped stdin content (if any) - skip for RPC mode (JSON-RPC) and GUI mode (desktop/Finder launch)
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
+	if (appMode !== "rpc" && appMode !== "gui") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
@@ -971,16 +980,22 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const { initialMessage, initialImages } = await prepareInitialMessage(parsed, stdinContent);
 	time("prepareInitialMessage");
-	initTheme(settingsManager.getTheme(), appMode === "interactive");
+	initTheme(settingsManager.getTheme(), appMode === "interactive" || appMode === "gui");
 	time("initTheme");
 
-	// Show deprecation warnings in interactive mode
+	// Show deprecation warnings in interactive mode, or forward as diagnostics for GUI mode
 	if (appMode === "interactive" && deprecationWarnings.length > 0) {
 		await showDeprecationWarnings(deprecationWarnings);
+	} else if (appMode === "gui" && deprecationWarnings.length > 0) {
+		startupDiagnostics = deduplicateDiagnostics([
+			...startupDiagnostics,
+			...deprecationWarnings.map((message) => ({ type: "warning" as const, message })),
+		]);
 	}
 
+	const hasInteractiveUI = appMode === "interactive" || appMode === "gui";
 	time("resolveModelScope");
-	if (appMode !== "interactive" || hasRuntimeErrors) {
+	if (!hasInteractiveUI || hasRuntimeErrors) {
 		reportDiagnostics(startupDiagnostics);
 	}
 	if (hasRuntimeErrors) {
@@ -991,7 +1006,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createAgentSession");
 
-	if (appMode !== "interactive" && !session.model) {
+	if (!hasInteractiveUI && !session.model) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}
@@ -1015,6 +1030,20 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		printTimings();
 		await runRpcMode(runtime);
+	} else if (appMode === "gui") {
+		printTimings();
+		await runGuiMode(runtime, {
+			migratedProviders,
+			startupDiagnostics,
+			modelFallbackMessage,
+			autoTrustOnReloadCwd,
+			initialMessage,
+			initialImages,
+			initialMessages: parsed.messages,
+			verbose: parsed.verbose,
+			initialThemeSetting: parsed.useTheme,
+			noSession: parsed.noSession,
+		});
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,

@@ -308,3 +308,218 @@ export class Button extends GuiComponent {
 		return false;
 	}
 }
+
+export interface IconButtonOptions {
+	readonly icon: VectorIconName;
+	readonly size?: number;
+	readonly iconSize?: number;
+	readonly radius?: number;
+	readonly color?: Color;
+	readonly hoverColor?: Color;
+	readonly activeColor?: Color;
+	readonly background?: Color;
+	readonly hoverBackground?: Color;
+	readonly activeBackground?: Color;
+	readonly borderColor?: Color;
+	readonly active?: boolean;
+	readonly disabled?: boolean;
+	readonly label?: string;
+	readonly tooltip?: string;
+	readonly onClick?: () => void;
+}
+
+/** Hoverable square icon button for toolbars, panels, headers, and inline actions. */
+export class IconButton extends GuiComponent {
+	private iconValue: VectorIconName;
+	private sizeValue: number;
+	private iconSizeValue: number;
+	private radiusValue: number | undefined;
+	private colorValue: Color | undefined;
+	private hoverColorValue: Color | undefined;
+	private activeColorValue: Color | undefined;
+	private backgroundValue: Color | undefined;
+	private hoverBackgroundValue: Color | undefined;
+	private activeBackgroundValue: Color | undefined;
+	private borderColorValue: Color | undefined;
+	private activeValue: boolean;
+	private disabledValue: boolean;
+	private labelText: string;
+	private pressed = false;
+	onClick: (() => void) | undefined;
+
+	constructor(options: IconButtonOptions) {
+		super();
+		this.iconValue = options.icon;
+		this.sizeValue = Math.max(16, options.size ?? 28);
+		this.iconSizeValue = Math.max(8, options.iconSize ?? 14);
+		this.radiusValue = options.radius;
+		this.colorValue = options.color;
+		this.hoverColorValue = options.hoverColor;
+		this.activeColorValue = options.activeColor;
+		this.backgroundValue = options.background;
+		this.hoverBackgroundValue = options.hoverBackground;
+		this.activeBackgroundValue = options.activeBackground;
+		this.borderColorValue = options.borderColor;
+		this.activeValue = options.active ?? false;
+		this.disabledValue = options.disabled ?? false;
+		this.labelText = options.label ?? options.tooltip ?? options.icon;
+		this.onClick = options.onClick;
+		this.focusable = !this.disabledValue;
+		this.cursor = this.disabledValue ? SGUI_CURSOR_ARROW : SGUI_CURSOR_POINTER;
+	}
+
+	setIcon(icon: VectorIconName): void {
+		if (this.iconValue === icon) return;
+		this.iconValue = icon;
+		this.invalidate();
+	}
+
+	getIcon(): VectorIconName {
+		return this.iconValue;
+	}
+
+	setActive(active: boolean): void {
+		if (this.activeValue === active) return;
+		this.activeValue = active;
+		this.invalidate();
+	}
+
+	isActive(): boolean {
+		return this.activeValue;
+	}
+
+	setDisabled(disabled: boolean): void {
+		this.disabledValue = disabled;
+		this.focusable = !disabled;
+		this.cursor = disabled ? SGUI_CURSOR_ARROW : SGUI_CURSOR_POINTER;
+		this.pressed = false;
+		this.invalidate();
+	}
+
+	setLabel(label: string): void {
+		this.labelText = label;
+		this.invalidate();
+	}
+
+	measure(_ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
+		return {
+			width: Math.min(maxWidth, this.sizeValue),
+			height: maxHeight !== undefined ? Math.min(maxHeight, this.sizeValue) : this.sizeValue,
+		};
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		const t = ctx.theme;
+		const hovered = !this.disabledValue && this.isHovered();
+		const focused = !this.disabledValue && ctx.isFocused(this);
+		const radius = this.radiusValue ?? t.radiusSmall;
+
+		let bg = this.backgroundValue;
+		if (this.activeValue) {
+			bg = this.activeBackgroundValue ?? t.surfaceActive;
+		} else if (this.pressed && !this.disabledValue) {
+			bg = this.activeBackgroundValue ?? mixColors(t.surfaceHover, t.text, t.dark ? 0.12 : 0.08);
+		} else if (hovered) {
+			bg = this.hoverBackgroundValue ?? t.hover;
+		}
+
+		let fg = this.colorValue ?? t.textSecondary;
+		if (this.disabledValue) {
+			fg = t.textDisabled;
+		} else if (this.activeValue) {
+			fg = this.activeColorValue ?? t.textBright;
+		} else if (hovered || this.pressed) {
+			fg = this.hoverColorValue ?? t.textPrimary;
+		}
+
+		if (focused) {
+			drawFocusHalo(ctx, r, radius, 0.24, 3);
+		}
+		if (bg !== undefined) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, bg, radius);
+		}
+		if (this.borderColorValue !== undefined) {
+			ctx.strokeRect(r.x, r.y, r.width, r.height, this.borderColorValue, 1, radius);
+		}
+
+		const iconSize = Math.min(this.iconSizeValue, Math.max(8, Math.min(r.width, r.height) - 4));
+		const ix = r.x + (r.width - iconSize) * 0.5;
+		const iy = r.y + (r.height - iconSize) * 0.5;
+		drawVectorIcon(ctx, this.iconValue, ix, iy, iconSize, fg);
+	}
+
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
+		if (this.disabledValue) {
+			return { handled: false };
+		}
+		if (event.phase === "down" && event.button === "left") {
+			this.pressed = true;
+			this.invalidate();
+			return { handled: true, capture: this, focus: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "drag") {
+			return { handled: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left") {
+			const wasPressed = this.pressed;
+			this.pressed = false;
+			this.invalidate();
+			if (wasPressed && pointInRect(event.x, event.y, this.layoutRect)) {
+				this.onClick?.();
+			}
+			return { handled: true, releaseCapture: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "leave" && this.pressed) {
+			this.pressed = false;
+			this.invalidate();
+		}
+		return { handled: true, cursor: SGUI_CURSOR_POINTER };
+	}
+
+	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
+		if (this.disabledValue) {
+			return false;
+		}
+		if (event.phase === "down" && ctx.keybindings.matches(event, "activate")) {
+			this.onClick?.();
+			return true;
+		}
+		return false;
+	}
+
+	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
+		if (!this.visible || this.layoutRect.width <= 0 || this.layoutRect.height <= 0) return;
+		let flags = this.disabledValue ? 0 : SGUI_A11Y_STATE_ENABLED;
+		if (ctx.isFocused(this)) flags |= SGUI_A11Y_STATE_FOCUSED;
+		out.push({
+			id: this.a11yId,
+			role: "button",
+			stateFlags: flags,
+			rect: this.layoutRect,
+			label: this.labelText,
+		});
+	}
+
+	override handleAccessibilityAction(
+		nodeId: number,
+		action: A11yActionKind,
+		_value: string,
+		ctx: GuiRenderContext,
+	): boolean {
+		if (nodeId !== this.a11yId || this.disabledValue) return false;
+		if (action === "focus") {
+			ctx.requestFocus(this);
+			this.invalidate();
+			return true;
+		}
+		if (action === "press") {
+			ctx.requestFocus(this);
+			this.onClick?.();
+			this.invalidate();
+			return true;
+		}
+		return false;
+	}
+}

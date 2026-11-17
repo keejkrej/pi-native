@@ -1,13 +1,10 @@
-.PHONY: all pi gui examples coverage test clean
+.PHONY: all pi examples coverage test clean
 
 all:
 	./build.sh all
 
 pi:
 	./build.sh pi
-
-gui:
-	./build.sh gui
 
 examples:
 	./build.sh examples

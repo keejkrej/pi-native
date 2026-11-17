@@ -91,7 +91,7 @@ export default function typescript(hljs: HLJSApi): LanguageDetail {
 
   return {
     name: "TypeScript",
-    aliases: ["ts", "tsx"],
+    aliases: ["ts", "tsx", "mts", "cts"],
     keywords: KEYWORDS,
     contains: [
       hljs.SHEBANG(),

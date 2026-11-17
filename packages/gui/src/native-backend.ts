@@ -34,6 +34,8 @@ export abstract class NativeDriver {
 	abstract windowCreate(title: string, width: number, height: number, flags: number): number;
 	abstract windowDestroy(windowId: number): void;
 	abstract windowSetTitle(windowId: number, title: string): void;
+	abstract windowSetChrome(windowId: number, darkMode: number, sidebarWidth: number, vibrancyEnabled: number): void;
+	abstract windowAction(windowId: number, action: number): void;
 	abstract windowGetMetrics(windowId: number, outMetrics: Uint8Array): number;
 	abstract measureText(
 		fontFamily: number,
@@ -136,6 +138,14 @@ export class NativeBackend extends GuiBackend {
 
 	setWindowTitle(windowId: number, title: string): void {
 		this.driver.windowSetTitle(windowId, title);
+	}
+
+	setWindowChrome(windowId: number, darkMode: boolean, sidebarWidth: number, vibrancyEnabled: boolean): void {
+		this.driver.windowSetChrome(windowId, darkMode ? 1 : 0, sidebarWidth, vibrancyEnabled ? 1 : 0);
+	}
+
+	windowAction(windowId: number, action: number): void {
+		this.driver.windowAction(windowId, action);
 	}
 
 	getWindowMetrics(windowId: number): WindowMetrics {

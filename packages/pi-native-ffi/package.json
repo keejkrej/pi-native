@@ -1,0 +1,15 @@
+{
+	"name": "@earendil-works/pi-native-ffi",
+	"version": "1.5.2",
+	"description": "Native Darwin FFI bindings for clipboard, modifiers, ImageIO, word segmentation, and JavaScriptCore",
+	"type": "module",
+	"main": "./src/index.ts",
+	"exports": {
+		".": {
+			"scriptc": "./src/index.ts",
+			"source": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
+	},
+	"license": "MIT"
+}

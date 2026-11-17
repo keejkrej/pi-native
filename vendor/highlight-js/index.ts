@@ -14,27 +14,57 @@ import {
   type RegExpLike,
 } from "./core.ts";
 
+import awk from "./languages/awk.ts";
 import bash from "./languages/bash.ts";
 import c from "./languages/c.ts";
+import clojure from "./languages/clojure.ts";
+import cmake from "./languages/cmake.ts";
 import cpp from "./languages/cpp.ts";
+import crystal from "./languages/crystal.ts";
 import csharp from "./languages/csharp.ts";
 import dart from "./languages/dart.ts";
+import erlang from "./languages/erlang.ts";
+import fish from "./languages/fish.ts";
+import fsharp from "./languages/fsharp.ts";
+import gleam from "./languages/gleam.ts";
+import glsl from "./languages/glsl.ts";
 import go from "./languages/go.ts";
+import graphql from "./languages/graphql.ts";
 import groovy from "./languages/groovy.ts";
+import hcl from "./languages/hcl.ts";
+import hlsl from "./languages/hlsl.ts";
 import java from "./languages/java.ts";
 import javascript from "./languages/javascript.ts";
 import json from "./languages/json.ts";
+import julia from "./languages/julia.ts";
 import kotlin from "./languages/kotlin.ts";
+import latex from "./languages/latex.ts";
+import llvm from "./languages/llvm.ts";
 import lua from "./languages/lua.ts";
+import nginx from "./languages/nginx.ts";
+import nim from "./languages/nim.ts";
 import nix from "./languages/nix.ts";
+import odin from "./languages/odin.ts";
 import perl from "./languages/perl.ts";
 import php from "./languages/php.ts";
+import prisma from "./languages/prisma.ts";
+import protobuf from "./languages/protobuf.ts";
 import python from "./languages/python.ts";
+import r from "./languages/r.ts";
 import ruby from "./languages/ruby.ts";
 import rust from "./languages/rust.ts";
 import scala from "./languages/scala.ts";
+import scheme from "./languages/scheme.ts";
+import solidity from "./languages/solidity.ts";
+import svelte from "./languages/svelte.ts";
 import swift from "./languages/swift.ts";
+import toml from "./languages/toml.ts";
 import typescript from "./languages/typescript.ts";
+import typst from "./languages/typst.ts";
+import v from "./languages/v.ts";
+import vue from "./languages/vue.ts";
+import wgsl from "./languages/wgsl.ts";
+import x86asm from "./languages/x86asm.ts";
 
 function ada(api: HLJSApi): LanguageDetail {
   return {
@@ -76,7 +106,7 @@ function diff(api: HLJSApi): LanguageDetail {
 function xml(api: HLJSApi): LanguageDetail {
   return {
     name: "HTML, XML",
-    aliases: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"],
+    aliases: ["html", "htm", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"],
     case_insensitive: true,
     contains: [
       api.COMMENT("<!--", "-->", { relevance: 10 }),
@@ -85,16 +115,27 @@ function xml(api: HLJSApi): LanguageDetail {
       { className: "string", begin: /<!\[CDATA\[/, end: /\]\]>/ },
       {
         className: "tag",
-        begin: /<\/?[a-zA-Z][\w:-]*/,
+        begin: /<\/?(?=[a-zA-Z])/,
         end: /\/?>/,
         contains: [
           {
-            className: "attr",
-            begin: /[a-zA-Z_:][\w:.-]*(?=\s*=)/,
+            className: "name",
+            begin: /[a-zA-Z][\w:-]*/,
             relevance: 0,
+            starts: {
+              endsWithParent: true,
+              relevance: 0,
+              contains: [
+                {
+                  className: "attr",
+                  begin: /[a-zA-Z_:][\w:.-]*(?=\s*=)/,
+                  relevance: 0,
+                },
+                api.QUOTE_STRING_MODE,
+                api.APOS_STRING_MODE,
+              ],
+            },
           },
-          api.QUOTE_STRING_MODE,
-          api.APOS_STRING_MODE,
         ],
       },
     ],
@@ -104,6 +145,7 @@ function xml(api: HLJSApi): LanguageDetail {
 function css(api: HLJSApi): LanguageDetail {
   return {
     name: "CSS",
+    aliases: ["scss", "less"],
     case_insensitive: true,
     contains: [
       api.C_BLOCK_COMMENT_MODE,
@@ -175,8 +217,8 @@ function sql(api: HLJSApi): LanguageDetail {
 
 function ini(api: HLJSApi): LanguageDetail {
   return {
-    name: "TOML, also INI",
-    aliases: ["toml"],
+    name: "INI",
+    aliases: ["cfg"],
     case_insensitive: true,
     keywords: { literal: "true false" },
     contains: [
@@ -358,6 +400,36 @@ function registerAll(): void {
   hljs.registerLanguage("elixir", elixir);
   hljs.registerLanguage("ocaml", ocaml);
   hljs.registerLanguage("powershell", powershell);
+  hljs.registerLanguage("toml", toml);
+  hljs.registerLanguage("graphql", graphql);
+  hljs.registerLanguage("protobuf", protobuf);
+  hljs.registerLanguage("hcl", hcl);
+  hljs.registerLanguage("cmake", cmake);
+  hljs.registerLanguage("glsl", glsl);
+  hljs.registerLanguage("wgsl", wgsl);
+  hljs.registerLanguage("hlsl", hlsl);
+  hljs.registerLanguage("svelte", svelte);
+  hljs.registerLanguage("vue", vue);
+  hljs.registerLanguage("prisma", prisma);
+  hljs.registerLanguage("clojure", clojure);
+  hljs.registerLanguage("julia", julia);
+  hljs.registerLanguage("r", r);
+  hljs.registerLanguage("solidity", solidity);
+  hljs.registerLanguage("erlang", erlang);
+  hljs.registerLanguage("fsharp", fsharp);
+  hljs.registerLanguage("nim", nim);
+  hljs.registerLanguage("crystal", crystal);
+  hljs.registerLanguage("gleam", gleam);
+  hljs.registerLanguage("odin", odin);
+  hljs.registerLanguage("v", v);
+  hljs.registerLanguage("typst", typst);
+  hljs.registerLanguage("latex", latex);
+  hljs.registerLanguage("nginx", nginx);
+  hljs.registerLanguage("llvm", llvm);
+  hljs.registerLanguage("x86asm", x86asm);
+  hljs.registerLanguage("awk", awk);
+  hljs.registerLanguage("fish", fish);
+  hljs.registerLanguage("scheme", scheme);
 }
 
 registerAll();
@@ -365,6 +437,7 @@ registerAll();
 export {
   hljs,
   createHljs,
+  registerAll as registerAllLanguages,
   type AutoHighlightResult,
   type HLJSApi,
   type HighlightOptions,

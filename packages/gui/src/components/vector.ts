@@ -47,6 +47,12 @@ export type VectorIconName =
 	| "trash"
 	| "chevron-right"
 	| "chevron-left"
+	| "chevron-down"
+	| "chevron-up"
+	| "arrow-left"
+	| "arrow-right"
+	| "arrow-up"
+	| "arrow-down"
 	| "search"
 	| "sliders"
 	| "palette"
@@ -65,7 +71,24 @@ export type VectorIconName =
 	| "stop"
 	| "menu"
 	| "info"
-	| "alert";
+	| "alert"
+	| "panel-left"
+	| "panel-right"
+	| "compose"
+	| "git-branch"
+	| "git-commit"
+	| "file-diff"
+	| "file-code"
+	| "laptop"
+	| "copy"
+	| "edit"
+	| "pin"
+	| "fork"
+	| "close"
+	| "external-link"
+	| "eye"
+	| "monitor"
+	| "waku-mark";
 
 /**
  * Pure-TypeScript anti-aliased RGBA pixel surface (default 2x Retina scale)
@@ -698,6 +721,19 @@ export function renderVectorIcon(
 	const arc = (cx: number, cy: number, r: number, startAngle: number, endAngle: number): void => {
 		surface.drawArc(x + cx * u, y + cy * u, r * u, startAngle, endAngle, lw, color, true);
 	};
+	const strokeRoundRect = (rx: number, ry: number, rw: number, rh: number, rr: number): void => {
+		const cr = Math.min(rr, rw * 0.5, rh * 0.5);
+		line(rx + cr, ry, rx + rw - cr, ry);
+		line(rx + rw, ry + cr, rx + rw, ry + rh - cr);
+		line(rx + rw - cr, ry + rh, rx + cr, ry + rh);
+		line(rx, ry + rh - cr, rx, ry + cr);
+		if (cr > 0.1) {
+			arc(rx + cr, ry + cr, cr, Math.PI, Math.PI * 1.5);
+			arc(rx + rw - cr, ry + cr, cr, -Math.PI * 0.5, 0);
+			arc(rx + rw - cr, ry + rh - cr, cr, 0, Math.PI * 0.5);
+			arc(rx + cr, ry + rh - cr, cr, Math.PI * 0.5, Math.PI);
+		}
+	};
 
 	switch (name) {
 		case "plus":
@@ -980,6 +1016,249 @@ export function renderVectorIcon(
 			);
 			line(12, 9.2, 12, 13.8);
 			fillDot(12, 16.4, dotR * 0.92);
+			break;
+		case "panel-left":
+			strokeRoundRect(3.2, 3.2, 17.6, 17.6, 2.8);
+			line(9.2, 3.6, 9.2, 20.4);
+			break;
+		case "panel-right":
+			strokeRoundRect(3.2, 3.2, 17.6, 17.6, 2.8);
+			line(14.8, 3.6, 14.8, 20.4);
+			break;
+		case "compose":
+			poly([
+				[12.5, 4],
+				[6, 4],
+				[4, 6],
+				[4, 18],
+				[6, 20],
+				[18, 20],
+				[20, 18],
+				[20, 11.5],
+			]);
+			line(19.5, 4.5, 11, 13);
+			poly([
+				[10, 14],
+				[11, 11.5],
+				[12.5, 13],
+			]);
+			break;
+		case "arrow-left":
+			line(19, 12, 5.2, 12);
+			poly([
+				[11.5, 5.6],
+				[5, 12],
+				[11.5, 18.4],
+			]);
+			break;
+		case "arrow-right":
+			line(5, 12, 18.8, 12);
+			poly([
+				[12.5, 5.6],
+				[19, 12],
+				[12.5, 18.4],
+			]);
+			break;
+		case "arrow-up":
+			line(12, 19, 12, 5.2);
+			poly([
+				[5.6, 11.5],
+				[12, 5],
+				[18.4, 11.5],
+			]);
+			break;
+		case "arrow-down":
+			line(12, 5, 12, 18.8);
+			poly([
+				[5.6, 12.5],
+				[12, 19],
+				[18.4, 12.5],
+			]);
+			break;
+		case "chevron-down":
+			poly([
+				[6.2, 9.2],
+				[12, 15.2],
+				[17.8, 9.2],
+			]);
+			break;
+		case "chevron-up":
+			poly([
+				[6.2, 15],
+				[12, 9],
+				[17.8, 15],
+			]);
+			break;
+		case "git-branch":
+			line(6.5, 3.5, 6.5, 15);
+			circle(17.5, 6.2, 2.7);
+			circle(6.5, 17.8, 2.7);
+			arc(9.5, 8.9, 8.0, 0, Math.PI * 0.5);
+			break;
+		case "git-commit":
+			circle(12, 12, 3.1);
+			line(3, 12, 8.8, 12);
+			line(15.2, 12, 21, 12);
+			break;
+		case "file-diff":
+			poly(
+				[
+					[14.2, 2.8],
+					[5.8, 2.8],
+					[4.5, 4.1],
+					[4.5, 19.9],
+					[5.8, 21.2],
+					[18.2, 21.2],
+					[19.5, 19.9],
+					[19.5, 8.1],
+				],
+				true,
+			);
+			poly([
+				[14.2, 2.8],
+				[14.2, 8.1],
+				[19.5, 8.1],
+			]);
+			line(9.2, 12.8, 14.8, 12.8);
+			line(12, 10, 12, 15.6);
+			line(9.2, 18.2, 14.8, 18.2);
+			break;
+		case "file-code":
+			poly(
+				[
+					[14.2, 2.8],
+					[5.8, 2.8],
+					[4.5, 4.1],
+					[4.5, 19.9],
+					[5.8, 21.2],
+					[18.2, 21.2],
+					[19.5, 19.9],
+					[19.5, 8.1],
+				],
+				true,
+			);
+			poly([
+				[14.2, 2.8],
+				[14.2, 8.1],
+				[19.5, 8.1],
+			]);
+			poly([
+				[10, 12.2],
+				[7.8, 14.5],
+				[10, 16.8],
+			]);
+			poly([
+				[14, 12.2],
+				[16.2, 14.5],
+				[14, 16.8],
+			]);
+			break;
+		case "laptop":
+			strokeRoundRect(3.6, 4.4, 16.8, 11.4, 2);
+			line(2, 19.2, 22, 19.2);
+			break;
+		case "copy":
+			strokeRoundRect(8.4, 8.4, 12.2, 12.2, 2);
+			poly([
+				[4.6, 15.6],
+				[3.6, 14.6],
+				[3.6, 4.8],
+				[4.8, 3.6],
+				[14.6, 3.6],
+				[15.6, 4.6],
+			]);
+			break;
+		case "edit":
+			poly(
+				[
+					[17.5, 3.5],
+					[20.5, 6.5],
+					[8.5, 18.5],
+					[4, 20],
+					[5.5, 15.5],
+				],
+				true,
+			);
+			line(14.8, 6.2, 17.8, 9.2);
+			break;
+		case "pin":
+			line(9, 4, 15, 4);
+			poly([
+				[10, 4],
+				[9.2, 9.6],
+				[6.6, 12.6],
+				[17.4, 12.6],
+				[14.8, 9.6],
+				[14, 4],
+			]);
+			line(12, 12.6, 12, 20.5);
+			break;
+		case "fork":
+			line(3, 12, 10.6, 12);
+			line(10.6, 12, 19.8, 4.8);
+			poly([
+				[15, 4.4],
+				[20.2, 4.4],
+				[20.2, 9.6],
+			]);
+			line(10.6, 12, 19.8, 19.2);
+			poly([
+				[15, 19.6],
+				[20.2, 19.6],
+				[20.2, 14.4],
+			]);
+			break;
+		case "close":
+			line(6.2, 6.2, 17.8, 17.8);
+			line(17.8, 6.2, 6.2, 17.8);
+			break;
+		case "external-link":
+			poly([
+				[18, 13.5],
+				[18, 18.8],
+				[16.8, 20],
+				[5.2, 20],
+				[4, 18.8],
+				[4, 7.2],
+				[5.2, 6],
+				[10.5, 6],
+			]);
+			line(10.5, 13.5, 19.6, 4.4);
+			poly([
+				[14.5, 4],
+				[20, 4],
+				[20, 9.5],
+			]);
+			break;
+		case "eye":
+			arc(12, 16.5, 10.2, -Math.PI * 0.78, -Math.PI * 0.22);
+			arc(12, 7.5, 10.2, Math.PI * 0.22, Math.PI * 0.78);
+			circle(12, 12, 2.8);
+			break;
+		case "monitor":
+			strokeRoundRect(2.8, 4, 18.4, 12.2, 2);
+			line(12, 16.4, 12, 20);
+			line(7.8, 20, 16.2, 20);
+			break;
+		case "waku-mark":
+			poly(
+				[
+					[12, 2.8],
+					[19.8, 7.4],
+					[19.8, 16.6],
+					[12, 21.2],
+					[4.2, 16.6],
+					[4.2, 7.4],
+				],
+				true,
+			);
+			poly([
+				[7.4, 8.8],
+				[9.8, 15.2],
+				[12, 10.6],
+				[14.2, 15.2],
+				[16.6, 8.8],
+			]);
 			break;
 	}
 }

@@ -9,6 +9,8 @@ declare function sguiShutdown(): void;
 declare function sguiWindowCreate(title: string, width: number, height: number, flags: number): number;
 declare function sguiWindowDestroy(windowId: number): void;
 declare function sguiWindowSetTitle(windowId: number, title: string): void;
+declare function sguiWindowSetChrome(windowId: number, darkMode: number, sidebarWidth: number, vibrancyEnabled: number): void;
+declare function sguiWindowAction(windowId: number, action: number): void;
 declare function sguiWindowGetMetrics(windowId: number, outMetrics: Uint8Array): number;
 declare function sguiMeasureText(
 	fontFamily: number,
@@ -63,6 +65,14 @@ export class FfiNativeDriver extends NativeDriver {
 
 	windowSetTitle(windowId: number, title: string): void {
 		sguiWindowSetTitle(windowId, title);
+	}
+
+	windowSetChrome(windowId: number, darkMode: number, sidebarWidth: number, vibrancyEnabled: number): void {
+		sguiWindowSetChrome(windowId, darkMode, sidebarWidth, vibrancyEnabled);
+	}
+
+	windowAction(windowId: number, action: number): void {
+		sguiWindowAction(windowId, action);
 	}
 
 	windowGetMetrics(windowId: number, outMetrics: Uint8Array): number {

@@ -204,6 +204,7 @@ function makeGalleryGuiTheme(dark: boolean): GuiTheme {
 	const p = getGalleryPalette(dark);
 	const base = dark ? darkGuiTheme : lightGuiTheme;
 	return {
+		...base,
 		dark,
 		background: p.background,
 		surface: p.surface,

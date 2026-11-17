@@ -8,7 +8,7 @@ import {
 	type ModelsPublication,
 	type Provider,
 	type RefreshModelsContext,
-} from "@earendil-works/pi-ai";
+} from "@pi-ts/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
 import {

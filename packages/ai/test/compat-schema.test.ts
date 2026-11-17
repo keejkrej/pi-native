@@ -1,4 +1,4 @@
-import type { Static } from "@earendil-works/pi-schema";
+import type { Static } from "@pi-ts/schema";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
 	AnthropicMessagesCompatSchema,

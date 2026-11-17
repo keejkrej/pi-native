@@ -8,7 +8,7 @@ import {
 	nativeJscDestroy,
 	nativeJscEval,
 	type NativeJscEvalResult,
-} from "../../../../pi-native-ffi/src/index.ts";
+} from "@pi-ts/ffi";
 
 export const DEFAULT_MAX_WORKERS = 2;
 export const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 60_000;

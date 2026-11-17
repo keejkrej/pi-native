@@ -975,7 +975,7 @@ function createBenchApp(
   appRef = new GuiApp({
     backend,
     window: {
-      title: "UI Bench — scriptc-ui",
+      title: "UI Bench — @pi-ts/gui",
       width: 880,
       height: 680,
       resizable: true,

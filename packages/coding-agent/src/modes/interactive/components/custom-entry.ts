@@ -1,4 +1,4 @@
-import { Box, type Component, Container, Spacer, Text, toComponent } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Spacer, Text, toComponent } from "@pi-ts/tui";
 import type { EntryRenderer } from "../../../core/extensions/types.ts";
 import type { CustomEntry } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";

@@ -1,5 +1,5 @@
-import { type CoercingValidator, compile, type JsonSchema } from "@earendil-works/pi-schema";
-import { formats } from "@earendil-works/pi-schema/formats";
+import { type CoercingValidator, compile, type JsonSchema } from "@pi-ts/schema";
+import { formats } from "@pi-ts/schema/formats";
 import type { Tool, ToolCall } from "../types.ts";
 import { stripSchemaMetaKeys } from "./json-schema.ts";
 

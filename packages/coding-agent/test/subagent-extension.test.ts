@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@pi-ts/agent-core";
+import { fauxAssistantMessage, fauxToolCall, type Message } from "@pi-ts/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import subagentExtension from "../examples/extensions/subagent/index.ts";
 import { CONFIG_DIR_NAME } from "../src/config.ts";

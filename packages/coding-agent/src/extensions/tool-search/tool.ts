@@ -8,7 +8,7 @@
  * like any other tool change and survives `/tree`, resume, and fork on that branch.
  */
 
-import { getWordSegmenter } from "@earendil-works/pi-tui";
+import { getWordSegmenter } from "@pi-ts/tui";
 import { type Static, Type } from "typebox";
 import type {
 	ExtensionAPI,

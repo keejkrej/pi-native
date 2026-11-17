@@ -5,7 +5,7 @@ import {
 	type GuiA11yNode,
 	HeadlessBackend,
 	lightGuiTheme,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import { MockGuiSessionController } from "../src/modes/gui/controller.ts";
 import {
 	openCommandPalette,

@@ -9,7 +9,7 @@ import {
 	type Static,
 	str,
 	union,
-} from "@earendil-works/pi-schema";
+} from "@pi-ts/schema";
 import { ModelCostSchema } from "./model-schema.ts";
 import { openObject, stringLiteral, stringRecord } from "./schema-builders.ts";
 

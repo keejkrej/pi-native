@@ -1,0 +1,81 @@
+{
+	"ffi_format": 7,
+	"functions": [
+		{ "name": "piFfiAvailable", "symbol": "pi_ffi_available", "params": [], "returns": "i32" },
+		{
+			"name": "piFfiReadScratch",
+			"symbol": "pi_ffi_read_scratch",
+			"params": ["mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiClipboardGetText",
+			"symbol": "pi_ffi_clipboard_get_text",
+			"params": [],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiClipboardSetText",
+			"symbol": "pi_ffi_clipboard_set_text",
+			"params": ["string"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiClipboardGetImagePng",
+			"symbol": "pi_ffi_clipboard_get_image_png",
+			"params": [],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiClipboardGetFilePaths",
+			"symbol": "pi_ffi_clipboard_get_file_paths",
+			"params": [],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiIsModifierPressed",
+			"symbol": "pi_ffi_is_modifier_pressed",
+			"params": ["string"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiImageInspect",
+			"symbol": "pi_ffi_image_inspect",
+			"params": ["bytes", "mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiImageTransform",
+			"symbol": "pi_ffi_image_transform",
+			"params": ["bytes", "u32", "u32", "u32", "u32", "u32"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiWordSegment",
+			"symbol": "pi_ffi_word_segment",
+			"params": ["string"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiJscCreate",
+			"symbol": "pi_ffi_jsc_create",
+			"params": [],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiJscEval",
+			"symbol": "pi_ffi_jsc_eval",
+			"params": ["i32", "string", "string", "f64", "mutable-bytes"],
+			"returns": "i32"
+		},
+		{
+			"name": "piFfiJscDestroy",
+			"symbol": "pi_ffi_jsc_destroy",
+			"params": ["i32"],
+			"returns": "void"
+		}
+	],
+	"libraries": ["../native/darwin/build/libpiffi.a"],
+	"system_libraries": [],
+	"frameworks": ["AppKit", "CoreFoundation", "CoreGraphics", "Foundation", "ImageIO", "JavaScriptCore"]
+}

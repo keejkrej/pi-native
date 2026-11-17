@@ -75,7 +75,7 @@ static bool pi_scratch_set(const uint8_t *bytes, size_t len) {
 	return true;
 }
 
-int32_t pi_native_read_scratch(uint8_t *out, size_t out_len) {
+int32_t pi_ffi_read_scratch(uint8_t *out, size_t out_len) {
 	PiScratchBuffer *buf = pi_get_scratch();
 	if (!buf || buf->len == 0 || !out || out_len == 0) return 0;
 	size_t to_copy = buf->len < out_len ? buf->len : out_len;
@@ -83,7 +83,7 @@ int32_t pi_native_read_scratch(uint8_t *out, size_t out_len) {
 	return (int32_t)to_copy;
 }
 
-int32_t pi_native_available(void) {
+int32_t pi_ffi_available(void) {
 	return 1;
 }
 
@@ -91,7 +91,7 @@ int32_t pi_native_available(void) {
 // Clipboard & modifiers (AppKit + CoreGraphics)
 // ---------------------------------------------------------------------------
 
-int32_t pi_native_clipboard_get_text(void) {
+int32_t pi_ffi_clipboard_get_text(void) {
 	@autoreleasepool {
 		@try {
 			NSPasteboard *pb = [NSPasteboard generalPasteboard];
@@ -109,7 +109,7 @@ int32_t pi_native_clipboard_get_text(void) {
 	}
 }
 
-int32_t pi_native_clipboard_set_text(const uint8_t *text, size_t text_len) {
+int32_t pi_ffi_clipboard_set_text(const uint8_t *text, size_t text_len) {
 	@autoreleasepool {
 		@try {
 			if (!text && text_len > 0) return 0;
@@ -129,7 +129,7 @@ int32_t pi_native_clipboard_set_text(const uint8_t *text, size_t text_len) {
 	}
 }
 
-int32_t pi_native_clipboard_get_image_png(void) {
+int32_t pi_ffi_clipboard_get_image_png(void) {
 	@autoreleasepool {
 		@try {
 			NSPasteboard *pb = [NSPasteboard generalPasteboard];
@@ -159,7 +159,7 @@ int32_t pi_native_clipboard_get_image_png(void) {
 	}
 }
 
-int32_t pi_native_clipboard_get_file_paths(void) {
+int32_t pi_ffi_clipboard_get_file_paths(void) {
 	@autoreleasepool {
 		@try {
 			NSPasteboard *pb = [NSPasteboard generalPasteboard];
@@ -189,7 +189,7 @@ int32_t pi_native_clipboard_get_file_paths(void) {
 	}
 }
 
-int32_t pi_native_is_modifier_pressed(const uint8_t *name, size_t name_len) {
+int32_t pi_ffi_is_modifier_pressed(const uint8_t *name, size_t name_len) {
 	if (!name || name_len == 0) return 0;
 	CGEventFlags mask = 0;
 	if (name_len == 5 && memcmp(name, "shift", 5) == 0) {
@@ -246,7 +246,7 @@ static uint32_t read_exif_orientation(CFDictionaryRef props) {
 	return 1;
 }
 
-int32_t pi_native_image_inspect(const uint8_t *bytes, size_t len, uint8_t *out, size_t out_len) {
+int32_t pi_ffi_image_inspect(const uint8_t *bytes, size_t len, uint8_t *out, size_t out_len) {
 	@autoreleasepool {
 		if (!bytes || len == 0 || len > (size_t)LONG_MAX || !out || out_len < 12) return -1;
 
@@ -289,7 +289,7 @@ int32_t pi_native_image_inspect(const uint8_t *bytes, size_t len, uint8_t *out, 
 	}
 }
 
-int32_t pi_native_image_transform(
+int32_t pi_ffi_image_transform(
 	const uint8_t *bytes,
 	size_t len,
 	uint32_t target_w,
@@ -478,7 +478,7 @@ static uint32_t range_is_word_like(CFStringRef str, CFCharacterSetRef alphaNum, 
 	return CFStringFindCharacterFromSet(str, alphaNum, r, 0, NULL) ? 1u : 0u;
 }
 
-int32_t pi_native_word_segment(const uint8_t *text, size_t text_len) {
+int32_t pi_ffi_word_segment(const uint8_t *text, size_t text_len) {
 	@autoreleasepool {
 		if (text_len == 0) {
 			pi_scratch_set(NULL, 0);
@@ -624,7 +624,7 @@ static void pi_jsc_init_once(void) {
 	g_jsc_clear_time_limit = u_clr.fn;
 }
 
-int32_t pi_native_jsc_create(void) {
+int32_t pi_ffi_jsc_create(void) {
 	pthread_once(&g_jsc_once, pi_jsc_init_once);
 	pthread_mutex_lock(&g_jsc_table_lock);
 	int free_idx = -1;
@@ -658,7 +658,7 @@ int32_t pi_native_jsc_create(void) {
 	return free_idx + 1;
 }
 
-void pi_native_jsc_destroy(int32_t vm_id) {
+void pi_ffi_jsc_destroy(int32_t vm_id) {
 	pthread_once(&g_jsc_once, pi_jsc_init_once);
 	if (vm_id < 1 || vm_id > PI_JSC_MAX_VMS) return;
 
@@ -805,7 +805,7 @@ static bool pi_jsc_should_terminate(JSContextRef ctx, void *context) {
 	return true;
 }
 
-int32_t pi_native_jsc_eval(
+int32_t pi_ffi_jsc_eval(
 	int32_t vm_id,
 	const uint8_t *code,
 	size_t code_len,

@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import type { TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@pi-ts/tui";
 import { applyPatch } from "diff";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

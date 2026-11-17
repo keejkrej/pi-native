@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-agent-core",
+	"name": "@pi-ts/agent-core",
 	"version": "1.5.2",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -34,7 +34,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/keejkrej/pi-ts.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

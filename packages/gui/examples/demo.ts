@@ -1,5 +1,5 @@
 /**
- * Interactive scriptc-ui demo showcasing native windowing, layouts, Markdown, Editor, overlays, and menus.
+ * Interactive @pi-ts/gui demo showcasing native windowing, layouts, Markdown, Editor, overlays, and menus.
  *
  * Modes:
  *   --headless-smoke   Run deterministic headless UI interactions without opening a native window
@@ -80,7 +80,7 @@ function buildDemoUi(app: GuiApp): {
 	});
 
 	const titleText = new Text({
-		text: "scriptc-ui Native Workspace",
+		text: "@pi-ts/gui Native Workspace",
 		fontSize: 16.5,
 		fontWeight: 700,
 	});
@@ -136,7 +136,7 @@ function buildDemoUi(app: GuiApp): {
 	const headerDivider = new Divider({});
 
 	const welcomeTitle = new Text({
-		text: "Welcome to scriptc-ui",
+		text: "Welcome to @pi-ts/gui",
 		fontSize: 15,
 		fontWeight: 700,
 	});
@@ -473,9 +473,9 @@ function buildDemoUi(app: GuiApp): {
 
 	const menus: readonly MenuSpec[] = [
 		{
-			title: "scriptc-ui",
+			title: "@pi-ts/gui",
 			items: [
-				{ kind: "action", label: "About scriptc-ui", role: "about" },
+				{ kind: "action", label: "About @pi-ts/gui", role: "about" },
 				{ kind: "separator" },
 				{ kind: "action", label: "Toggle Theme", shortcut: "mod+t", onSelect: () => themeButton.onClick?.() },
 				{ kind: "separator" },
@@ -526,7 +526,7 @@ function runHeadlessSmoke(): void {
 	const backend = new HeadlessBackend({ width: 960, height: 640, darkMode: true, platform: "darwin" });
 	const app = new GuiApp({
 		backend,
-		window: { title: "scriptc-ui Smoke", width: 960, height: 640 },
+		window: { title: "@pi-ts/gui Smoke", width: 960, height: 640 },
 	});
 	const ui = buildDemoUi(app);
 	app.renderFrame();
@@ -562,7 +562,7 @@ function runHeadlessSmoke(): void {
 	app.step(0);
 
 	const renderedTexts = backend.getRenderedTexts(app.windowId);
-	if (!renderedTexts.some((t) => t.includes("scriptc-ui Native Workspace"))) {
+	if (!renderedTexts.some((t) => t.includes("@pi-ts/gui Native Workspace"))) {
 		throw new Error("Expected rendered title text in draw stream");
 	}
 	console.log(
@@ -580,7 +580,7 @@ function runNativeSmoke(): void {
 	const backend = createNativeBackend();
 	const app = new GuiApp({
 		backend,
-		window: { title: "scriptc-ui Native Smoke", width: 800, height: 560, resizable: true },
+		window: { title: "@pi-ts/gui Native Smoke", width: 800, height: 560, resizable: true },
 	});
 	buildDemoUi(app);
 	const frame = app.renderFrame();
@@ -615,7 +615,7 @@ async function main(): Promise<void> {
 	const backend = createNativeBackend();
 	const app = new GuiApp({
 		backend,
-		window: { title: "scriptc-ui Demo", width: 1024, height: 720, resizable: true },
+		window: { title: "@pi-ts/gui Demo", width: 1024, height: 720, resizable: true },
 	});
 	buildDemoUi(app);
 	try {

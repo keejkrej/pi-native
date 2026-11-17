@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getNativeClipboard, type NativeClipboard } from "@earendil-works/pi-tui";
+import { getNativeClipboard, type NativeClipboard } from "@pi-ts/tui";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { convertImageBytesToPng } from "./image-convert.ts";
 import { detectSupportedImageMimeType } from "./mime.ts";

@@ -1,5 +1,5 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall } from "@pi-ts/ai";
+import type { ToolResultMessage } from "@pi-ts/ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assistantMsg, userMsg } from "../../utilities.ts";

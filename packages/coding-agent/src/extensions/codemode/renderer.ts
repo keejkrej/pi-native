@@ -2,9 +2,9 @@
  * TUI rendering for the codemode tool call and result.
  */
 
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import type { AgentToolResult } from "@pi-ts/agent-core";
+import type { ImageContent, TextContent } from "@pi-ts/ai";
+import { Container, Spacer, Text } from "@pi-ts/tui";
 import type { ToolDefinition, ToolRenderContext, ToolRenderResultOptions } from "../../core/extensions/types.ts";
 import { replaceTabs, startToolTimer, str, toolTimerText } from "../../core/tools/render-utils.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";

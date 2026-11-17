@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore, type Model, type Provider } from "@pi-ts/ai";
 import { describe, expect, test, vi } from "vitest";
 import { runAuthLogin } from "../src/cli/auth-login.ts";
 import type { LoginTerminal } from "../src/cli/auth-terminal.ts";

@@ -31,8 +31,8 @@ import {
 	runToolCall,
 	type StreamFn,
 	type ThinkingLevel,
-} from "@earendil-works/pi-agent-core";
-import { contentText, getCurrentSystemMessage, getCurrentTools, retryDelayMs } from "@earendil-works/pi-ai";
+} from "@pi-ts/agent-core";
+import { contentText, getCurrentSystemMessage, getCurrentTools, retryDelayMs } from "@pi-ts/ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -44,7 +44,7 @@ import type {
 	ToolResultMessage,
 	Usage,
 	UserMessage,
-} from "@earendil-works/pi-ai/compat";
+} from "@pi-ts/ai/compat";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -56,7 +56,7 @@ import {
 	type RetryCallbacks,
 	resetApiProviders,
 	streamSimple,
-} from "@earendil-works/pi-ai/compat";
+} from "@pi-ts/ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";

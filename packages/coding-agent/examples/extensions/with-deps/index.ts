@@ -3,7 +3,7 @@
  * Demonstrates resolving relative imports alongside extension entry points.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 import { Type } from "typebox";
 import { parseDurationMs } from "./duration.ts";
 

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderToolOutputType } from "@earendil-works/pi-codemode/declarations";
+import { renderToolOutputType } from "@pi-ts/codemode/declarations";
 import {
 	createMcpToolName,
 	type JsonRpcMessage,
@@ -11,8 +11,8 @@ import {
 	McpAuthRequiredError,
 	McpHttpError,
 	McpSessionExpiredError,
-} from "@earendil-works/pi-mcp";
-import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
+} from "@pi-ts/mcp";
+import { createInMemoryTransportPair, type InMemoryTransport } from "@pi-ts/mcp/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import {

@@ -1,6 +1,6 @@
-# `scriptc-ui` Native Desktop Examples
+# `@pi-ts/gui` Native Desktop Examples
 
-Pure-TypeScript desktop example apps compiled to native Mach-O binaries with `scriptc` and linked against the `scriptc-ui` Darwin AppKit FFI backend (`packages/gui/ffi/darwin.json`).
+Pure-TypeScript desktop example apps compiled to native Mach-O binaries with `scriptc` and linked against the `@pi-ts/gui` Darwin AppKit FFI backend (`packages/gui/ffi/darwin.json`).
 
 ## Examples
 

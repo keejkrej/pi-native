@@ -9,7 +9,7 @@
  */
 
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@pi-ts/coding-agent";
 import {
 	type BashOperations,
 	createBashTool,
@@ -30,7 +30,7 @@ import {
 	truncateHead,
 	truncateLine,
 	type WriteOperations,
-} from "@earendil-works/pi-coding-agent";
+} from "@pi-ts/coding-agent";
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;

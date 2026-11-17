@@ -1,4 +1,4 @@
-import { type ClientIdentity, PI_ATTRIBUTION } from "@earendil-works/pi-ai";
+import { type ClientIdentity, PI_ATTRIBUTION } from "@pi-ts/ai";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -6,8 +6,8 @@ import {
 	getModel,
 	toToolDeclaration,
 	type UserMessage,
-} from "@earendil-works/pi-ai/compat";
-import { obj } from "@earendil-works/pi-schema";
+} from "@pi-ts/ai/compat";
+import { obj } from "@pi-ts/schema";
 import { describe, expect, it } from "vitest";
 import {
 	Agent,

@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { darkGuiTheme, GuiApp, type GuiA11yNode, HeadlessBackend, lightGuiTheme } from "scriptc-ui";
+import { darkGuiTheme, GuiApp, type GuiA11yNode, HeadlessBackend, lightGuiTheme } from "@pi-ts/gui";
 import { parseGuiCliArgs, runHeadlessSmoke } from "../src/gui-cli.ts";
 import {
 	extractAssistantContent,
@@ -76,7 +77,7 @@ describe("gui-mode", () => {
 	});
 
 	it("runs deterministic headless-smoke end to end", async () => {
-		const report = await runHeadlessSmoke("/Users/jack/workspace/pi-native");
+		const report = await runHeadlessSmoke(resolve(import.meta.dirname, "../../.."));
 		expect(report.ok).toBe(true);
 		expect(report.mode).toBe("headless-smoke");
 		expect(report.frames).toBeGreaterThan(2);
@@ -86,7 +87,7 @@ describe("gui-mode", () => {
 
 	it("renders header controls, native menus, slash autocomplete, and slash commands", async () => {
 		const backend = new HeadlessBackend({ width: 1120, height: 760 });
-		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-native", width: 1120, height: 760 } });
+		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-ts", width: 1120, height: 760 } });
 		const controller = new MockGuiSessionController({ cwd: "/repo/app", stepDelayMs: 1 });
 		const handle = mountPiGui(app, { controller });
 
@@ -102,7 +103,7 @@ describe("gui-mode", () => {
 			expect(findNode(tree, (n) => n.role === "textArea")).toBeDefined();
 			expect(handle.stopButton.isDisabled()).toBe(true);
 
-			// Verify Markdown & Loader & Badge accessibility nodes emitted by scriptc-ui
+			// Verify Markdown & Loader & Badge accessibility nodes emitted by @pi-ts/gui
 			expect(findNode(tree, (n) => n.role === "staticText" && n.label === "Ready")).toBeDefined();
 			expect(findNode(tree, (n) => n.role === "staticText" && n.label === "app")).toBeDefined();
 			expect(findNode(tree, (n) => n.role === "staticText" && n.label === "anthropic")).toBeDefined();
@@ -142,7 +143,7 @@ describe("gui-mode", () => {
 
 	it("opens and updates model picker and settings modals and closes on Escape", async () => {
 		const backend = new HeadlessBackend({ width: 1120, height: 760 });
-		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-native", width: 1120, height: 760 } });
+		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-ts", width: 1120, height: 760 } });
 		const controller = new MockGuiSessionController({ cwd: "/repo/app", stepDelayMs: 1 });
 		const handle = mountPiGui(app, { controller });
 
@@ -181,7 +182,7 @@ describe("gui-mode", () => {
 
 	it("streams assistant markdown, tool execution cards, errors, and stop abort", async () => {
 		const backend = new HeadlessBackend({ width: 1120, height: 760 });
-		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-native", width: 1120, height: 760 } });
+		const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: "pi-ts", width: 1120, height: 760 } });
 		const controller = new MockGuiSessionController({
 			cwd: "/repo/app",
 			stepDelayMs: 15,

@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCapabilities, type ImageTranscoder, setImageTranscoder } from "@earendil-works/pi-tui";
-import { isNativeDarwinAvailable, nativeImageTransform } from "../../../pi-native-ffi/src/index.ts";
+import { getCapabilities, type ImageTranscoder, setImageTranscoder } from "@pi-ts/tui";
+import { isNativeDarwinAvailable, nativeImageTransform } from "@pi-ts/ffi";
 import { getExifOrientation, stripPngOrientationChunks } from "./image-dimensions.ts";
 
 const SIPS_PATH = "/usr/bin/sips";

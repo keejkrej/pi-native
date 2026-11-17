@@ -12,7 +12,7 @@ import {
 	SGUI_MOD_SUPER,
 	Spacer,
 	VStack,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import {
 	createBashCard,
 	createBranchSummaryCard,

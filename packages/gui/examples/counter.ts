@@ -345,7 +345,7 @@ function createCounterApp(
   appRef = new GuiApp({
     backend,
     window: {
-      title: "Counter — scriptc-ui",
+      title: "Counter — @pi-ts/gui",
       width: 520,
       height: 490,
       resizable: true,

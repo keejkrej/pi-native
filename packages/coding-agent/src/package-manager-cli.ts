@@ -9,8 +9,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { ModelsError } from "@earendil-works/pi-ai";
-import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { ModelsError } from "@pi-ts/ai";
+import { Markdown, type MarkdownTheme } from "@pi-ts/tui";
 import chalk from "chalk";
 import lockfile from "proper-lockfile";
 import { selectConfig } from "./cli/config-selector.ts";

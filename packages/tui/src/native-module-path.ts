@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const TUI_PACKAGE_NAME = "@earendil-works/pi-tui";
+const TUI_PACKAGE_NAME = "@pi-ts/tui";
 
 export interface NativeModuleCandidateOptions {
 	moduleUrl?: string;

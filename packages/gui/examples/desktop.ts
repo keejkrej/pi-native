@@ -784,7 +784,7 @@ function createDesktopApp(
   appRef = new GuiApp({
     backend,
     window: {
-      title: "Desktop Studio — scriptc-ui",
+      title: "Desktop Studio — @pi-ts/gui",
       width: 860,
       height: 580,
       resizable: true,

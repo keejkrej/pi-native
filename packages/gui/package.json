@@ -1,5 +1,5 @@
 {
-	"name": "scriptc-ui",
+	"name": "@pi-ts/gui",
 	"version": "0.1.0",
 	"description": "Cross-platform native 2D desktop GUI toolkit in TypeScript for scriptc",
 	"private": true,
@@ -47,6 +47,11 @@
 		"typescript"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/keejkrej/pi-ts.git",
+		"directory": "packages/gui"
+	},
 	"engines": {
 		"node": ">=22.19.0"
 	}

@@ -65,81 +65,81 @@
 		},
 		{ "name": "sguiSetAppMenu", "symbol": "sgui_set_app_menu", "params": ["bytes"], "returns": "i32" },
 		{ "name": "sguiSetA11yTree", "symbol": "sgui_set_a11y_tree", "params": ["u32", "bytes"], "returns": "i32" },
-		{ "name": "piNativeAvailable", "symbol": "pi_native_available", "params": [], "returns": "i32" },
+		{ "name": "piFfiAvailable", "symbol": "pi_ffi_available", "params": [], "returns": "i32" },
 		{
-			"name": "piNativeReadScratch",
-			"symbol": "pi_native_read_scratch",
+			"name": "piFfiReadScratch",
+			"symbol": "pi_ffi_read_scratch",
 			"params": ["mutable-bytes"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeClipboardGetText",
-			"symbol": "pi_native_clipboard_get_text",
+			"name": "piFfiClipboardGetText",
+			"symbol": "pi_ffi_clipboard_get_text",
 			"params": [],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeClipboardSetText",
-			"symbol": "pi_native_clipboard_set_text",
+			"name": "piFfiClipboardSetText",
+			"symbol": "pi_ffi_clipboard_set_text",
 			"params": ["string"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeClipboardGetImagePng",
-			"symbol": "pi_native_clipboard_get_image_png",
+			"name": "piFfiClipboardGetImagePng",
+			"symbol": "pi_ffi_clipboard_get_image_png",
 			"params": [],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeClipboardGetFilePaths",
-			"symbol": "pi_native_clipboard_get_file_paths",
+			"name": "piFfiClipboardGetFilePaths",
+			"symbol": "pi_ffi_clipboard_get_file_paths",
 			"params": [],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeIsModifierPressed",
-			"symbol": "pi_native_is_modifier_pressed",
+			"name": "piFfiIsModifierPressed",
+			"symbol": "pi_ffi_is_modifier_pressed",
 			"params": ["string"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeImageInspect",
-			"symbol": "pi_native_image_inspect",
+			"name": "piFfiImageInspect",
+			"symbol": "pi_ffi_image_inspect",
 			"params": ["bytes", "mutable-bytes"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeImageTransform",
-			"symbol": "pi_native_image_transform",
+			"name": "piFfiImageTransform",
+			"symbol": "pi_ffi_image_transform",
 			"params": ["bytes", "u32", "u32", "u32", "u32", "u32"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeWordSegment",
-			"symbol": "pi_native_word_segment",
+			"name": "piFfiWordSegment",
+			"symbol": "pi_ffi_word_segment",
 			"params": ["string"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeJscCreate",
-			"symbol": "pi_native_jsc_create",
+			"name": "piFfiJscCreate",
+			"symbol": "pi_ffi_jsc_create",
 			"params": [],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeJscEval",
-			"symbol": "pi_native_jsc_eval",
+			"name": "piFfiJscEval",
+			"symbol": "pi_ffi_jsc_eval",
 			"params": ["i32", "string", "string", "f64", "mutable-bytes"],
 			"returns": "i32"
 		},
 		{
-			"name": "piNativeJscDestroy",
-			"symbol": "pi_native_jsc_destroy",
+			"name": "piFfiJscDestroy",
+			"symbol": "pi_ffi_jsc_destroy",
 			"params": ["i32"],
 			"returns": "void"
 		}
 	],
-	"libraries": ["../../gui/native/darwin/build/libsgui.a", "../native/darwin/build/libpinative.a"],
+	"libraries": ["../../gui/native/darwin/build/libsgui.a", "../native/darwin/build/libpiffi.a"],
 	"system_libraries": [],
 	"frameworks": [
 		"AppKit",

@@ -1,5 +1,5 @@
 /**
- * Hopper Lab — Aerospace GNC Telemetry & Flight Planner showcase for scriptc-ui.
+ * Hopper Lab — Aerospace GNC Telemetry & Flight Planner showcase for @pi-ts/gui.
  * Run:
  *   ./dist/examples/hopper
  *   ./dist/examples/hopper --headless-smoke

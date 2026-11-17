@@ -40,7 +40,7 @@ import {
 	SGUI_CURSOR_ARROW,
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_REGULAR,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import { lookupSessionCustomName, openGitBranchModal } from "./overlays.ts";
 import type {
 	GuiExternalOpener,

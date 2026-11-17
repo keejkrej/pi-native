@@ -31,7 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isMcpServerOverride, mcpNamespace } from "@earendil-works/pi-mcp";
+import { isMcpServerOverride, mcpNamespace } from "@pi-ts/mcp";
 import { CONFIG_DIR_NAME } from "../../config.ts";
 import { type McpExposure, type McpServerConfig, validateMcpServerConfig } from "../../core/mcp-servers.ts";
 import { stripBom } from "../../utils/text.ts";

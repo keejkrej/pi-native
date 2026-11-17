@@ -21,8 +21,8 @@ import {
 	type SimpleStreamOptions,
 	type ThinkingLevelMap,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+} from "@pi-ts/ai/compat";
+import type { ExtensionAPI } from "@pi-ts/coding-agent";
 
 // =============================================================================
 // Constants

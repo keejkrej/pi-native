@@ -12,7 +12,7 @@ export default defineConfig({
 		silent: "passed-only",
 	},
 	resolve: {
-		alias: [{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex }],
+		alias: [{ find: /^@pi-ts\/telemetry$/, replacement: telemetrySrcIndex }],
 		// Workspace packages without a build (pi-schema) resolve to their source.
 		conditions: ["source"],
 	},

@@ -8,7 +8,7 @@ import {
 	McpSignInCancelledError,
 	type OAuthChallenge,
 	OAuthIssuerMismatchError,
-} from "@earendil-works/pi-mcp/oauth";
+} from "@pi-ts/mcp/oauth";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import {

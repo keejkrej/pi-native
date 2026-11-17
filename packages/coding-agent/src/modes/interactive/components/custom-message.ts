@@ -1,5 +1,5 @@
-import type { TextContent } from "@earendil-works/pi-ai";
-import { Box, type Component, Container, Markdown, type MarkdownTheme, Spacer, Text, toComponent } from "@earendil-works/pi-tui";
+import type { TextContent } from "@pi-ts/ai";
+import { Box, type Component, Container, Markdown, type MarkdownTheme, Spacer, Text, toComponent } from "@pi-ts/tui";
 import type { MarkdownTransformer, MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";

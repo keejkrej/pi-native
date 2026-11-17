@@ -1,4 +1,4 @@
-import { Component, Loader, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { Component, Loader, type TUI, truncateToWidth } from "@pi-ts/tui";
 import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";

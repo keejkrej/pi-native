@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-SCRIPTC="${SCRIPTC:-$(command -v scriptc || echo /Users/jack/.local/share/mise/installs/node/24/bin/scriptc)}"
+SCRIPTC="${SCRIPTC:-$(command -v scriptc || echo "$HOME/.local/share/mise/installs/node/24/bin/scriptc")}"
 if [ ! -x "$SCRIPTC" ]; then
 	echo "error: scriptc binary not found or not executable: $SCRIPTC" >&2
 	exit 1
@@ -12,16 +12,16 @@ fi
 
 EMIT_WORKERS="${SCRIPTC_EMIT_WORKERS:-1}"
 EXAMPLES=(counter tasks desktop bench demo hopper gallery)
-FFI_DARWIN_GUI="packages/pi-native-ffi/ffi/darwin-gui.json"
+FFI_DARWIN_GUI="packages/ffi/ffi/darwin-gui.json"
 
 reap_daemons() {
 	pkill -f 'tsc-ts --api' 2>/dev/null || true
 	pkill -f 'scriptc-llvm-codegen serve' 2>/dev/null || true
 }
 
-build_native_pinative() {
+build_native_piffi() {
 	if [ "$(uname -s)" = "Darwin" ]; then
-		./packages/pi-native-ffi/native/darwin/build.sh
+		./packages/ffi/native/darwin/build.sh
 	fi
 }
 
@@ -34,9 +34,16 @@ build_native_sgui() {
 	fi
 }
 
+ensure_model_data() {
+	if [ ! -f "packages/ai/src/providers/data/.manifest.json" ]; then
+		npm --prefix packages/ai run hydrate-model-data
+	fi
+}
+
 build_native_libs() {
+	ensure_model_data
 	build_native_sgui
-	build_native_pinative
+	build_native_piffi
 }
 
 run_scriptc() {
@@ -121,6 +128,9 @@ run_coverage() {
 
 run_test() {
 	mkdir -p dist
+	if [ ! -x dist/pi ]; then
+		build_pi
+	fi
 	build_native_libs
 	reap_daemons
 	local ffi_args=()

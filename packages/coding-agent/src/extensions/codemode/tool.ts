@@ -2,7 +2,7 @@
  * Codemode tool definition, description catalog builder, and loadout presentation hooks.
  */
 
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@pi-ts/agent-core";
 import { Type } from "typebox";
 import type {
 	ExtensionToolContext,

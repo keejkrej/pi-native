@@ -10,8 +10,8 @@
  * errors (`isError`) are error results for the model, but scripts still resolve to the result.
  */
 
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@pi-ts/agent-core";
+import type { ImageContent, JsonValue, TextContent } from "@pi-ts/ai";
 import {
 	type CallToolResult,
 	type ContentBlock,
@@ -21,8 +21,8 @@ import {
 	type Tool as McpTool,
 	normalizeMcpInputSchema,
 	toLlmContent,
-} from "@earendil-works/pi-mcp";
-import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+} from "@pi-ts/mcp";
+import { Container, Spacer, Text } from "@pi-ts/tui";
 import type { TSchema } from "typebox";
 import type {
 	ToolAnnotations,

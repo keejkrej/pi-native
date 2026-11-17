@@ -13,8 +13,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { oauthErrorHtml, oauthSuccessHtml } from "@earendil-works/pi-ai/utils/oauth-page";
-import { mcpNamespace } from "@earendil-works/pi-mcp";
+import { oauthErrorHtml, oauthSuccessHtml } from "@pi-ts/ai/utils/oauth-page";
+import { mcpNamespace } from "@pi-ts/mcp";
 import {
 	completeMcpSignIn,
 	createMcpAuthProvider as createAuthProvider,
@@ -30,7 +30,7 @@ import {
 	type OAuthTokens,
 	startMcpSignIn,
 	waitForLoopbackSignIn,
-} from "@earendil-works/pi-mcp/oauth";
+} from "@pi-ts/mcp/oauth";
 import lockfile from "proper-lockfile";
 import { APP_NAME, getAgentDir } from "../../config.ts";
 import { type AuthStorageBackend, FileAuthStorageBackend } from "../../core/auth-storage.ts";

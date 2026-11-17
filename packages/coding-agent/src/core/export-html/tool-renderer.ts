@@ -5,8 +5,8 @@
  * and converting the ANSI output to HTML.
  */
 
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { type Component, toComponent } from "@earendil-works/pi-tui";
+import type { ImageContent, TextContent } from "@pi-ts/ai";
+import { type Component, toComponent } from "@pi-ts/tui";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolRenderContext, ToolRenderers } from "../extensions/types.ts";

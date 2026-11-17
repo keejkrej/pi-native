@@ -1,5 +1,5 @@
-import type { Usage } from "@earendil-works/pi-ai";
-import { obj, type Static, str } from "@earendil-works/pi-schema";
+import type { Usage } from "@pi-ts/ai";
+import { obj, type Static, str } from "@pi-ts/schema";
 import type { AgentTool, AgentToolResult } from "../../src/types.ts";
 
 export interface CalculateResult extends AgentToolResult<undefined> {

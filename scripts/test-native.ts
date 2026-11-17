@@ -46,7 +46,7 @@ import {
 	opt,
 	str,
 	union,
-} from "@earendil-works/pi-schema";
+} from "@pi-ts/schema";
 
 import {
 	Box,
@@ -73,8 +73,8 @@ import {
 	Text,
 	VirtualList,
 	VStack,
-} from "scriptc-ui";
-import { createNativeBackend } from "scriptc-ui/native";
+} from "@pi-ts/gui";
+import { createNativeBackend } from "@pi-ts/gui/native";
 
 import { AnthropicHttpClient } from "../packages/ai/src/api/anthropic-http.ts";
 import { getJsonSchemaToolParameters } from "../packages/ai/src/api/constrained-sampling.ts";
@@ -89,7 +89,7 @@ import {
 	nativeImageTransform,
 	nativeIsModifierPressed,
 	nativeWordSegment,
-} from "@earendil-works/pi-native-ffi";
+} from "@pi-ts/ffi";
 import {
 	assumeRole,
 	buildBedrockConverseStreamUrl,
@@ -165,7 +165,7 @@ import {
 	TUI,
 	type TuiMouseEvent,
 	VStack as TuiVStack,
-} from "@earendil-works/pi-tui";
+} from "@pi-ts/tui";
 import { KeybindingsManager } from "../packages/coding-agent/src/core/keybindings.ts";
 import { createChatViewport } from "../packages/coding-agent/src/modes/interactive/chat-viewport.ts";
 import { CustomEditor } from "../packages/coding-agent/src/modes/interactive/components/custom-editor.ts";
@@ -579,9 +579,9 @@ async function main(): Promise<void> {
 
 	// 3. vendor/cross-spawn
 	await runCase("vendor:cross-spawn", () => {
-		const res = crossSpawnSync("/bin/echo", ["pi-native-spawn"], { encoding: "utf8" });
+		const res = crossSpawnSync("/bin/echo", ["pi-ts-spawn"], { encoding: "utf8" });
 		assertEqual(res.status, 0, "cross-spawn status");
-		assert(res.stdout.trim() === "pi-native-spawn", `unexpected stdout: ${res.stdout}`);
+		assert(res.stdout.trim() === "pi-ts-spawn", `unexpected stdout: ${res.stdout}`);
 	});
 
 	// 4. vendor/diff
@@ -614,11 +614,11 @@ async function main(): Promise<void> {
 
 	// 7. vendor/hosted-git-info
 	await runCase("vendor:hosted-git-info", () => {
-		const info = hostedGitFromUrl("https://github.com/earendil-works/pi-native.git");
+		const info = hostedGitFromUrl("https://github.com/keejkrej/pi-ts.git");
 		assert(info !== undefined, "hosted-git-info returned undefined");
 		if (info) {
-			assertEqual(info.user, "earendil-works", "hosted-git-info user");
-			assertEqual(info.project, "pi-native", "hosted-git-info project");
+			assertEqual(info.user, "keejkrej", "hosted-git-info user");
+			assertEqual(info.project, "pi-ts", "hosted-git-info project");
 		}
 	});
 
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
 
 	// 14. vendor/proper-lockfile
 	await runCase("vendor:proper-lockfile", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-native-lock-"));
+		const dir = mkdtempSync(join(tmpdir(), "pi-ts-lock-"));
 		const target = join(dir, "state.json");
 		writeFileSync(target, "{}\n", "utf8");
 		try {
@@ -776,14 +776,14 @@ async function main(): Promise<void> {
 
 	// 17. vendor/yaml
 	await runCase("vendor:yaml", () => {
-		const objVal = parseYaml("name: pi-native\nitems:\n  - a\n  - b\n") as {
+		const objVal = parseYaml("name: pi-ts\nitems:\n  - a\n  - b\n") as {
 			name: string;
 			items: string[];
 		};
-		assertEqual(objVal.name, "pi-native", "yaml.parse name");
+		assertEqual(objVal.name, "pi-ts", "yaml.parse name");
 		assertEqual(objVal.items.length, 2, "yaml.parse items length");
 		const dumped = stringifyYaml(objVal);
-		assert(dumped.includes("pi-native"), "yaml.stringify failed");
+		assert(dumped.includes("pi-ts"), "yaml.stringify failed");
 		const parsedViaDefault = YAML.parse("k: 1") as { k: number };
 		assertEqual(parsedViaDefault.k, 1, "YAML.parse failed");
 		assert(YAML.stringify({ k: 1 }).includes("k: 1"), "YAML.stringify failed");
@@ -796,7 +796,7 @@ async function main(): Promise<void> {
 		assert(caught, "YAMLParseError should be thrown on malformed input");
 	});
 
-	// 18. @earendil-works/pi-schema
+	// 18. @pi-ts/schema
 	await runCase("package:pi-schema", () => {
 		const ItemSchema = obj({
 			id: str(),
@@ -830,8 +830,8 @@ async function main(): Promise<void> {
 		assertEqual(schemaEqual({ a: [1, 2] }, { a: [1, 2] }), true, "pi-schema equal");
 	});
 
-	// 19. scriptc-ui + packages/coding-agent/src/modes/gui
-	await runCase("package:scriptc-ui+coding-agent-gui", async () => {
+	// 19. @pi-ts/gui + packages/coding-agent/src/modes/gui
+	await runCase("package:@pi-ts/gui+coding-agent-gui", async () => {
 		const nativeBackend = createNativeBackend("darwin");
 		assert(typeof nativeBackend.windowAction === "function", "createNativeBackend missing windowAction");
 
@@ -901,7 +901,7 @@ async function main(): Promise<void> {
 		assert(cardColumn !== null && colorToHex(lightGuiTheme.text).startsWith("#"), "layout widgets check");
 
 		const status = {
-			cwd: "/tmp/pi-native",
+			cwd: "/tmp/pi-ts",
 			thinkingLevel: "medium" as const,
 			availableThinkingLevels: ["off", "low", "medium", "high"] as const,
 			isStreaming: false,
@@ -952,11 +952,11 @@ async function main(): Promise<void> {
 		const app = new GuiApp({
 			backend,
 			theme: darkGuiTheme,
-			window: { title: "pi-native-test", width: 1024, height: 720 },
+			window: { title: "pi-ts-test", width: 1024, height: 720 },
 			frameIntervalMs: 8,
 		});
 		const controller = new MockGuiSessionController({
-			cwd: "/tmp/pi-native",
+			cwd: "/tmp/pi-ts",
 			stepDelayMs: 1,
 			scenario: "with-tool",
 		});
@@ -1177,7 +1177,7 @@ async function main(): Promise<void> {
 	});
 
 	await runCase("tui:interactive-regression", async () => {
-		const testDir = mkdtempSync(join(tmpdir(), "pi-native-tui-test-"));
+		const testDir = mkdtempSync(join(tmpdir(), "pi-ts-tui-test-"));
 		const termMain = new MemoryTerminal();
 		const termAlt = new MemoryTerminal();
 		const mainTui = createInteractiveTui({
@@ -1528,7 +1528,7 @@ async function main(): Promise<void> {
 
 		const savedClipboard = nativeClipboardGetText();
 		try {
-			const marker = `pi-native-clipboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+			const marker = `pi-ts-clipboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			assertEqual(nativeClipboardSetText(marker), true, "nativeClipboardSetText failed");
 			assertEqual(nativeClipboardGetText(), marker, "nativeClipboardGetText roundtrip mismatch");
 			assertEqual(await readClipboardText(), marker, "readClipboardText roundtrip mismatch");
@@ -2486,7 +2486,7 @@ async function main(): Promise<void> {
 				frameIntervalMs: 8,
 			});
 			const controller = new MockGuiSessionController({
-				cwd: "/tmp/pi-native-waku",
+				cwd: "/tmp/pi-ts-waku",
 				stepDelayMs: 25,
 				scenario: "with-tool",
 				thinkingText: "Checking repository files cleanly.",
@@ -2538,7 +2538,7 @@ async function main(): Promise<void> {
 					id: "att-1",
 					kind: "file",
 					name: "notes.md",
-					path: "/tmp/pi-native-waku/notes.md",
+					path: "/tmp/pi-ts-waku/notes.md",
 					sizeBytes: 128,
 				});
 				assertEqual(handle.composer.getAttachments().length, 1, "composer attachment count");

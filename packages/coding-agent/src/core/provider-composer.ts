@@ -25,8 +25,8 @@ import {
 	type SimpleStreamOptions,
 	type StreamOptions,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai";
-import { getApiProvider } from "@earendil-works/pi-ai/compat";
+} from "@pi-ts/ai";
+import { getApiProvider } from "@pi-ts/ai/compat";
 import type {
 	AnthropicMessagesCompat,
 	BedrockCompat,
@@ -34,8 +34,8 @@ import type {
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 	ProviderCompat,
-} from "@earendil-works/pi-ai/providers/compat-schema";
-import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
+} from "@pi-ts/ai/providers/compat-schema";
+import { classifierErrorResult, imageErrorResult } from "@pi-ts/ai/utils/model-operations";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,

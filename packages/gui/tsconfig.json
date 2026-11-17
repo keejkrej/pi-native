@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"scriptc-ui": ["./src/index.ts"],
-			"scriptc-ui/native": ["./src/native.ts"]
+			"@pi-ts/gui": ["./src/index.ts"],
+			"@pi-ts/gui/native": ["./src/native.ts"]
 		}
 	},
 	"include": ["src/**/*", "test/**/*", "examples/**/*"]

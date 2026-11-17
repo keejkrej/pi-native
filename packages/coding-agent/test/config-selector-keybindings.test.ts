@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getKeybindings, setKeybindings } from "@earendil-works/pi-tui";
+import { getKeybindings, setKeybindings } from "@pi-ts/tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@earendil-works/pi-tui", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-tui")>();
+vi.mock("@pi-ts/tui", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@pi-ts/tui")>();
 	class FakeTui {
 		terminal = { rows: 24 };
 		setClearOnShrink() {}

@@ -30,7 +30,7 @@ import {
 	VectorIcon,
 	VStack,
 	withAlpha,
-} from "scriptc-ui";
+} from "@pi-ts/gui";
 import {
 	type BashCardHandle,
 	createBannerCard,

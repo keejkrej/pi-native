@@ -1,5 +1,5 @@
-import type { CredentialInfo } from "@earendil-works/pi-ai";
-import { replaceControlCharacters } from "@earendil-works/pi-tui";
+import type { CredentialInfo } from "@pi-ts/ai";
+import { replaceControlCharacters } from "@pi-ts/tui";
 import { APP_NAME } from "../config.ts";
 import { CredentialSynchronizationError, type ModelRuntime } from "../core/model-runtime.ts";
 import { findMatchingProviders } from "../core/provider-matching.ts";

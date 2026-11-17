@@ -1,6 +1,6 @@
 /**
  * Adapters that give a pi-agent-core `Agent` MCP tools and a codemode tool, using
- * `@earendil-works/pi-mcp` and `@earendil-works/pi-codemode`. See main.ts for how they fit together.
+ * `@pi-ts/mcp` and `@pi-ts/codemode`. See main.ts for how they fit together.
  */
 
 import {
@@ -9,16 +9,16 @@ import {
 	type AgentToolCallOutcome,
 	type AgentToolResult,
 	runToolCall,
-} from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonObject, JsonValue, TextContent } from "@earendil-works/pi-ai";
+} from "@pi-ts/agent-core";
+import type { ImageContent, JsonObject, JsonValue, TextContent } from "@pi-ts/ai";
 import {
 	type CodemodeJsonSchema,
 	CodemodeSandbox,
 	type CodemodeTool,
 	renderDeclarations,
-} from "@earendil-works/pi-codemode";
-import { type McpClient, toLlmContent } from "@earendil-works/pi-mcp";
-import { obj, str } from "@earendil-works/pi-schema";
+} from "@pi-ts/codemode";
+import { type McpClient, toLlmContent } from "@pi-ts/mcp";
+import { obj, str } from "@pi-ts/schema";
 
 /** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
 function toToolName(prefix: string, name: string): string {

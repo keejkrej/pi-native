@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-ai",
+	"name": "@pi-ts/ai",
 	"version": "1.5.2",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
@@ -104,7 +104,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/keejkrej/pi-ts.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

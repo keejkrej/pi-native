@@ -1,5 +1,5 @@
 /**
- * Widget Studio — Comprehensive UI component & perceptual color showcase for scriptc-ui.
+ * Widget Studio — Comprehensive UI component & perceptual color showcase for @pi-ts/gui.
  * Run:
  *   ./dist/examples/gallery
  *   ./dist/examples/gallery --headless-smoke
@@ -631,7 +631,7 @@ export function createGalleryApp(backendArg?: HeadlessBackend | ReturnType<typeo
 	const app = new GuiApp({
 		backend,
 		window: {
-			title: "Widget Studio · scriptc-ui",
+			title: "Widget Studio · @pi-ts/gui",
 			width: 1080,
 			height: 760,
 			resizable: true,
@@ -781,7 +781,7 @@ export function createGalleryApp(backendArg?: HeadlessBackend | ReturnType<typeo
 									leadingIcon: "folder",
 									variant: "primary",
 									onClick: () => {
-										app.backend.setClipboardText("scriptc-ui-gallery-clipboard");
+										app.backend.setClipboardText("@pi-ts/gui-gallery-clipboard");
 										clipboardStatus = "Copied sample text";
 										rebuildUi();
 									},
@@ -1634,7 +1634,7 @@ export function createGalleryApp(backendArg?: HeadlessBackend | ReturnType<typeo
 						gap: 1,
 						children: [
 							makeText("Widget Studio", 13.5, pal.text, 700),
-							makeText("scriptc-ui · native", 10.5, pal.textMuted, 400, SGUI_FONT_MONO),
+							makeText("@pi-ts/gui · native", 10.5, pal.textMuted, 400, SGUI_FONT_MONO),
 						],
 					}),
 					grow: 1,
@@ -1804,7 +1804,7 @@ export function createGalleryApp(backendArg?: HeadlessBackend | ReturnType<typeo
 
 	return {
 		app,
-		windowTitle: "Widget Studio · scriptc-ui",
+		windowTitle: "Widget Studio · @pi-ts/gui",
 		getState: (): GalleryStateSnapshot => ({
 			dark,
 			activeSection,
@@ -1902,7 +1902,7 @@ function runHeadlessSmoke(): number {
 			!s.dark &&
 			s.clickCount === 1 &&
 			s.virtualCount === 1000 &&
-			clip === "scriptc-ui-gallery-clipboard";
+			clip === "@pi-ts/gui-gallery-clipboard";
 
 		console.log(
 			`Gallery headless smoke ok=${String(ok)} clicks=${String(s.clickCount)} dark=${String(s.dark)} clip=${clip} a11y=${String(backend.getAccessibilityTree(winId).length)}`,

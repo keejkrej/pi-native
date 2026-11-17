@@ -174,7 +174,7 @@ export class GuiApp {
 		this.backend.init();
 
 		const winOpts: WindowOptions = options.window ?? {
-			title: "scriptc-ui",
+			title: "@pi-ts/gui",
 			width: 1024,
 			height: 720,
 			resizable: true,

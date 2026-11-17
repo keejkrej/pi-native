@@ -103,10 +103,10 @@ Put runtime packages imported by extensions in `dependencies`. Pi installs packa
 
 Pi supplies these packages to extensions and skills:
 
-- `@earendil-works/pi-ai`
-- `@earendil-works/pi-agent-core`
-- `@earendil-works/pi-coding-agent`
-- `@earendil-works/pi-tui`
+- `@pi-ts/ai`
+- `@pi-ts/agent-core`
+- `@pi-ts/coding-agent`
+- `@pi-ts/tui`
 - `typebox`
 
 Declare the host-provided packages listed above in `peerDependencies` with a `"*"` range and do not bundle them. Pi suppresses automatic peer installation for managed npm packages and git packages installed with npm, pnpm, or Bun. Local packages are not installed or modified, so their dependency tree remains the package author's responsibility.

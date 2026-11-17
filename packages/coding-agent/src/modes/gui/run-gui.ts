@@ -1,7 +1,7 @@
 import { basename } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
-import { darkGuiTheme, GuiApp, type GuiBackend, type GuiTheme, HeadlessBackend, lightGuiTheme } from "scriptc-ui";
-import { createNativeBackend } from "scriptc-ui/native";
+import type { ImageContent } from "@pi-ts/ai";
+import { darkGuiTheme, GuiApp, type GuiBackend, type GuiTheme, HeadlessBackend, lightGuiTheme } from "@pi-ts/gui";
+import { createNativeBackend } from "@pi-ts/gui/native";
 import type { AgentSessionRuntime, AgentSessionRuntimeDiagnostic } from "../../core/agent-session-runtime.ts";
 import { resolveThemeSetting, stopThemeWatcher } from "../interactive/theme/theme.ts";
 import { createGuiControllerFromRuntime, type RealGuiSessionController } from "./controller.ts";

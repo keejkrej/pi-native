@@ -6,7 +6,7 @@
 import {
 	type ProviderCompat,
 	ProviderCompatSchema as ProviderCompatJsonSchema,
-} from "@earendil-works/pi-ai/providers/compat-schema";
+} from "@pi-ts/ai/providers/compat-schema";
 import {
 	type ModelCost,
 	ModelCostSchema as ModelCostJsonSchema,
@@ -20,7 +20,7 @@ import {
 	ModelThinkingLevelSchema as ModelThinkingLevelJsonSchema,
 	type ThinkingLevelMap,
 	ThinkingLevelMapSchema as ThinkingLevelMapJsonSchema,
-} from "@earendil-works/pi-ai/providers/model-schema";
+} from "@pi-ts/ai/providers/model-schema";
 import { Type } from "typebox";
 
 export const ProviderCompatSchema = Type.Unsafe<ProviderCompat>(ProviderCompatJsonSchema);

@@ -1,5 +1,5 @@
 /**
- * Pure TypeScript `Compile` validator backed by `@earendil-works/pi-schema`.
+ * Pure TypeScript `Compile` validator backed by `@pi-ts/schema`.
  */
 
 import {
@@ -7,7 +7,7 @@ import {
 	type JsonSchema,
 	type ValidationError,
 	type Validator as PiValidator,
-} from "@earendil-works/pi-schema";
+} from "@pi-ts/schema";
 import type { TLocalizedValidationError } from "./error.ts";
 import type { TSchema } from "./index.ts";
 

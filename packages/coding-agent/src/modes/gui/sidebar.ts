@@ -21,6 +21,7 @@ import {
 	type GuiPointerEvent,
 	type GuiPointerResult,
 	type GuiRenderContext,
+	type GuiScrollEvent,
 	type GuiTheme,
 	HStack,
 	IconButton,
@@ -103,7 +104,7 @@ class SidebarSectionHeader extends GuiComponent {
 		this.focusable = true;
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 26 };
 	}
 
@@ -127,7 +128,7 @@ class SidebarSectionHeader extends GuiComponent {
 		ctx.drawStyledText(r.x + r.width - 10 - cm.width, textY, cm.width + 2, t.textMuted, style, countText);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
 		}
@@ -301,7 +302,7 @@ class SidebarSessionCard extends GuiComponent {
 		this.invalidate();
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: SIDEBAR_CARD_HEIGHT };
 	}
 
@@ -436,7 +437,7 @@ class SidebarSessionCard extends GuiComponent {
 		}
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			if (event.clickCount >= 2) {
 				this.callbacks.onStartRename();
@@ -608,7 +609,7 @@ class SidebarPaneContainer extends GuiComponent {
 		return this.content.hitTest(x, y) ?? this;
 	}
 
-	override handleScroll(event: { x: number; y: number; deltaX: number; deltaY: number; modifiers: { shift: boolean; ctrl: boolean; alt: boolean; super: boolean } }, ctx: GuiRenderContext): boolean {
+	override handleScroll(event: GuiScrollEvent, ctx: GuiRenderContext): boolean {
 		return this.content.handleScroll(event, ctx);
 	}
 

@@ -968,9 +968,9 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
+	// Read piped stdin content (if any) - skip for RPC mode (JSON-RPC) and GUI mode (desktop/Finder launch)
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
+	if (appMode !== "rpc" && appMode !== "gui") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";

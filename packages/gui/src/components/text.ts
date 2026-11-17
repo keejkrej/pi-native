@@ -197,6 +197,11 @@ export class TruncatedText extends GuiComponent {
 		this.invalidate();
 	}
 
+	setColor(color: Color | undefined): void {
+		this.color = color;
+		this.invalidate();
+	}
+
 	private buildStyle(ctx: GuiRenderContext): TextStyle {
 		return {
 			fontFamily: this.fontFamily,

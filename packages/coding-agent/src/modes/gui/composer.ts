@@ -30,6 +30,7 @@ import {
 	HStack,
 	IconButton,
 	Image,
+	Loader,
 	mixColors,
 	type OverlayHandle,
 	pointInRect,
@@ -42,6 +43,7 @@ import {
 	type Size,
 	type SlashCommand,
 	Spacer,
+	type StackChild,
 	Text,
 	TruncatedText,
 	type VectorIconName,
@@ -61,7 +63,6 @@ import {
 	ClickableContainer,
 	createExtensionWidgetCard,
 	type ExtensionWidgetCardHandle,
-	type ThemedCard,
 	WrappingPillRow,
 } from "./cards.ts";
 import type {
@@ -126,9 +127,14 @@ export interface WakuComposerOptions {
 }
 
 /** Handle returned by {@link createWakuComposer} for lifecycle, attachments, and test hooks. */
-export interface WakuComposerHandle extends ThemedCard {
+export interface WakuComposerHandle {
+	readonly root: GuiComponent;
 	readonly editor: Editor;
 	readonly card: GuiComponent;
+	readonly modelButton: Button;
+	readonly thinkingButton: Button;
+	readonly stopButton: Button;
+	applyTheme(theme: GuiTheme): void;
 	applySnapshot(snapshot: GuiSessionSnapshot): void;
 	handleEvent(event: GuiControllerEvent): void;
 	getAttachments(): readonly GuiAttachmentItem[];
@@ -155,7 +161,11 @@ export interface WakuFooterBarOptions {
 }
 
 /** Handle returned by {@link createWakuFooterBar}. */
-export interface WakuFooterBarHandle extends ThemedCard {
+export interface WakuFooterBarHandle {
+	readonly root: GuiComponent;
+	readonly providerBadge: Badge;
+	readonly statusLoader: Loader;
+	applyTheme(theme: GuiTheme): void;
 	applySnapshot(snapshot: GuiSessionSnapshot): void;
 	handleEvent(event: GuiControllerEvent): void;
 	setContextUsage(usage: GuiContextUsage | undefined): void;
@@ -207,9 +217,10 @@ function formatSnippet(text: string, maxChars = 64): string {
 }
 
 function formatModelLabel(status: GuiSessionStatus): string {
-	if (status.activeModel === undefined) return "Select model";
-	const id = status.activeModel.id;
-	return id.length > 28 ? `${id.slice(0, 27)}…` : id;
+	if (status.activeModel === undefined) return "Model: Select";
+	const raw = status.activeModel.label || `${status.activeModel.provider}/${status.activeModel.id}`;
+	const truncated = raw.length > 34 ? `${raw.slice(0, 31)}…` : raw;
+	return `Model: ${truncated}`;
 }
 
 function mimeFromExtension(ext: string): string {
@@ -391,9 +402,18 @@ interface ComposerEditorHooks {
 
 class ComposerEditor extends Editor {
 	private hooks: ComposerEditorHooks | undefined;
+	private externalSuggestions: readonly AutocompleteItem[] = [];
 
 	setKeyHooks(hooks: ComposerEditorHooks | undefined): void {
 		this.hooks = hooks;
+	}
+
+	setExternalSuggestions(items: readonly AutocompleteItem[]): void {
+		this.externalSuggestions = items;
+	}
+
+	override getAutocompleteItems(): readonly AutocompleteItem[] {
+		return this.externalSuggestions.length > 0 ? this.externalSuggestions : super.getAutocompleteItems();
 	}
 
 	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
@@ -694,13 +714,13 @@ export function createWakuComposer(
 
 	const aboveWidgetCards: ExtensionWidgetCardHandle[] = [];
 	const belowWidgetCards: ExtensionWidgetCardHandle[] = [];
-	const aboveWidgetsBox = new VStack({ gap: 6, fillWidth: true });
+	const aboveWidgetsBox = new VStack({ gap: 6 });
 	aboveWidgetsBox.visible = false;
-	const belowWidgetsBox = new VStack({ gap: 6, fillWidth: true });
+	const belowWidgetsBox = new VStack({ gap: 6 });
 	belowWidgetsBox.visible = false;
 
 	// Docked Queue Tray (top corners rounded, bottom square docked onto composerCard)
-	const queueRowsStack = new VStack({ gap: 4, fillWidth: true });
+	const queueRowsStack = new VStack({ gap: 4 });
 	const queueRadii: CornerRadii = { tl: 10, tr: 10, br: 0, bl: 0 };
 	const composerDockedRadii: CornerRadii = { tl: 0, tr: 0, br: COMPOSER_CARD_RADIUS, bl: COMPOSER_CARD_RADIUS };
 	const queueTray = new Box({
@@ -719,11 +739,11 @@ export function createWakuComposer(
 	attachmentsRow.visible = false;
 
 	// Inline autocomplete fallback container when GuiApp isn't mounted or layout hasn't occurred
-	const inlineAutocompleteSlot = new VStack({ gap: 0, fillWidth: true });
+	const inlineAutocompleteSlot = new VStack({ gap: 0 });
 	inlineAutocompleteSlot.visible = false;
 
 	// Popup card built cleanly with focusable: false items so Editor keeps focus
-	const popupRowsStack = new VStack({ gap: 2, fillWidth: true });
+	const popupRowsStack = new VStack({ gap: 2 });
 	const popupCard = new Box({
 		background: theme.surfaceElevated,
 		borderColor: theme.borderStrong,
@@ -836,6 +856,18 @@ export function createWakuComposer(
 	});
 	steerButton.visible = false;
 
+	const stopButton = new Button({
+		label: "Stop",
+		variant: "ghost",
+		disabled: !currentStatus.isStreaming,
+		fontSize: theme.fontSizeSmall,
+		padding: { vertical: 3, horizontal: 8 },
+		pill: true,
+		onClick: () => {
+			void controller.abort();
+		},
+	});
+
 	const actionCircle = new ComposerActionCircle({
 		onSend: () => submitCurrent("auto"),
 		onStop: () => {
@@ -846,13 +878,13 @@ export function createWakuComposer(
 	const controlsRow = new HStack({
 		gap: 6,
 		align: "center",
-		fillWidth: true,
 		children: [
 			modelButton,
 			thinkingButton,
 			attachButton,
 			shellButton,
-			new Spacer({ flex: 1 }),
+			{ child: new Spacer(), grow: 1 },
+			stopButton,
 			steerButton,
 			actionCircle,
 		],
@@ -860,7 +892,6 @@ export function createWakuComposer(
 
 	const cardStack = new VStack({
 		gap: 8,
-		fillWidth: true,
 		children: [attachmentsRow, editor, controlsRow],
 	});
 
@@ -878,7 +909,6 @@ export function createWakuComposer(
 
 	const innerColumn = new VStack({
 		gap: 0,
-		fillWidth: true,
 		children: [
 			aboveWidgetsBox,
 			inlineAutocompleteSlot,
@@ -946,10 +976,10 @@ export function createWakuComposer(
 					height: 24,
 					radius: 4,
 					background: withAlpha(iconColor, theme.dark ? 0.16 : 0.12),
-					alignItems: "center",
-					justifyContent: "center",
+					padding: 5,
+					alignHorizontal: "center",
 					child: new VectorIcon({
-						icon: iconName,
+						name: iconName,
 						size: 13,
 						color: iconColor,
 					}),
@@ -1025,7 +1055,7 @@ export function createWakuComposer(
 			if (msg === undefined) continue;
 			const badge = new Badge({
 				label: msg.kind === "steer" ? "Steer" : "Follow-up",
-				variant: msg.kind === "steer" ? "warning" : "info",
+				variant: msg.kind === "steer" ? "warning" : "accent",
 				fontSize: Math.max(10, theme.fontSizeSmall - 1),
 				padding: { vertical: 2, horizontal: 7 },
 			});
@@ -1053,8 +1083,7 @@ export function createWakuComposer(
 			const row = new HStack({
 				gap: 8,
 				align: "center",
-				fillWidth: true,
-				children: [badge, snippet, new Spacer({ flex: 1 }), cancelBtn],
+				children: [badge, snippet, { child: new Spacer(), grow: 1 }, cancelBtn],
 			});
 			rows.push(row);
 		}
@@ -1101,6 +1130,7 @@ export function createWakuComposer(
 		activeSuggestions = [];
 		activePrefix = "";
 		selectedSuggestionIndex = 0;
+		editor.setExternalSuggestions([]);
 		inlineAutocompleteSlot.visible = false;
 		replaceStackChildren(inlineAutocompleteSlot, []);
 		closeOverlayOnly();
@@ -1131,7 +1161,7 @@ export function createWakuComposer(
 			const item = activeSuggestions[i];
 			if (item === undefined) continue;
 			const isSelected = i === selectedSuggestionIndex;
-			const rowChildren: GuiComponent[] = [
+			const rowChildren: StackChild[] = [
 				new Text({
 					text: item.label,
 					fontSize: theme.fontSizeSmall,
@@ -1140,7 +1170,7 @@ export function createWakuComposer(
 				}),
 			];
 			if (item.description !== undefined && item.description.length > 0) {
-				rowChildren.push(new Spacer({ flex: 1 }));
+				rowChildren.push({ child: new Spacer(), grow: 1 });
 				rowChildren.push(
 					new Box({
 						maxWidth: 220,
@@ -1164,7 +1194,6 @@ export function createWakuComposer(
 				child: new HStack({
 					gap: 8,
 					align: "center",
-					fillWidth: true,
 					children: rowChildren,
 				}),
 				onClick: () => {
@@ -1227,6 +1256,7 @@ export function createWakuComposer(
 		activeSuggestions = res.items;
 		activePrefix = res.prefix;
 		selectedSuggestionIndex = clampNumber(selectedSuggestionIndex, 0, activeSuggestions.length - 1);
+		editor.setExternalSuggestions(activeSuggestions);
 		rebuildPopupRows();
 		syncAutocompleteOverlayAnchor();
 		root.invalidate();
@@ -1414,7 +1444,7 @@ export function createWakuComposer(
 				clearAttachments();
 				return;
 			}
-			if (typeof maybeHandled === "object" && maybeHandled !== null && "then" in maybeHandled) {
+			if (typeof maybeHandled !== "boolean") {
 				editor.addToHistory(text);
 				editor.setText("");
 				clearAttachments();
@@ -1525,6 +1555,7 @@ export function createWakuComposer(
 		currentStatus = nextStatus;
 		modelButton.setLabel(formatModelLabel(nextStatus));
 		thinkingButton.setLabel(`Thinking: ${nextStatus.thinkingLevel}`);
+		stopButton.setDisabled(!nextStatus.isStreaming);
 		syncActionAndShellControls();
 	};
 
@@ -1560,15 +1591,11 @@ export function createWakuComposer(
 					renderQueueTray();
 				}
 				break;
-			case "attachments_changed":
-				if (event.attachments !== undefined) {
-					attachments = event.attachments.slice();
-					renderAttachmentTiles();
-				}
-				break;
-			case "workspace_files":
+			case "workspace_changed":
 				if (event.workspaceFiles !== undefined) {
 					autocompleteProvider.updateContext(currentStatus.cwd, event.workspaceFiles);
+				} else {
+					autocompleteProvider.updateContext(currentStatus.cwd, controller.getSnapshot().workspaceFiles);
 				}
 				break;
 			case "editor_text":
@@ -1577,9 +1604,11 @@ export function createWakuComposer(
 					editor.setText(nextText);
 				}
 				break;
-			case "toast":
-			case "widgets_changed":
-			case "statuses_changed": {
+			case "extension_ui": {
+				if (event.attachments !== undefined) {
+					attachments = event.attachments.slice();
+					renderAttachmentTiles();
+				}
 				const snap = controller.getSnapshot();
 				renderWidgets(snap.widgets);
 				break;
@@ -1618,6 +1647,9 @@ export function createWakuComposer(
 		root,
 		editor,
 		card: composerCard,
+		modelButton,
+		thinkingButton,
+		stopButton,
 		applyTheme,
 		applySnapshot,
 		handleEvent,
@@ -1779,7 +1811,7 @@ export function createWakuFooterBar(
 	let currentPercent = 0;
 	let formattedContextLabel = "0 / 0 (0%)";
 
-	const folderIcon = new VectorIcon({ icon: "folder", size: 12, color: theme.textMuted });
+	const folderIcon = new VectorIcon({ name: "folder", size: 12, color: theme.textMuted });
 	const workspaceLabel = new TruncatedText({
 		text: basename(initialSnap.status.cwd) || initialSnap.status.cwd,
 		fontSize: theme.fontSizeSmall,
@@ -1825,7 +1857,7 @@ export function createWakuFooterBar(
 			gap: 5,
 			align: "center",
 			children: [
-				new VectorIcon({ icon: "git-branch", size: 12, color: theme.textMuted }),
+				new VectorIcon({ name: "git-branch", size: 12, color: theme.textMuted }),
 				gitBranchText,
 				gitDiffText,
 			],
@@ -1835,6 +1867,19 @@ export function createWakuFooterBar(
 				options.onGitBranchClick();
 			}
 		},
+	});
+
+	const providerBadge = new Badge({
+		label: initialSnap.status.activeModel?.provider ?? "offline",
+		variant: "neutral",
+		fontSize: Math.max(10, theme.fontSizeSmall - 1),
+		padding: { vertical: 2, horizontal: 6 },
+	});
+
+	const statusLoader = new Loader({
+		message: initialSnap.status.isStreaming ? "Generating..." : "Ready",
+		size: 12,
+		running: initialSnap.status.isStreaming,
 	});
 
 	const statusesRow = new HStack({ gap: 8, align: "center" });
@@ -1895,8 +1940,7 @@ export function createWakuFooterBar(
 	const footerRow = new HStack({
 		gap: 8,
 		align: "center",
-		fillWidth: true,
-		children: [workspaceBtn, gitBranchBtn, statusesRow, new Spacer({ flex: 1 }), contextBtn],
+		children: [workspaceBtn, gitBranchBtn, providerBadge, statusLoader, statusesRow, { child: new Spacer(), grow: 1 }, contextBtn],
 	});
 	const root = new FooterBarContainer(footerRow);
 
@@ -1965,8 +2009,21 @@ export function createWakuFooterBar(
 		}
 	};
 
+	const updateStatusIndicators = (status: GuiSessionStatus) => {
+		const providerName = status.activeModel?.provider ?? "offline";
+		providerBadge.setLabel(providerName);
+		if (status.isStreaming) {
+			statusLoader.setMessage("Generating...");
+			statusLoader.start();
+		} else {
+			statusLoader.stop();
+			statusLoader.setMessage("Ready");
+		}
+	};
+
 	const applySnapshot = (snapshot: GuiSessionSnapshot) => {
 		updateGitAndWorkspace(snapshot);
+		updateStatusIndicators(snapshot.status);
 		renderStatuses(snapshot.statuses);
 		updateContextUsage(snapshot.status.contextUsage ?? controller.getContextUsage());
 	};
@@ -1982,6 +2039,7 @@ export function createWakuFooterBar(
 			case "status_changed": {
 				const snap = controller.getSnapshot();
 				updateGitAndWorkspace(snap);
+				updateStatusIndicators(event.status ?? snap.status);
 				if (event.status?.contextUsage !== undefined) {
 					updateContextUsage(event.status.contextUsage);
 				} else {
@@ -1989,10 +2047,10 @@ export function createWakuFooterBar(
 				}
 				break;
 			}
-			case "changed_files":
+			case "workspace_changed":
 				updateGitAndWorkspace(controller.getSnapshot());
 				break;
-			case "statuses_changed":
+			case "extension_ui":
 				renderStatuses(controller.getSnapshot().statuses);
 				break;
 			default:
@@ -2015,12 +2073,15 @@ export function createWakuFooterBar(
 
 	return {
 		root,
+		providerBadge,
+		statusLoader,
 		applyTheme,
 		applySnapshot,
 		handleEvent,
 		setContextUsage: updateContextUsage,
 		getFormattedContextLabel: () => formattedContextLabel,
 		dispose: () => {
+			statusLoader.stop();
 			unsubscribe();
 		},
 	};

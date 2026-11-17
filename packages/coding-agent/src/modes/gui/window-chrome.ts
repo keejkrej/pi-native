@@ -15,6 +15,7 @@ import {
 	type GuiA11yNode,
 	type GuiApp,
 	GuiComponent,
+	type GuiHost,
 	type GuiKeyEvent,
 	type GuiPointerEvent,
 	type GuiPointerResult,
@@ -103,7 +104,7 @@ class WakuHeaderChip extends GuiComponent {
 		return { fontFamily: SGUI_FONT_REGULAR, fontSize: ctx.theme.fontSizeSmall, fontWeight: 500 };
 	}
 
-	measure(ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const style = this.buildStyle(ctx);
 		const textMetrics = ctx.measureText(style, 0, this.labelText);
 		const iconSz = 12;
@@ -171,7 +172,7 @@ class WakuHeaderChip extends GuiComponent {
 		}
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (this.disabledValue) return { handled: false };
 		if (event.phase === "down" && event.button === "left") {
 			this.pressed = true;
@@ -252,7 +253,7 @@ class OpenerMenuRow extends GuiComponent {
 		this.cursor = opener.available ? SGUI_CURSOR_POINTER : SGUI_CURSOR_ARROW;
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 32 };
 	}
 
@@ -294,7 +295,7 @@ class OpenerMenuRow extends GuiComponent {
 		);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (!this.opener.available) return { handled: false };
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
@@ -721,7 +722,7 @@ class WakuToastPill extends GuiComponent {
 		}
 	}
 
-	measure(ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const style = { fontFamily: SGUI_FONT_REGULAR, fontSize: ctx.theme.fontSizeBody, fontWeight: 500 };
 		const textAvail = Math.max(40, Math.min(maxWidth, 560) - 68);
 		const metrics = ctx.measureText(style, textAvail, this.toast.message);
@@ -771,7 +772,7 @@ class WakuToastPill extends GuiComponent {
 		this.closeBtn.render(ctx);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, cursor: SGUI_CURSOR_POINTER };
 		}

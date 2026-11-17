@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,9 +128,13 @@ import {
 	extractAssistantContent,
 	extractToolOutputSnippet,
 	formatCompactToolArgs,
+	loadGuiLayoutPreferences,
 	MockGuiSessionController,
 	mountPiGui,
+	saveGuiLayoutPreferences,
 } from "../packages/coding-agent/src/modes/gui/index.ts";
+import { parseArgs } from "../packages/coding-agent/src/cli/args.ts";
+import { resolveAppMode } from "../packages/coding-agent/src/main.ts";
 import {
 	Box as TuiBox,
 	CombinedAutocompleteProvider,
@@ -1160,7 +1165,7 @@ async function main(): Promise<void> {
 
 		const frame = encodeEventStreamFrame(
 			"contentBlockDelta",
-			JSON.stringify({ contentBlockIndex: 0, delta: { text: "bedrock-ok" } }),
+			'{"contentBlockIndex":0,"delta":{"text":"bedrock-ok"}}',
 		);
 		const decodedEvents: string[] = [];
 		for await (const ev of parseBedrockEventStream(buildBinaryResponse([frame]))) {
@@ -2410,6 +2415,267 @@ async function main(): Promise<void> {
 			}
 		} catch (err) {
 			throw new Error(`[${phase}] ${err instanceof Error ? err.message : String(err)}`);
+		}
+	});
+
+	// 32. Wave 2 CLI GUI flag parsing and mode resolution
+	await runCase("cli:gui-flags", () => {
+		const guiFlagArgs = parseArgs(["--gui"]);
+		assertEqual(guiFlagArgs.gui, true, "--gui flag should be set");
+		assertEqual(guiFlagArgs.diagnostics.length, 0, "--gui should emit zero diagnostics");
+		assertEqual(resolveAppMode(guiFlagArgs, false, false), "gui", "non-TTY should preserve --gui mode");
+
+		const modeGuiArgs = parseArgs(["--mode", "gui"]);
+		assertEqual(modeGuiArgs.mode, "gui", "--mode gui should set mode='gui'");
+		assertEqual(modeGuiArgs.diagnostics.length, 0, "--mode gui should emit zero diagnostics");
+		assertEqual(resolveAppMode(modeGuiArgs, false, false), "gui", "non-TTY should preserve --mode gui");
+
+		const missingModeArgs = parseArgs(["--mode"]);
+		assert(
+			missingModeArgs.diagnostics.some(
+				(d) => d.type === "error" && d.message === "--mode requires text, json, rpc, or gui",
+			),
+			"missing --mode value should record '--mode requires text, json, rpc, or gui'",
+		);
+
+		const flagAfterModeArgs = parseArgs(["--mode", "--gui"]);
+		assertEqual(flagAfterModeArgs.gui, true, "--mode before --gui should still parse --gui");
+		assert(
+			flagAfterModeArgs.diagnostics.some((d) => d.message === "--mode requires text, json, rpc, or gui"),
+			"--mode before --gui should report missing --mode value",
+		);
+	});
+
+	// 33. Wave 2 Waku theme palette and full 3-pane desktop GUI shell integration
+	await runCase("gui:waku-theme-and-3pane-shell", async () => {
+		assertEqual(colorToHex(darkGuiTheme.background).toLowerCase(), "#1a1a1a", "Waku dark background color");
+		assertEqual(colorToHex(darkGuiTheme.sidebarBg).toLowerCase(), "#181818", "Waku dark sidebarBg color");
+		assertEqual(colorToHex(darkGuiTheme.accent).toLowerCase(), "#e2795b", "Waku dark Coral accent color");
+		assertEqual(colorToHex(lightGuiTheme.background).toLowerCase(), "#f6f5f6", "Waku light background color");
+
+		const layoutTmp = mkdtempSync(join(tmpdir(), "pi-waku-layout-"));
+		try {
+			saveGuiLayoutPreferences(
+				{
+					appearance: "light",
+					sidebarWidth: 312,
+					sidebarCollapsed: false,
+					rightPanelWidth: 420,
+					rightPanelOpen: true,
+					rightPanelTab: "files",
+					diffViewMode: "split",
+					sidebarGroupBy: "project",
+					pinnedSessionIds: ["mock-session-1"],
+					sessionCustomNames: { "mock-session-1": "Waku Smoke" },
+				},
+				layoutTmp,
+			);
+			const loadedLayout = loadGuiLayoutPreferences(layoutTmp);
+			assertEqual(loadedLayout.appearance, "light", "persisted appearance");
+			assertEqual(loadedLayout.sidebarWidth, 312, "persisted sidebarWidth");
+			assertEqual(loadedLayout.rightPanelWidth, 420, "persisted rightPanelWidth");
+			assertEqual(loadedLayout.rightPanelTab, "files", "persisted rightPanelTab");
+			assertEqual(loadedLayout.diffViewMode, "split", "persisted diffViewMode");
+			assertEqual(loadedLayout.sidebarGroupBy, "project", "persisted sidebarGroupBy");
+
+			const backend = new HeadlessBackend({ width: 1280, height: 840, darkMode: true, platform: "darwin" });
+			const app = new GuiApp({
+				backend,
+				theme: darkGuiTheme,
+				window: { title: "waku-3pane-test", width: 1280, height: 840, titlebarHidden: true, unifiedTitlebar: true },
+				frameIntervalMs: 8,
+			});
+			const controller = new MockGuiSessionController({
+				cwd: "/tmp/pi-native-waku",
+				stepDelayMs: 25,
+				scenario: "with-tool",
+				thinkingText: "Checking repository files cleanly.",
+			});
+			const handle = mountPiGui(app, { controller });
+			try {
+				app.renderFrame();
+				assert(handle.sidebar !== undefined && handle.rightPanel !== undefined, "3-pane handles missing");
+				assertEqual(backend.getWindowChrome()?.darkMode, true, "window chrome darkMode");
+				assertEqual(backend.getWindowChrome()?.vibrancyEnabled, true, "window chrome vibrancyEnabled");
+
+				// Sidebar grouping, pin, rename, session switch, and header Back/Forward
+				const firstSession = (await controller.getSessions())[0];
+				assert(firstSession !== undefined, "expected initial session");
+				if (firstSession !== undefined) {
+					await controller.renameSession(firstSession.id, "Renamed Primary");
+					await controller.togglePinSession(firstSession.id);
+				}
+				await controller.newSession();
+				app.renderFrame();
+				assert(backend.getRenderedTexts().some((t) => t.includes("Renamed Primary")), "sidebar rename missing");
+				assert(controller.canGoBack(), "expected Back history after newSession");
+				await controller.goBack();
+				assert(controller.canGoForward(), "expected Forward history after goBack");
+				await controller.goForward();
+
+				// Pane toggles and resize
+				handle.sidebar.setWidth(300);
+				assertEqual(handle.sidebar.getWidth(), 300, "sidebar resize");
+				handle.toggleSidebar();
+				assertEqual(backend.getWindowChrome()?.sidebarWidth, 0, "collapsed sidebar clears vibrancy inset");
+				handle.toggleSidebar();
+				assert(backend.getWindowChrome()!.sidebarWidth >= 180, "expanded sidebar restores vibrancy inset");
+
+				// Right panel tabs: Changes (unified & split), Files preview, Tree
+				handle.toggleRightPanel("changes");
+				controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: "changes", diffViewMode: "split" });
+				app.renderFrame();
+				assert(backend.getRenderedTexts().some((t) => t.includes("package.json")), "Changes tab file missing");
+				handle.rightPanel.setActiveTab("files");
+				app.renderFrame();
+				assertEqual(handle.rightPanel.getActiveTab(), "files", "Right Panel Files tab");
+				handle.rightPanel.setActiveTab("tree");
+				app.renderFrame();
+				assertEqual(handle.rightPanel.getActiveTab(), "tree", "Right Panel Tree tab");
+
+				// Composer attachment + streaming prompt + steer queue + Worked-for turn cluster
+				handle.composer.addAttachment({
+					id: "att-1",
+					kind: "file",
+					name: "notes.md",
+					path: "/tmp/pi-native-waku/notes.md",
+					sizeBytes: 128,
+				});
+				assertEqual(handle.composer.getAttachments().length, 1, "composer attachment count");
+				const sendPromise = controller.sendUserMessage("Inspect package.json", { deliverAs: "auto" });
+				await new Promise((r) => setTimeout(r, 10));
+				await controller.sendUserMessage("Queued steer note", { deliverAs: "steer" });
+				app.renderFrame();
+				assert(backend.getRenderedTexts().some((t) => t.includes("Queued steer note")), "queued steer tray missing");
+				await sendPromise;
+				await new Promise((r) => setTimeout(r, 30));
+				app.renderFrame();
+				assert(backend.getRenderedTexts().some((t) => t.includes("Worked for")), "turn cluster Worked-for header missing");
+				assert(handle.footerBar.getFormattedContextLabel().includes("%"), "footer context usage gauge label missing");
+
+				// Find bar + Command Palette + Settings overlay + theme toggle
+				handle.transcriptView.openFindBar();
+				assertEqual(handle.transcriptView.isFindBarOpen(), true, "find bar should open");
+				handle.transcriptView.closeFindBar();
+				assertEqual(handle.transcriptView.isFindBarOpen(), false, "find bar should close");
+
+				handle.openCommandPalette();
+				assertEqual(handle.hasActiveOverlay(), true, "command palette should open");
+				app.renderFrame();
+				assert(
+					backend.getRenderedTexts().some((t) => t.includes("Switch / Resume Session")),
+					"command palette action list missing",
+				);
+				handle.closeOverlay();
+				assertEqual(handle.hasActiveOverlay(), false, "command palette should close");
+
+				handle.openSettings();
+				assertEqual(handle.hasActiveOverlay(), true, "settings modal should open");
+				app.renderFrame();
+				assert(backend.getRenderedTexts().some((t) => t.includes("Appearance")), "settings rail missing");
+				handle.closeOverlay();
+
+				handle.toggleTheme();
+				app.renderFrame();
+				assertEqual(app.getTheme().dark, false, "toggleTheme should switch to light Waku theme");
+			} finally {
+				await handle.dispose();
+				app.dispose();
+			}
+		} finally {
+			rmSync(layoutTmp, { recursive: true, force: true });
+		}
+	});
+
+	// 34. Wave 2 single-binary dist/pi GUI native and headless smoke execution
+	await runCase("gui:pi-single-binary-native-smoke", async () => {
+		const legacyGuiBin = resolve("dist/pi-gui");
+		assertEqual(existsSync(legacyGuiBin), false, "legacy dist/pi-gui must not exist");
+
+		const piBin = resolve("dist/pi");
+		assert(existsSync(piBin), `single binary not built yet: ${piBin}`);
+
+		const runPiSmoke = (
+			cliArgs: readonly string[],
+			smokeMode: "headless" | "native",
+		): Promise<{ exitCode: number; stdout: string; stderr: string }> =>
+			new Promise((resolvePromise) => {
+				let settled = false;
+				const stdoutChunks: Buffer[] = [];
+				const stderrChunks: Buffer[] = [];
+				const env: Record<string, string> = {
+					PATH: process.env.PATH ?? "/usr/bin:/bin",
+					HOME: process.env.HOME ?? "/tmp",
+					USER: process.env.USER ?? "user",
+					SCRIPTC_LIBNODE: "/nonexistent",
+				};
+				if (smokeMode === "headless") {
+					env.PI_GUI_HEADLESS_SMOKE = "1";
+				} else {
+					env.PI_GUI_NATIVE_SMOKE = "1";
+				}
+				const child = spawn(piBin, [...cliArgs], {
+					stdio: ["ignore", "pipe", "pipe"],
+					env,
+				});
+				const finish = (exitCode: number, extraErr = ""): void => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					const stderrText = Buffer.concat(stderrChunks).toString("utf8");
+					resolvePromise({
+						exitCode,
+						stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+						stderr: extraErr.length > 0 ? `${stderrText}\n${extraErr}`.trim() : stderrText,
+					});
+				};
+				const timer = setTimeout(() => {
+					try {
+						child.kill("SIGTERM");
+					} catch {}
+					finish(124, `${piBin} timed out after 20000ms`);
+				}, 20_000);
+				if (child.stdout) {
+					child.stdout.on("data", (chunk: Buffer | string) => {
+						stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+					});
+				}
+				if (child.stderr) {
+					child.stderr.on("data", (chunk: Buffer | string) => {
+						stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+					});
+				}
+				child.on("error", (err) => {
+					finish(1, err.message);
+				});
+				child.on("close", (code, signal) => {
+					finish(code ?? (signal ? 128 : 1), signal ? `signal=${signal}` : "");
+				});
+			});
+
+		const cases: ReadonlyArray<readonly string[]> = [
+			["--gui", "--no-session"],
+			["--mode", "gui", "--no-session"],
+		];
+		for (let i = 0; i < cases.length; i++) {
+			const cliArgs = cases[i];
+			if (cliArgs === undefined) continue;
+
+			const headlessRes = await runPiSmoke(cliArgs, "headless");
+			assertEqual(
+				headlessRes.exitCode,
+				0,
+				`dist/pi ${cliArgs.join(" ")} headless smoke exited ${headlessRes.exitCode}: ${headlessRes.stderr}`,
+			);
+
+			if (process.platform === "darwin" && isNativeDarwinAvailable()) {
+				const nativeRes = await runPiSmoke(cliArgs, "native");
+				assertEqual(
+					nativeRes.exitCode,
+					0,
+					`dist/pi ${cliArgs.join(" ")} native smoke exited ${nativeRes.exitCode}: ${nativeRes.stderr}`,
+				);
+			}
 		}
 	});
 

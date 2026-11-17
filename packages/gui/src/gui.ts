@@ -153,7 +153,7 @@ export class GuiApp {
 	private readonly autoTheme: boolean;
 	private readonly frameIntervalMs: number;
 	private readonly onCloseCallback: (() => boolean | undefined) | undefined;
-	private readonly onKeyCallback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined;
+	private onKeyCallback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined;
 
 	private themeValue: GuiTheme;
 	private rootComponent: GuiComponent | undefined;
@@ -264,6 +264,13 @@ export class GuiApp {
 			});
 		}
 		this.backend.setAppMenu(normalized);
+	}
+
+	/**
+	 * Register or clear the app-level fallback key handler.
+	 */
+	setOnKey(callback: ((event: GuiKeyEvent, ctx: GuiRenderContext) => boolean) | undefined): void {
+		this.onKeyCallback = callback;
 	}
 
 	private dispatchEditorMenuRole(action: EditorKeybindingAction): void {

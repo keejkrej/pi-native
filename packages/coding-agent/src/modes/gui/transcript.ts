@@ -82,6 +82,7 @@ export interface WakuTranscriptViewOptions {
 export interface WakuTranscriptViewHandle {
 	readonly root: GuiComponent;
 	readonly scrollView: ScrollView;
+	readonly messagesStack: VStack;
 	readonly findInput: Input;
 	applyTheme(theme: GuiTheme): void;
 	applySnapshot(snapshot: GuiSessionSnapshot): void;
@@ -562,7 +563,7 @@ export function createWakuTranscriptView(
 	let findMatches: SearchMatchLocation[] = [];
 	let currentFindIndex = 0;
 
-	const messagesStack = new VStack({ gap: 10, fillWidth: true });
+	const messagesStack = new VStack({ gap: 10 });
 	const centeredColumn = new CenteredTranscriptColumn(
 		messagesStack,
 		options.maxColumnWidth ?? DEFAULT_MAX_COLUMN_WIDTH,
@@ -699,7 +700,6 @@ export function createWakuTranscriptView(
 		child: new HStack({
 			gap: 6,
 			align: "center",
-			fillWidth: true,
 			children: [
 				new VectorIcon({ name: "search", size: 13, color: theme.textMuted }),
 				findInput,
@@ -1370,6 +1370,7 @@ export function createWakuTranscriptView(
 	return {
 		root,
 		scrollView,
+		messagesStack,
 		findInput,
 		applyTheme,
 		applySnapshot,

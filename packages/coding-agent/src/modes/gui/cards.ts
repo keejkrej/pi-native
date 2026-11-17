@@ -1141,7 +1141,7 @@ function buildDiffViewComponent(theme: GuiTheme, diffLines: readonly GuiDiffLine
 			}),
 		);
 	}
-	return new VStack({ gap: 1, fillWidth: true, children: rows });
+	return new VStack({ gap: 1, children: rows });
 }
 
 /** Welcome banner card preserved for gui-mode.ts compatibility. */
@@ -1171,7 +1171,6 @@ export function createWelcomeCard(initialTheme: GuiTheme, initialStatus: GuiSess
 	});
 	const body = new VStack({
 		gap: 6,
-		fillWidth: true,
 		children: [headerRow, subtitle, infoLine],
 	});
 	const root = new Box({
@@ -1239,7 +1238,6 @@ export function createUserMessageCard(
 
 	const bubbleContent = new VStack({
 		gap: 8,
-		fillWidth: true,
 		children: bubbleChildren,
 	});
 
@@ -1290,7 +1288,7 @@ export function createUserMessageCard(
 	const actionRow = new HStack({
 		gap: 4,
 		align: "center",
-		children: [new Spacer({ flex: 1 }), copyBtn, forkBtn],
+		children: [{ child: new Spacer(), grow: 1 }, copyBtn, forkBtn],
 	});
 
 	let isHovered = false;
@@ -1390,7 +1388,6 @@ export function createAssistantMessageCard(
 	);
 	const thinkingSection = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [thinkingHeaderBtn, thinkingDrawer],
 	});
 	thinkingSection.visible = false;
@@ -1418,7 +1415,6 @@ export function createAssistantMessageCard(
 		fillWidth: true,
 		child: new VStack({
 			gap: 4,
-			fillWidth: true,
 			children: [new HStack({ gap: 6, align: "center", children: [calloutIcon, calloutTitle] }), calloutText],
 		}),
 	});
@@ -1426,7 +1422,6 @@ export function createAssistantMessageCard(
 
 	const stack = new VStack({
 		gap: 8,
-		fillWidth: true,
 		children: [thinkingSection, answerMarkdown, calloutBox],
 	});
 
@@ -1572,13 +1567,12 @@ export function createToolExecutionCard(
 	const headerContent = new HStack({
 		gap: 6,
 		align: "center",
-		fillWidth: true,
 		children: [
 			chevronIcon,
 			toolIcon,
 			titleLabel,
 			argsLabel,
-			new Spacer({ minSize: 4, flex: 1 }),
+			{ child: new Spacer(4, 1), grow: 1, minSize: 4 },
 			durationBadge,
 			statusBadge,
 		],
@@ -1602,7 +1596,6 @@ export function createToolExecutionCard(
 
 	const detailContent = new VStack({
 		gap: 6,
-		fillWidth: true,
 	});
 	const detailBox = new Box({
 		background: theme.codeBlockBg,
@@ -1617,7 +1610,6 @@ export function createToolExecutionCard(
 
 	const outerStack = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [headerBtn, detailBox],
 	});
 	const root = new Box({
@@ -1780,7 +1772,6 @@ export function createChangedFilesCard(
 
 	const container = new VStack({
 		gap: 6,
-		fillWidth: true,
 		children: [new HStack({ gap: 5, align: "center", children: [headerIcon, headerText] }), pillRow],
 	});
 	const root = new Box({
@@ -1880,6 +1871,9 @@ export function createChangedFilesCard(
 interface TurnToolEntry {
 	readonly id: string;
 	readonly card: ToolCardHandle;
+	toolName: string;
+	ended: boolean;
+	isError: boolean;
 }
 
 /**
@@ -1946,20 +1940,17 @@ export function createTurnClusterCard(
 	});
 	const thinkingGroup = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [thinkingLabel, thinkingMarkdown],
 	});
 	thinkingGroup.visible = false;
 
 	const toolListStack = new VStack({
 		gap: 4,
-		fillWidth: true,
 	});
 	toolListStack.visible = false;
 
 	const railStack = new VStack({
 		gap: 8,
-		fillWidth: true,
 		children: [thinkingGroup, toolListStack],
 	});
 	const railContainer = new ThreadRailContainer(
@@ -1968,10 +1959,16 @@ export function createTurnClusterCard(
 	);
 	railContainer.visible = false;
 
+	const collapsedToolsText = new Text({
+		text: "",
+		fontSize: theme.fontSizeSmall,
+		color: theme.textMuted,
+	});
+	collapsedToolsText.visible = false;
+
 	const clusterSection = new VStack({
 		gap: 6,
-		fillWidth: true,
-		children: [clusterHeaderBtn, railContainer],
+		children: [clusterHeaderBtn, collapsedToolsText, railContainer],
 	});
 	clusterSection.visible = false;
 
@@ -1998,7 +1995,6 @@ export function createTurnClusterCard(
 		fillWidth: true,
 		child: new VStack({
 			gap: 4,
-			fillWidth: true,
 			children: [new HStack({ gap: 6, align: "center", children: [calloutIcon, calloutBadge] }), calloutMsg],
 		}),
 	});
@@ -2011,7 +2007,6 @@ export function createTurnClusterCard(
 
 	const turnStack = new VStack({
 		gap: 10,
-		fillWidth: true,
 		children: [clusterSection, answerMarkdown, calloutBox, changedFilesCard.root],
 	});
 	const root = new Box({
@@ -2062,6 +2057,19 @@ export function createTurnClusterCard(
 
 			toolListStack.visible = hasTools;
 			railContainer.visible = expanded;
+			if (hasTools && !expanded) {
+				const summaryParts: string[] = [];
+				for (let i = 0; i < tools.length; i++) {
+					const entry = tools[i];
+					if (entry === undefined) continue;
+					const statusStr = entry.ended ? (entry.isError ? "Error" : "Complete") : "Running";
+					summaryParts.push(`Tool: ${entry.toolName} · ${statusStr}`);
+				}
+				collapsedToolsText.setText(summaryParts.join("  "));
+				collapsedToolsText.visible = true;
+			} else {
+				collapsedToolsText.visible = false;
+			}
 		}
 
 		const hasAnswer = currentText.trim().length > 0;
@@ -2108,6 +2116,13 @@ export function createTurnClusterCard(
 			refresh();
 		},
 		upsertTool(toolCallId, state) {
+			let entry: TurnToolEntry | undefined;
+			for (let i = 0; i < tools.length; i++) {
+				if (tools[i]?.id === toolCallId) {
+					entry = tools[i];
+					break;
+				}
+			}
 			let card = toolMap.get(toolCallId);
 			if (card === undefined) {
 				card = createToolExecutionCard(theme, state.toolName, state.argsText ?? "", {
@@ -2116,8 +2131,19 @@ export function createTurnClusterCard(
 					onViewDiff: options.onViewDiff,
 				});
 				toolMap.set(toolCallId, card);
-				tools.push({ id: toolCallId, card });
+				entry = {
+					id: toolCallId,
+					card,
+					toolName: state.toolName,
+					ended: Boolean(state.ended),
+					isError: Boolean(state.isError),
+				};
+				tools.push(entry);
 				toolListStack.addChild(card.root);
+			} else if (entry !== undefined) {
+				entry.toolName = state.toolName;
+				if (state.ended !== undefined) entry.ended = state.ended;
+				if (state.isError !== undefined) entry.isError = state.isError;
 			}
 			card.update({
 				argsText: state.argsText,
@@ -2175,6 +2201,7 @@ export function createTurnClusterCard(
 			clusterHeaderBtn.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.48 : 0.65));
 			clusterHeaderBtn.setHoverBackground(theme.surfaceHover);
 			clusterHeaderBtn.setBorderColor(withAlpha(theme.border, 0.5));
+			collapsedToolsText.setColor(theme.textMuted);
 			thinkingLabel.setColor(theme.textMuted);
 			for (let i = 0; i < tools.length; i++) {
 				tools[i]?.card.applyTheme(theme);
@@ -2228,8 +2255,7 @@ export function createBashCard(
 		child: new HStack({
 			gap: 6,
 			align: "center",
-			fillWidth: true,
-			children: [chevron, termIcon, cmdLabel, new Spacer({ minSize: 4, flex: 1 }), durationBadge, exitBadge],
+			children: [chevron, termIcon, cmdLabel, { child: new Spacer(4, 1), grow: 1, minSize: 4 }, durationBadge, exitBadge],
 		}),
 		onClick: () => {
 			expanded = !expanded;
@@ -2255,7 +2281,6 @@ export function createBashCard(
 
 	const stack = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [headerBtn, outputBox],
 	});
 	const root = new Box({
@@ -2386,7 +2411,6 @@ function createCollapsibleSummaryCard(
 
 	const stack = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [headerBtn, bodyBox],
 	});
 	const root = new Box({
@@ -2463,11 +2487,10 @@ export function createExtensionWidgetCard(
 		fontWeight: 600,
 		color: theme.textMuted,
 	});
-	const linesStack = new VStack({ gap: 2, fillWidth: true });
+	const linesStack = new VStack({ gap: 2 });
 
 	const content = new VStack({
 		gap: 4,
-		fillWidth: true,
 		children: [keyLabel, linesStack],
 	});
 	const root = new Box({
@@ -2516,28 +2539,29 @@ export function createExtensionWidgetCard(
 	};
 }
 
-/** Banner card for notices and errors, preserved for gui-mode.ts compatibility. */
+/** Banner card for notices, warnings, and errors, preserved for gui-mode.ts compatibility. */
 export function createBannerCard(
 	initialTheme: GuiTheme,
 	title: string,
 	message: string,
-	tone: "error" | "notice",
+	tone: "error" | "notice" | "warning",
 ): ThemedCard {
 	let theme = initialTheme;
+	const toneColor = (t: GuiTheme) => (tone === "error" ? t.danger : tone === "warning" ? t.warning : t.accent);
 	const icon = new VectorIcon({
-		name: tone === "error" ? "alert" : "info",
+		name: tone === "notice" ? "info" : "alert",
 		size: 14,
-		color: tone === "error" ? theme.danger : theme.accent,
+		color: toneColor(theme),
 	});
 	const badge = new Badge({
-		label: tone === "error" ? "Error" : "Notice",
-		variant: tone === "error" ? "danger" : "accent",
+		label: tone === "error" ? "Error" : tone === "warning" ? "Warning" : "Notice",
+		variant: tone === "error" ? "danger" : tone === "warning" ? "warning" : "accent",
 	});
 	const titleText = new Text({
 		text: title,
 		fontSize: theme.fontSizeSmall,
 		fontWeight: 600,
-		color: tone === "error" ? theme.danger : theme.textBright,
+		color: tone === "error" ? theme.danger : tone === "warning" ? theme.warning : theme.textBright,
 	});
 	const msgText = new Text({
 		text: message,
@@ -2546,21 +2570,14 @@ export function createBannerCard(
 	});
 
 	const root = new Box({
-		background:
-			tone === "error"
-				? withAlpha(theme.danger, theme.dark ? 0.14 : 0.08)
-				: withAlpha(theme.accent, theme.dark ? 0.12 : 0.08),
-		borderColor:
-			tone === "error"
-				? withAlpha(theme.danger, theme.dark ? 0.45 : 0.35)
-				: withAlpha(theme.accent, theme.dark ? 0.4 : 0.3),
+		background: withAlpha(toneColor(theme), theme.dark ? 0.14 : 0.08),
+		borderColor: withAlpha(toneColor(theme), theme.dark ? 0.45 : 0.35),
 		borderWidth: 1,
 		radius: theme.radiusMedium,
 		padding: { horizontal: 12, vertical: 8 },
 		fillWidth: true,
 		child: new VStack({
 			gap: 4,
-			fillWidth: true,
 			children: [new HStack({ gap: 6, align: "center", children: [icon, badge, titleText] }), msgText],
 		}),
 	});
@@ -2569,20 +2586,12 @@ export function createBannerCard(
 		root,
 		applyTheme(nextTheme: GuiTheme) {
 			theme = nextTheme;
-			icon.setColor(tone === "error" ? theme.danger : theme.accent);
-			titleText.setColor(tone === "error" ? theme.danger : theme.textBright);
+			const accent = toneColor(theme);
+			icon.setColor(accent);
+			titleText.setColor(tone === "error" ? theme.danger : tone === "warning" ? theme.warning : theme.textBright);
 			msgText.setColor(theme.text);
-			root.setBackground(
-				tone === "error"
-					? withAlpha(theme.danger, theme.dark ? 0.14 : 0.08)
-					: withAlpha(theme.accent, theme.dark ? 0.12 : 0.08),
-			);
-			root.setBorder(
-				tone === "error"
-					? withAlpha(theme.danger, theme.dark ? 0.45 : 0.35)
-					: withAlpha(theme.accent, theme.dark ? 0.4 : 0.3),
-				1,
-			);
+			root.setBackground(withAlpha(accent, theme.dark ? 0.14 : 0.08));
+			root.setBorder(withAlpha(accent, theme.dark ? 0.45 : 0.35), 1);
 		},
 	};
 }

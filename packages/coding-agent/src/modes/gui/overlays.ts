@@ -28,6 +28,8 @@ import {
 	IconButton,
 	Input,
 	type OverlayHandle,
+	type OverlayOptions,
+	type PaddingInput,
 	Pill,
 	pointInRect,
 	type Rect,
@@ -493,7 +495,7 @@ class ContextProgressBar extends GuiComponent {
 		this.invalidate();
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(40, maxWidth), height: 8 };
 	}
 
@@ -538,7 +540,7 @@ class CommitFileCheckRow extends GuiComponent {
 		this.invalidate();
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 30 };
 	}
 
@@ -609,7 +611,7 @@ class CommitFileCheckRow extends GuiComponent {
 		this.invalidate();
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
 		}

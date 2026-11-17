@@ -126,6 +126,8 @@ export async function runGuiMode(runtime: AgentSessionRuntime, options: RunGuiMo
 				width: 1280,
 				height: 840,
 				resizable: true,
+				titlebarHidden: true,
+				unifiedTitlebar: true,
 			},
 			frameIntervalMs: nativeSmoke ? 12 : 8,
 		});

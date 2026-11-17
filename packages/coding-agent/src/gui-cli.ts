@@ -178,8 +178,8 @@ export async function runHeadlessSmoke(cwd: string): Promise<HeadlessSmokeReport
 		app.step(16);
 		assertCondition(handle.hasActiveOverlay(), "Model picker modal should open on button press");
 		assertCondition(
-			backend.getRenderedTexts().some((t) => t.includes("Switch Model")),
-			"Model picker modal should render Switch Model header",
+			backend.getRenderedTexts().some((t) => t.includes("Select Model") || t.includes("Switch Model")),
+			"Model picker modal should render Select Model header",
 		);
 		backend.pressKey("escape");
 		app.step(16);

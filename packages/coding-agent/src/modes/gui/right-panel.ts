@@ -199,7 +199,7 @@ class ChangedFileListRow extends GuiComponent {
 		this.focusable = true;
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 28 };
 	}
 
@@ -244,7 +244,7 @@ class ChangedFileListRow extends GuiComponent {
 		ctx.drawStyledText(pathX, centerY, pathAvailW, this.selected ? t.textBright : t.textPrimary, pathStyle, this.file.path);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
 		}
@@ -315,7 +315,7 @@ class DiffBodyView extends GuiComponent {
 		return Math.max(18, Math.ceil(ctx.measureText(style, 0, "M").lineHeight) + 4);
 	}
 
-	measure(ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const rowH = this.lineHeightFor(ctx);
 		if (this.file === undefined || this.file.hunks.length === 0) {
 			return { width: Math.max(0, maxWidth), height: rowH * 2 };
@@ -466,7 +466,7 @@ class WorkspaceTreeRow extends GuiComponent {
 		this.focusable = true;
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 26 };
 	}
 
@@ -519,7 +519,7 @@ class WorkspaceTreeRow extends GuiComponent {
 		);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
 		}
@@ -596,7 +596,7 @@ class SyntaxPreviewView extends GuiComponent {
 		return Math.max(18, Math.ceil(ctx.measureText(style, 0, "M").lineHeight) + 4);
 	}
 
-	measure(ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const rowH = this.lineHeightFor(ctx);
 		if (this.preview === undefined || this.preview.isBinary || this.preview.error !== undefined) {
 			return { width: Math.max(0, maxWidth), height: rowH * 3 };
@@ -682,7 +682,7 @@ class SessionTreeEntryRow extends GuiComponent {
 		this.focusable = true;
 	}
 
-	measure(_ctx: GuiRenderContext, maxWidth: number): Size {
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		return { width: Math.max(0, maxWidth), height: 42 };
 	}
 
@@ -724,7 +724,7 @@ class SessionTreeEntryRow extends GuiComponent {
 		ctx.drawStyledText(textX, r.y + 24, availW, t.textSecondary, subStyle, metaText);
 	}
 
-	override handlePointer(event: GuiPointerEvent): GuiPointerResult {
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
 		if (event.phase === "down" && event.button === "left") {
 			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
 		}

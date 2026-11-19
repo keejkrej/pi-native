@@ -120,34 +120,50 @@ describe("Waku theme tokens and palette resolution", () => {
 		assert.equal(resolveTheme("system", true), DARK_THEME);
 
 		assert.equal(colorToHex(DARK_THEME.background), "#1a1a1a");
+		assert.equal(colorToHex(DARK_THEME.surface), "#1a1a1a");
 		assert.equal(colorToHex(DARK_THEME.sidebarBg), "#181818");
 		assert.equal(colorToHex(DARK_THEME.surfaceRaised), "#232323");
 		assert.equal(colorToHex(DARK_THEME.surfaceComposer), "#212121");
+		assert.equal(colorToHex(DARK_THEME.surfaceInset), "#151515");
+		assert.equal(colorToHex(DARK_THEME.surfaceTerminal), "#151515");
 		assert.equal(colorToHex(DARK_THEME.codeBlockBg), "#151515");
-		assert.equal(colorToHex(DARK_THEME.hover), "#2f2e2f");
-		assert.equal(colorToHex(DARK_THEME.surfaceActive), "#2d2d2e");
-		assert.equal(colorToHex(DARK_THEME.inputBg), "#4b4b4b");
-		assert.equal(colorToHex(DARK_THEME.textPrimary), "#ecebed");
-		assert.equal(colorToHex(DARK_THEME.textBright), "#f3f2f4");
-		assert.equal(colorToHex(DARK_THEME.textSecondary), "#a0a0a0");
-		assert.equal(colorToHex(DARK_THEME.textMuted), "#737272");
+		assert.equal(colorToHex(DARK_THEME.sidebarBorder), "#292929");
+		assert.equal(colorToHex(DARK_THEME.textPrimary), "#e2e2e2");
+		assert.equal(colorToHex(DARK_THEME.textSecondary), "#a3a3a3");
+		assert.equal(colorToHex(DARK_THEME.textMuted), "#7d7d7d");
+		assert.equal(colorToHex(DARK_THEME.textDisabled), "#575757");
 		assert.equal(colorToHex(DARK_THEME.accent), "#e2795b");
-		assert.equal(colorToHex(DARK_THEME.diffAddText), "#86c798");
-		assert.equal(colorToHex(DARK_THEME.diffAddBg), "#21372a");
-		assert.equal(colorToHex(DARK_THEME.diffDelText), "#eb8074");
-		assert.equal(colorToHex(DARK_THEME.diffDelBg), "#3b2424");
-		assert.equal(colorToHex(DARK_THEME.warn), "#e4b65e");
-		assert.equal(colorToHex(DARK_THEME.info), "#78b2df");
+		assert.equal(colorToHex(DARK_THEME.gauge), "#3b82f6");
+		assert.equal(colorToHex(DARK_THEME.codeText), "#e0a882");
+		assert.equal(colorToHex(DARK_THEME.inverseBg), "#e7e9ec");
+		assert.equal(colorToHex(DARK_THEME.inverseFg), "#17181c");
+		assert.equal(colorToHex(DARK_THEME.success), "#62c987");
+		assert.equal(colorToHex(DARK_THEME.favorite), "#eab308");
+		assert.equal(colorToHex(DARK_THEME.danger), "#e2726a");
+		assert.equal(colorToHex(DARK_THEME.warn), "#e0b36a");
 
 		assert.equal(colorToHex(LIGHT_THEME.background), "#f6f5f6");
+		assert.equal(colorToHex(LIGHT_THEME.surface), "#f6f5f6");
 		assert.equal(colorToHex(LIGHT_THEME.sidebarBg), "#f3f3f3");
 		assert.equal(colorToHex(LIGHT_THEME.surfaceRaised), "#ececec");
 		assert.equal(colorToHex(LIGHT_THEME.surfaceComposer), "#ffffff");
-		assert.equal(colorToHex(LIGHT_THEME.codeBlockBg), "#f0f0f0");
+		assert.equal(colorToHex(LIGHT_THEME.surfaceInset), "#e6e6e6");
+		assert.equal(colorToHex(LIGHT_THEME.surfaceTerminal), "#ffffff");
+		assert.equal(colorToHex(LIGHT_THEME.textPrimary), "#242424");
+		assert.equal(colorToHex(LIGHT_THEME.textSecondary), "#666666");
+		assert.equal(colorToHex(LIGHT_THEME.textMuted), "#858585");
+		assert.equal(colorToHex(LIGHT_THEME.textDisabled), "#a4a4a4");
 		assert.equal(colorToHex(LIGHT_THEME.accent), "#c85f44");
+		assert.equal(colorToHex(LIGHT_THEME.gauge), "#2563eb");
+		assert.equal(colorToHex(LIGHT_THEME.codeText), "#9a5528");
+		assert.equal(colorToHex(LIGHT_THEME.inverseBg), "#202227");
+		assert.equal(colorToHex(LIGHT_THEME.inverseFg), "#f8f8f9");
+		assert.equal(colorToHex(LIGHT_THEME.success), "#2f8f52");
+		assert.equal(colorToHex(LIGHT_THEME.favorite), "#ca8a04");
+		assert.equal(colorToHex(LIGHT_THEME.danger), "#c64a42");
+		assert.equal(colorToHex(LIGHT_THEME.warn), "#a66b20");
 
 		// Legacy aliases stay consistent for downstream callers
-		assert.deepEqual(DARK_THEME.surface, DARK_THEME.sidebarBg);
 		assert.deepEqual(DARK_THEME.text, DARK_THEME.textPrimary);
 		assert.deepEqual(DARK_THEME.codeBackground, DARK_THEME.codeBlockBg);
 	});
@@ -273,6 +289,34 @@ describe("Per-corner Box radii & wire protocol", () => {
 			assert.fail("expected strokeRectCorners draw command");
 		}
 		assert.equal(strokeCmd.br, 4);
+		app.dispose();
+	});
+
+	it("renders rounded borderEdges with strokeRectCorners instead of flat fillRect lines", () => {
+		const backend = new HeadlessBackend({ width: 400, height: 200 });
+		const app = new GuiApp({ backend, window: { title: "Tray", width: 400, height: 200 } });
+		const tray = new Box({
+			width: 240,
+			height: 40,
+			background: DARK_THEME.surfaceComposer,
+			borderColor: DARK_THEME.border,
+			borderEdges: { top: 1, right: 1, bottom: 0, left: 1 },
+			cornerRadii: { tl: 12, tr: 12, br: 0, bl: 0 },
+			child: new Text("Queued"),
+		});
+		app.setRoot(tray);
+		app.renderFrame();
+		const cmds = backend.getLastFrameCommands();
+		const strokeCmd = cmds.find((c) => c.kind === "strokeRectCorners");
+		if (strokeCmd === undefined || strokeCmd.kind !== "strokeRectCorners") {
+			assert.fail("expected rounded borderEdges Box to emit strokeRectCorners");
+		}
+		assert.equal(strokeCmd.tl, 12);
+		assert.equal(strokeCmd.tr, 12);
+		assert.equal(strokeCmd.br, 0);
+		assert.equal(strokeCmd.bl, 0);
+		assert.equal(strokeCmd.h, 41);
+		assert.ok(cmds.some((c) => c.kind === "pushClip"));
 		app.dispose();
 	});
 });
@@ -534,6 +578,21 @@ describe("Markdown Waku code blocks, syntax highlighting, Copy button, inline co
 		app.step(0);
 		assert.deepEqual(copiedEvents, [{ code: 'const alpha = "beta"; // alpha', language: "ts" }]);
 		assert.equal(backend.getClipboardText(), 'const alpha = "beta"; // alpha');
+		app.dispose();
+	});
+
+	it("renders markdown bullet and ordered list markers in neutral textMuted instead of accent", () => {
+		const backend = new HeadlessBackend({ width: 480, height: 240, darkMode: true });
+		const app = new GuiApp({ backend, window: { title: "ListMarkers", width: 480, height: 240 } });
+		app.setRoot(new Markdown({ padding: 12, text: "- Bullet item\n1. Ordered item" }));
+		app.renderFrame();
+
+		const cmds = backend.getLastFrameCommands();
+		const mutedColor = packRgba(DARK_THEME.textMuted);
+		const accentColor = packRgba(DARK_THEME.accent);
+		assert.ok(cmds.some((c) => c.kind === "drawText" && c.text === "\u2022" && c.rgba === mutedColor));
+		assert.ok(cmds.some((c) => c.kind === "drawText" && c.text === "1." && c.rgba === mutedColor));
+		assert.ok(!cmds.some((c) => c.kind === "drawText" && (c.text === "\u2022" || c.text === "1.") && c.rgba === accentColor));
 		app.dispose();
 	});
 });

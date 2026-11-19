@@ -205,6 +205,15 @@ int32_t sgui_set_app_menu(const uint8_t *spec, size_t spec_len);
 int32_t sgui_set_a11y_tree(uint32_t window_id, const uint8_t *nodes, size_t nodes_len);
 void sgui_window_set_chrome(uint32_t win_id, uint32_t dark_mode, double sidebar_width, uint32_t vibrancy_enabled);
 void sgui_window_action(uint32_t win_id, uint32_t action);
+int32_t sgui_render_png(
+    double width,
+    double height,
+    double scale,
+    const uint8_t *draw_bytes,
+    size_t draw_len,
+    const uint8_t *out_path,
+    size_t out_path_len
+);
 
 #ifdef __cplusplus
 }

@@ -1,7 +1,9 @@
 #import <AppKit/AppKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreText/CoreText.h>
 #import <Foundation/Foundation.h>
+#import <ImageIO/ImageIO.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -2399,5 +2401,95 @@ int32_t sgui_set_a11y_tree(uint32_t window_id, const uint8_t *nodes, size_t node
         }
         [view applyA11yElements:elements byNodeId:byId];
         return 0;
+    }
+}
+
+int32_t sgui_render_png(
+    double width,
+    double height,
+    double scale,
+    const uint8_t *draw_bytes,
+    size_t draw_len,
+    const uint8_t *out_path,
+    size_t out_path_len
+) {
+    @autoreleasepool {
+        if (width <= 0.0 || height <= 0.0 || scale <= 0.0) {
+            return -1;
+        }
+        if (draw_bytes == NULL || draw_len == 0u || out_path == NULL || out_path_len == 0u) {
+            return -1;
+        }
+
+        double raw_px_w = round(width * scale);
+        double raw_px_h = round(height * scale);
+        if (raw_px_w < 1.0 || raw_px_h < 1.0 || raw_px_w > 32768.0 || raw_px_h > 32768.0) {
+            return -1;
+        }
+
+        size_t px_w = (size_t)raw_px_w;
+        size_t px_h = (size_t)raw_px_h;
+
+        NSString *path_str = nsstring_from_utf8(out_path, out_path_len);
+        if (path_str == nil || [path_str length] == 0u) {
+            return -1;
+        }
+        NSURL *url = [NSURL fileURLWithPath:path_str];
+        if (url == nil) {
+            return -1;
+        }
+
+        CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        if (cs == NULL) {
+            cs = CGColorSpaceCreateDeviceRGB();
+        }
+        if (cs == NULL) {
+            return -1;
+        }
+
+        CGContextRef ctx = CGBitmapContextCreate(
+            NULL,
+            px_w,
+            px_h,
+            8,
+            px_w * 4u,
+            cs,
+            (CGBitmapInfo)kCGImageAlphaPremultipliedLast | (CGBitmapInfo)kCGBitmapByteOrder32Big
+        );
+        CGColorSpaceRelease(cs);
+        if (ctx == NULL) {
+            return -1;
+        }
+
+        /* Match SguiView.isFlipped == YES at Retina scale: origin top-left, +y down. */
+        CGContextSaveGState(ctx);
+        CGContextTranslateCTM(ctx, 0.0, (CGFloat)px_h);
+        CGContextScaleCTM(ctx, (CGFloat)scale, -(CGFloat)scale);
+        render_command_buffer(
+            ctx,
+            CGRectMake(0.0, 0.0, (CGFloat)width, (CGFloat)height),
+            draw_bytes,
+            draw_len,
+            0.0
+        );
+        CGContextRestoreGState(ctx);
+
+        CGImageRef image = CGBitmapContextCreateImage(ctx);
+        CGContextRelease(ctx);
+        if (image == NULL) {
+            return -1;
+        }
+
+        CGImageDestinationRef dest = CGImageDestinationCreateWithURL((__bridge CFURLRef)url, CFSTR("public.png"), 1, NULL);
+        if (dest == NULL) {
+            CGImageRelease(image);
+            return -1;
+        }
+
+        CGImageDestinationAddImage(dest, image, NULL);
+        bool ok = CGImageDestinationFinalize(dest);
+        CFRelease(dest);
+        CGImageRelease(image);
+        return ok ? 0 : -1;
     }
 }

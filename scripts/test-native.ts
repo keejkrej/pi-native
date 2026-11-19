@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -131,6 +131,7 @@ import {
 	loadGuiLayoutPreferences,
 	MockGuiSessionController,
 	mountPiGui,
+	runUiReplicationExportAll,
 	saveGuiLayoutPreferences,
 } from "../packages/coding-agent/src/modes/gui/index.ts";
 import { parseArgs } from "../packages/coding-agent/src/cli/args.ts";
@@ -2575,6 +2576,56 @@ async function main(): Promise<void> {
 				assert(backend.getRenderedTexts().some((t) => t.includes("Appearance")), "settings rail missing");
 				handle.closeOverlay();
 
+				// Branch picker: "Branches" header and "Create and checkout new branch…" footer label
+				handle.openGitBranchModal();
+				assertEqual(handle.hasActiveOverlay(), true, "branch picker should open");
+				app.renderFrame();
+				const branchTexts = backend.getRenderedTexts();
+				assert(branchTexts.some((t) => t === "Branches"), "branch picker should render Branches header");
+				assert(
+					branchTexts.some((t) => t.includes("Create and checkout new branch…")),
+					"branch picker should render Create and checkout new branch… footer button",
+				);
+				assert(
+					backend
+						.getAccessibilityTree()
+						.some((n) => n.role === "button" && n.label === "Create and checkout new branch…"),
+					"branch picker footer button a11y label mismatch",
+				);
+				handle.closeOverlay();
+
+				// Model picker: initial active provider filtering, cross-provider search, Escape clears back to active provider
+				handle.openModelPicker();
+				assertEqual(handle.hasActiveOverlay(), true, "model picker should open");
+				app.renderFrame();
+				const initialModelTexts = backend.getRenderedTexts();
+				assert(
+					initialModelTexts.some((t) => t.includes("Claude Sonnet 4.5")),
+					"model picker should show active provider model on open",
+				);
+				assert(
+					!initialModelTexts.some((t) => t.includes("GPT-4o")),
+					"model picker should filter to active provider on initial open",
+				);
+				backend.insertText("gpt");
+				app.step(16);
+				app.renderFrame();
+				assert(
+					backend.getRenderedTexts().some((t) => t.includes("GPT-4o")),
+					"model picker search should match across providers",
+				);
+				backend.pressKey("escape");
+				app.step(16);
+				app.renderFrame();
+				assertEqual(handle.hasActiveOverlay(), true, "first Escape should clear search without closing model picker");
+				const clearedModelTexts = backend.getRenderedTexts();
+				assert(
+					clearedModelTexts.some((t) => t.includes("Claude Sonnet 4.5")) &&
+						!clearedModelTexts.some((t) => t.includes("GPT-4o")),
+					"clearing search should restore active provider filtering",
+				);
+				handle.closeOverlay();
+
 				handle.toggleTheme();
 				app.renderFrame();
 				assertEqual(app.getTheme().dark, false, "toggleTheme should switch to light Waku theme");
@@ -2676,6 +2727,94 @@ async function main(): Promise<void> {
 					`dist/pi ${cliArgs.join(" ")} native smoke exited ${nativeRes.exitCode}: ${nativeRes.stderr}`,
 				);
 			}
+		}
+	});
+
+	// 35. Offline Waku v0.1.20 UI replication export (35 scenes, 44 tokens, 7 components, states, Retina PNGs)
+	await runCase("gui:waku-ui-replication", () => {
+		const replTmp = mkdtempSync(join(tmpdir(), "pi-ui-repl-"));
+		try {
+			const res = runUiReplicationExportAll(replTmp);
+			assertEqual(res.scenarios.length, 35, "expected 35 exported UI replication scenarios");
+
+			const tokensYaml = parseYaml(readFileSync(join(replTmp, "actual-tokens.yaml"), "utf8")) as {
+				schema?: string;
+				color?: Record<string, string>;
+			};
+			assertEqual(tokensYaml.schema, "ui-tokens/1", "actual-tokens schema");
+			const colorMap = tokensYaml.color ?? {};
+			const tokenKeys = Object.keys(colorMap);
+			const darkKeys = tokenKeys.filter((k) => k.startsWith("dark."));
+			const lightKeys = tokenKeys.filter((k) => k.startsWith("light."));
+			assertEqual(tokenKeys.length, 54, "expected 54 total theme tokens (27 dark + 27 light)");
+			assertEqual(darkKeys.length, 27, "expected 27 dark tokens");
+			assertEqual(lightKeys.length, 27, "expected 27 light tokens");
+			assertEqual((colorMap["dark.bg.canvas"] ?? "").toLowerCase(), "#1a1a1a", "dark.bg.canvas token");
+			assertEqual((colorMap["dark.accent.default"] ?? "").toLowerCase(), "#e2795b", "dark.accent.default token");
+			assertEqual((colorMap["light.bg.canvas"] ?? "").toLowerCase(), "#f6f5f6", "light.bg.canvas token");
+
+			const componentsYaml = parseYaml(readFileSync(join(replTmp, "actual-components.yaml"), "utf8")) as {
+				schema?: string;
+				components?: Record<string, Record<string, unknown>>;
+			};
+			assertEqual(componentsYaml.schema, "ui-components/1", "actual-components schema");
+			const componentKeys = [
+				"sidebar.surface",
+				"composer.card",
+				"user.bubble",
+				"popover.model_picker",
+				"command_palette.card",
+				"commit_dialog.card",
+				"toast.card",
+			];
+			for (const ck of componentKeys) {
+				assert(componentsYaml.components?.[ck] !== undefined, `missing component entry: ${ck}`);
+			}
+
+			const statesYaml = parseYaml(readFileSync(join(replTmp, "actual-states.yaml"), "utf8")) as {
+				schema?: string;
+				states?: Record<string, { status?: string }>;
+			};
+			assertEqual(statesYaml.schema, "ui-states/1", "actual-states schema");
+			assertEqual(statesYaml.states?.["app.workspace"]?.status, "observed", "app.workspace observed");
+			assertEqual(statesYaml.states?.["popover.model_picker"]?.status, "observed", "popover.model_picker observed");
+			assertEqual(statesYaml.states?.command_palette?.status, "observed", "command_palette observed");
+
+			const wsEmptyYaml = parseYaml(
+				readFileSync(join(replTmp, "actual-layout", "app.workspace", "empty@1280x820.yaml"), "utf8"),
+			) as {
+				meta?: { source?: string; confidence?: string };
+				nodes?: Array<{ key: string; bounds?: { w?: number; h?: number } }>;
+			};
+			assertEqual(wsEmptyYaml.meta?.source, "actual", "workspace layout meta.source");
+			assertEqual(wsEmptyYaml.meta?.confidence, "measured", "workspace layout meta.confidence");
+			const wsNodes = wsEmptyYaml.nodes ?? [];
+			const sidebarNode = wsNodes.find((n) => n.key === "workspace.sidebar");
+			const composerNode = wsNodes.find((n) => n.key === "workspace.main.composer");
+			assertEqual(sidebarNode?.bounds?.w, 252, "measured sidebar width == 252");
+			assertEqual(composerNode?.bounds?.w, 720, "measured composer width == 720");
+
+			if (process.platform === "darwin" && isNativeDarwinAvailable()) {
+				for (const item of res.scenarios) {
+					assertEqual(item.pngWritten, true, `expected PNG written for ${item.surface}-${item.state}@${item.viewport}`);
+					const pngPath = join(
+						replTmp,
+						"screenshots",
+						"candidate",
+						`${item.surface}-${item.state}@${item.viewport}.png`,
+					);
+					assert(existsSync(pngPath), `missing PNG ${pngPath}`);
+					const pngBuf = readFileSync(pngPath);
+					assertEqual(pngBuf.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `valid PNG header for ${pngPath}`);
+					const expectedDims = item.viewport.split("x");
+					const expW = Number(expectedDims[0]) * 2;
+					const expH = Number(expectedDims[1]) * 2;
+					assertEqual(pngBuf.readUInt32BE(16), expW, `2x PNG width for ${item.surface}-${item.state}@${item.viewport}`);
+					assertEqual(pngBuf.readUInt32BE(20), expH, `2x PNG height for ${item.surface}-${item.state}@${item.viewport}`);
+				}
+			}
+		} finally {
+			rmSync(replTmp, { recursive: true, force: true });
 		}
 	});
 

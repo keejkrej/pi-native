@@ -250,6 +250,7 @@ interface PositionedInlineSegment {
 	readonly xOffset: number;
 	readonly width: number;
 	readonly style: TextStyle;
+	readonly textPadLeft?: number;
 }
 
 interface WrappedSpanLine {
@@ -359,7 +360,23 @@ function layoutInlineSpans(
 	let cursorX = 0;
 	let rowHeight = ctx.measureText({ fontFamily: SGUI_FONT_REGULAR, fontSize: baseFontSize }, 0, "Mg").lineHeight;
 
+	const addTrailingCodePad = (): void => {
+		const last = currentSegs[currentSegs.length - 1];
+		if (last !== undefined && last.kind === "code") {
+			currentSegs[currentSegs.length - 1] = {
+				kind: last.kind,
+				text: last.text,
+				xOffset: last.xOffset,
+				width: last.width + 3,
+				style: last.style,
+				textPadLeft: last.textPadLeft,
+			};
+			cursorX += 3;
+		}
+	};
+
 	const pushLine = (): void => {
+		addTrailingCodePad();
 		lines.push({ segments: currentSegs, lineHeight: rowHeight });
 		currentSegs = [];
 		cursorX = 0;
@@ -372,7 +389,10 @@ function layoutInlineSpans(
 		const spanLH = ctx.measureText(style, 0, "Mg").lineHeight;
 		if (spanLH > rowHeight) rowHeight = spanLH;
 
-		const padX = span.kind === "code" ? 6 : 0;
+		const isCode = span.kind === "code";
+		if (!isCode) {
+			addTrailingCodePad();
+		}
 		const tokens = splitTokens(span.text);
 		for (let t = 0; t < tokens.length; t++) {
 			const token = tokens[t];
@@ -381,22 +401,29 @@ function layoutInlineSpans(
 			if (isSpace && cursorX === 0) {
 				continue;
 			}
-			const w = ctx.measureText(style, 0, token).width + (isSpace ? 0 : padX);
-			if (cursorX > 0 && cursorX + w > widthBudget && !isSpace) {
+			const textW = Math.ceil(ctx.measureText(style, 0, token).width);
+			const prevSeg = currentSegs[currentSegs.length - 1];
+			let leftPad = isCode && (prevSeg === undefined || prevSeg.kind !== "code") ? 3 : 0;
+			const wrapBudgetCheck = leftPad + textW + (isCode ? 3 : 0);
+			if (cursorX > 0 && cursorX + wrapBudgetCheck > widthBudget && !isSpace) {
 				pushLine();
+				leftPad = isCode ? 3 : 0;
 			}
+			const w = leftPad + textW;
 			currentSegs.push({
 				kind: span.kind,
 				text: token,
 				xOffset: cursorX,
 				width: w,
 				style,
+				textPadLeft: leftPad,
 			});
 			cursorX += w;
 		}
 	}
 
 	if (currentSegs.length > 0 || lines.length === 0) {
+		addTrailingCodePad();
 		lines.push({ segments: currentSegs, lineHeight: rowHeight });
 	}
 	return lines;
@@ -879,20 +906,46 @@ export class Markdown extends GuiComponent {
 			if (line === undefined) continue;
 			let lineText = "";
 			const hlSegments: HighlightSegmentLike[] = [];
-			for (let j = 0; j < line.segments.length; j++) {
+			let j = 0;
+			while (j < line.segments.length) {
 				const seg = line.segments[j];
-				if (seg === undefined) continue;
-				const sx = startX + seg.xOffset;
+				if (seg === undefined) {
+					j += 1;
+					continue;
+				}
 				if (seg.kind === "code") {
-					ctx.fillRect(sx, y + 1, seg.width, line.lineHeight - 2, ctx.theme.codeWash, 4);
+					const runStartX = startX + seg.xOffset;
+					let runEndX = runStartX + seg.width;
+					let k = j + 1;
+					while (k < line.segments.length) {
+						const nextSeg = line.segments[k];
+						if (nextSeg === undefined || nextSeg.kind !== "code") break;
+						runEndX = startX + nextSeg.xOffset + nextSeg.width;
+						k += 1;
+					}
+					ctx.fillRect(runStartX, y + 1, Math.max(2, runEndX - runStartX), line.lineHeight - 2, ctx.theme.codeWash, 4);
+					for (let m = j; m < k; m++) {
+						const codeSeg = line.segments[m];
+						if (codeSeg === undefined) continue;
+						lineText += codeSeg.text;
+						hlSegments.push({
+							text: codeSeg.text,
+							xOffset: codeSeg.xOffset,
+							style: codeSeg.style,
+							textPadLeft: codeSeg.textPadLeft ?? 0,
+						});
+					}
+					j = k;
+					continue;
 				}
 				lineText += seg.text;
 				hlSegments.push({
 					text: seg.text,
 					xOffset: seg.xOffset,
 					style: seg.style,
-					textPadLeft: seg.kind === "code" ? 3 : 0,
+					textPadLeft: 0,
 				});
+				j += 1;
 			}
 
 			renderLineSearchHighlights(
@@ -913,7 +966,7 @@ export class Markdown extends GuiComponent {
 				const sx = startX + seg.xOffset;
 				let color = defaultColor;
 				if (seg.kind === "code") {
-					ctx.drawStyledText(sx + 3, y, 0, ctx.theme.codeText, seg.style, seg.text);
+					ctx.drawStyledText(sx + (seg.textPadLeft ?? 0), y, 0, ctx.theme.codeText, seg.style, seg.text);
 					continue;
 				}
 				if (seg.kind === "link") {
@@ -1001,7 +1054,7 @@ export class Markdown extends GuiComponent {
 					const bodySize = this.fontSize ?? ctx.theme.fontSizeBody;
 					const markerStyle: TextStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: bodySize, fontWeight: 600 };
 					const markerText = block.ordered ? block.marker : "\u2022";
-					ctx.drawStyledText(originX + 4, by, 0, ctx.theme.accent, markerStyle, markerText);
+					ctx.drawStyledText(originX + 4, by, 0, ctx.theme.textMuted, markerStyle, markerText);
 					if (entry.lines !== undefined) {
 						this.renderInlineLines(ctx, entry.lines, originX + 22, by, defaultColor, queryLower, matchCounter);
 					}

@@ -194,14 +194,13 @@ describe("waku-transcript-composer", () => {
 		expect(texts).toContain("Branch summary");
 		expect(texts).toContain("lint-status");
 
-		// Asymmetric corner rect command for user bubble & capped bubble width <= 600
+		// Rounded rect command for Waku user bubble (radius 12) & capped bubble width <= 540
 		const cmds = backend.getLastFrameCommands();
-		const cornerCmd = cmds.find((c) => c.kind === "fillRectCorners");
-		expect(cornerCmd).toBeDefined();
-		if (cornerCmd !== undefined && cornerCmd.kind === "fillRectCorners") {
-			expect(cornerCmd.w).toBeLessThanOrEqual(600);
-			expect(cornerCmd.tl).toBe(12);
-			expect(cornerCmd.br).toBe(4);
+		const bubbleCmd = cmds.find((c) => c.kind === "fillRoundedRect" && c.radius === 12);
+		expect(bubbleCmd).toBeDefined();
+		if (bubbleCmd !== undefined && bubbleCmd.kind === "fillRoundedRect") {
+			expect(bubbleCmd.w).toBeLessThanOrEqual(540);
+			expect(bubbleCmd.radius).toBe(12);
 		}
 
 		// Expand turn cluster and exercise Fork, Copy, Open File, View Diff, Changed File callbacks
@@ -281,31 +280,15 @@ describe("waku-transcript-composer", () => {
 			thinkingText: "Scanning repository modules and checking alpha symbol references...",
 		});
 
-		let pickedPrompt = "";
-		const view = createWakuTranscriptView(app, controller, {
-			onSelectPrompt: (prompt) => {
-				pickedPrompt = prompt;
-			},
-		});
+		const view = createWakuTranscriptView(app, controller);
 		app.setRoot(view.root);
 		app.renderFrame();
 
-		// Empty state visible with waku-mark & quick-start prompt chips
+		// Waku v0.1.20 centered empty state visible with sparkle icon & project heading
 		expect(view.isShowingEmptyState()).toBe(true);
 		const heroTexts = backend.getRenderedTexts().join("\n");
-		expect(heroTexts).toContain("Start building");
-		expect(heroTexts).toContain("claude-sonnet-4-5");
-		expect(heroTexts).toContain("Summarize repo changes");
-
-		const heroNodes = backend.getAccessibilityTree();
-		const summarizeChip = findA11yNode(
-			heroNodes,
-			(n) => n.role === "button" && n.label === "Summarize repo changes",
-		);
-		expect(summarizeChip).toBeDefined();
-		backend.triggerA11yPress(summarizeChip!.id);
-		app.step(8);
-		expect(pickedPrompt).toBe("Summarize repo changes");
+		expect(heroTexts).toContain("What should we build in waku-app?");
+		expect(backend.getLastFrameCommands().some((c) => c.kind === "drawText" && c.text.includes("What should we build in waku-app?"))).toBe(true);
 
 		// Execute prompt & user bash command (bash should not duplicate)
 		void controller.prompt("Check alpha references");
@@ -490,7 +473,7 @@ describe("waku-transcript-composer", () => {
 		const ctrlNodes = backend.getAccessibilityTree();
 		const modelBtn = findA11yNode(ctrlNodes, (n) => n.role === "button" && n.label.includes("claude-sonnet-4-5"));
 		const thinkingBtn = findA11yNode(ctrlNodes, (n) => n.role === "button" && n.label.startsWith("Thinking:"));
-		const attachBtn = findA11yNode(ctrlNodes, (n) => n.role === "button" && n.label === "Attach file or image");
+		const attachBtn = findA11yNode(ctrlNodes, (n) => n.role === "button" && n.label === "Attach clipboard image");
 		expect(modelBtn).toBeDefined();
 		expect(thinkingBtn).toBeDefined();
 		expect(attachBtn).toBeDefined();
@@ -535,7 +518,7 @@ describe("waku-transcript-composer", () => {
 		app.step(8);
 		const queued = longStreamingController.getSnapshot().queuedMessages;
 		expect(queued.some((m) => m.kind === "steer" && m.text === "urgent steer task")).toBe(true);
-		expect(backend.getRenderedTexts().join("\n")).toContain("Follow-up");
+		expect(backend.getRenderedTexts().join("\n")).toContain("queued follow-up task");
 		expect(backend.getRenderedTexts().join("\n")).toContain("Steer");
 
 		// Remove one queued item via × button

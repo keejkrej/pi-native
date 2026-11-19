@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
@@ -261,6 +261,81 @@ describe("scriptc native compilation & FFI integration", () => {
 			const parsed = JSON.parse(smoke.stdout.trim()) as { ok?: boolean; mode?: string };
 			assert.equal(parsed.ok, true);
 			assert.equal(parsed.mode, "headless-smoke");
+		} finally {
+			rmSync(outDir, { recursive: true, force: true });
+		}
+	});
+
+	it("renders offscreen draw list to 2x Retina PNG via sgui_render_png on Darwin", (t) => {
+		if (process.platform !== "darwin") {
+			t.skip("Darwin CoreGraphics PNG export check runs on macOS");
+			return;
+		}
+		const scriptcBin = findScriptcBinary();
+		if (scriptcBin === undefined) {
+			t.skip("scriptc binary not found on host");
+			return;
+		}
+
+		const pkgRoot = resolve(import.meta.dirname, "..");
+		const libPath = join(pkgRoot, "native", "darwin", "build", "libsgui.a");
+		if (!existsSync(libPath)) {
+			const nativeBuild = spawnSync("npm", ["run", "build:native:darwin"], {
+				cwd: pkgRoot,
+				encoding: "utf8",
+			});
+			assert.equal(nativeBuild.status, 0, nativeBuild.stderr);
+		}
+
+		const ffiManifest = join(pkgRoot, "ffi", "darwin.json");
+		const outDir = mkdtempSync(join(tmpdir(), "scriptc-gui-png-test-"));
+		const harnessEntry = join(outDir, "png-export-check.ts");
+		const outBin = join(outDir, "png-export-check");
+		const outPng = join(outDir, "snapshot.png");
+		const indexImport = join(pkgRoot, "src", "index.ts").replace(/\\/g, "/");
+		try {
+			writeFileSync(
+				harnessEntry,
+				[
+					`import { Box, darkGuiTheme, GuiApp, HeadlessBackend, renderDrawListToPng, Text, VStack } from ${JSON.stringify(indexImport)};`,
+					"",
+					"const backend = new HeadlessBackend({ width: 120, height: 80 });",
+					"const app = new GuiApp({ backend, theme: darkGuiTheme, window: { title: 'png-test', width: 120, height: 80 } });",
+					"app.setRoot(new Box({ padding: 8, background: darkGuiTheme.background, fillWidth: true, fillHeight: true, child: new VStack({ gap: 4, children: [new Text({ text: 'PNG Snapshot', color: darkGuiTheme.text })] }) }));",
+					"app.renderFrame();",
+					"const bytes = backend.getLastFrameBytes();",
+					"if (!bytes || bytes.length === 0) throw new Error('Expected non-empty draw list');",
+					`const ok = renderDrawListToPng(120, 80, 2, bytes, ${JSON.stringify(outPng)});`,
+					"console.log(JSON.stringify({ ok, byteLength: bytes.length }));",
+					"if (!ok) process.exit(2);",
+					"app.dispose();",
+				].join("\n"),
+			);
+
+			const build = spawnSync(
+				scriptcBin,
+				["build", "--node-islands=off", harnessEntry, "--ffi", ffiManifest, "-o", outBin],
+				{
+					cwd: pkgRoot,
+					encoding: "utf8",
+				},
+			);
+			assert.equal(build.status, 0, `scriptc build failed:\n${build.stdout}\n${build.stderr}`);
+
+			const run = spawnSync(outBin, [], {
+				encoding: "utf8",
+				env: { ...process.env, SCRIPTC_LIBNODE: "/nonexistent" },
+			});
+			assert.equal(run.status, 0, `png-export-check failed:\n${run.stdout}\n${run.stderr}`);
+			assert.equal(existsSync(outPng), true, "snapshot PNG should exist");
+
+			const png = readFileSync(outPng);
+			assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "valid PNG signature");
+			assert.equal(png.subarray(12, 16).toString("ascii"), "IHDR", "IHDR chunk present");
+			const pixelW = png.readUInt32BE(16);
+			const pixelH = png.readUInt32BE(20);
+			assert.equal(pixelW, 240, "2x Retina PNG width");
+			assert.equal(pixelH, 160, "2x Retina PNG height");
 		} finally {
 			rmSync(outDir, { recursive: true, force: true });
 		}

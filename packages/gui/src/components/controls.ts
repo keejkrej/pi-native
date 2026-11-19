@@ -38,7 +38,8 @@ export interface SwitchOptions {
 
 const SWITCH_TRACK_W = 36;
 const SWITCH_TRACK_H = 20;
-const SWITCH_KNOB_SIZE = 16;
+const SWITCH_KNOB_SIZE = 14;
+const SWITCH_KNOB_INSET = 3;
 const SWITCH_GAP = 10;
 
 export class Switch extends GuiComponent {
@@ -123,15 +124,14 @@ export class Switch extends GuiComponent {
 		const trackY = r.y + Math.max(0, (r.height - SWITCH_TRACK_H) * 0.5);
 		const trackRadius = SWITCH_TRACK_H * 0.5;
 		const trackRect: Rect = { x: r.x, y: trackY, width: SWITCH_TRACK_W, height: SWITCH_TRACK_H };
-		const neutralTrack = ctx.theme.dark
-			? mixColors(ctx.theme.surfaceElevated, ctx.theme.border, 0.55)
-			: mixColors(ctx.theme.surfaceMuted, ctx.theme.border, 0.45);
 
-		let trackColor = this.checkedValue ? ctx.theme.accent : neutralTrack;
+		let trackColor = this.checkedValue ? ctx.theme.inverseBg : ctx.theme.surfaceInset;
 		if (this.disabled) {
 			trackColor = ctx.theme.surfaceMuted;
 		} else if (ctx.isHovered(this) || this.pressed) {
-			trackColor = this.checkedValue ? ctx.theme.accentHover : mixColors(neutralTrack, ctx.theme.text, 0.1);
+			trackColor = this.checkedValue
+				? mixColors(ctx.theme.inverseBg, ctx.theme.background, this.pressed ? 0.14 : 0.08)
+				: mixColors(ctx.theme.surfaceInset, ctx.theme.text, this.pressed ? 0.08 : 0.04);
 		}
 		const focused = ctx.isFocused(this);
 		if (focused) {
@@ -141,24 +141,20 @@ export class Switch extends GuiComponent {
 
 		const borderColor = focused
 			? ctx.theme.borderFocus
-			: this.checkedValue
-				? withAlpha(trackColor, 0.9)
-				: withAlpha(ctx.theme.border, 0.85);
+			: this.disabled
+				? ctx.theme.border
+				: this.checkedValue
+					? trackColor
+					: ctx.theme.borderStrong;
 		ctx.strokeRect(r.x, trackY, SWITCH_TRACK_W, SWITCH_TRACK_H, borderColor, 1, trackRadius);
 
-		const knobOffset = this.checkedValue ? SWITCH_TRACK_W - SWITCH_KNOB_SIZE - 2 : 2;
-		const knobY = trackY + 2;
-		if (!this.disabled) {
-			ctx.fillRect(
-				r.x + knobOffset,
-				knobY + 1,
-				SWITCH_KNOB_SIZE,
-				SWITCH_KNOB_SIZE,
-				withAlpha(ctx.theme.shadow, ctx.theme.dark ? 0.36 : 0.16),
-				SWITCH_KNOB_SIZE * 0.5,
-			);
-		}
-		const knobColor = this.disabled ? ctx.theme.textDisabled : rgbColor(255, 255, 255);
+		const knobOffset = this.checkedValue ? SWITCH_TRACK_W - SWITCH_KNOB_SIZE - SWITCH_KNOB_INSET : SWITCH_KNOB_INSET;
+		const knobY = trackY + SWITCH_KNOB_INSET;
+		const knobColor = this.disabled
+			? ctx.theme.textDisabled
+			: this.checkedValue
+				? ctx.theme.inverseFg
+				: ctx.theme.textMuted;
 		ctx.fillRect(r.x + knobOffset, knobY, SWITCH_KNOB_SIZE, SWITCH_KNOB_SIZE, knobColor, SWITCH_KNOB_SIZE * 0.5);
 
 		if (this.labelValue.length > 0) {
@@ -462,7 +458,7 @@ export class Slider extends GuiComponent {
 			geom.trackY,
 			geom.trackW,
 			SLIDER_TRACK_H,
-			withAlpha(ctx.theme.border, 0.7),
+			ctx.theme.border,
 			1,
 			SLIDER_TRACK_H * 0.5,
 		);
@@ -742,7 +738,7 @@ export class SegmentedControl extends GuiComponent {
 			r.y,
 			r.width,
 			r.height,
-			focused ? ctx.theme.borderFocus : withAlpha(ctx.theme.border, 0.85),
+			focused ? ctx.theme.borderFocus : ctx.theme.border,
 			1,
 			trackRadius,
 		);
@@ -789,7 +785,7 @@ export class SegmentedControl extends GuiComponent {
 					segY,
 					segW,
 					segH,
-					withAlpha(ctx.theme.border, ctx.theme.dark ? 0.9 : 0.65),
+					ctx.theme.borderStrong,
 					1,
 					pillRadius,
 				);

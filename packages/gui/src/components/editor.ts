@@ -35,6 +35,7 @@ export type EditorVariant = "default" | "chromeless";
 export interface EditorOptions {
 	readonly initialValue?: string;
 	readonly placeholder?: string;
+	readonly a11yLabel?: string;
 	readonly variant?: EditorVariant;
 	readonly fontFamily?: FontFamilyId;
 	readonly fontSize?: number;
@@ -120,6 +121,7 @@ export class Editor extends GuiComponent {
 	private preferredX: number | undefined;
 
 	private placeholder: string;
+	private a11yLabelValue: string | undefined;
 	private variant: EditorVariant;
 	private fontFamily: FontFamilyId;
 	private fontSize: number | undefined;
@@ -169,6 +171,7 @@ export class Editor extends GuiComponent {
 		this.preferredX = undefined;
 
 		this.placeholder = options.placeholder ?? "";
+		this.a11yLabelValue = options.a11yLabel;
 		this.variant = options.variant ?? "default";
 		this.fontFamily = options.fontFamily ?? SGUI_FONT_REGULAR;
 		this.fontSize = options.fontSize;
@@ -832,7 +835,7 @@ export class Editor extends GuiComponent {
 			role: "textArea",
 			stateFlags: flags,
 			rect: this.layoutRect,
-			label: this.placeholder.length > 0 ? this.placeholder : "Text Editor",
+			label: this.a11yLabelValue ?? (this.placeholder.length > 0 ? this.placeholder : "Text Editor"),
 			value: this.getText(),
 		});
 	}

@@ -22,9 +22,13 @@ import { type FontFamilyId, type GuiA11yNode, SGUI_A11Y_STATE_ENABLED, SGUI_A11Y
 import { KillRing } from "./kill-ring.ts";
 import { UndoStack } from "./undo-stack.ts";
 
+export type InputVariant = "default" | "chromeless";
+
 export interface InputOptions {
 	readonly value?: string;
 	readonly placeholder?: string;
+	readonly a11yLabel?: string;
+	readonly variant?: InputVariant;
 	readonly fontFamily?: FontFamilyId;
 	readonly fontSize?: number;
 	readonly padding?: PaddingInput;
@@ -84,6 +88,8 @@ function nextWordIndex(text: string, from: number): number {
 export class Input extends GuiComponent {
 	private value: string;
 	private placeholder: string;
+	private a11yLabelValue: string | undefined;
+	private variantValue: InputVariant;
 	private fontFamily: FontFamilyId;
 	private fontSize: number | undefined;
 	private padding: Edges;
@@ -111,9 +117,11 @@ export class Input extends GuiComponent {
 		super();
 		this.value = options.value ?? "";
 		this.placeholder = options.placeholder ?? "";
+		this.a11yLabelValue = options.a11yLabel;
+		this.variantValue = options.variant ?? "default";
 		this.fontFamily = options.fontFamily ?? SGUI_FONT_REGULAR;
 		this.fontSize = options.fontSize;
-		this.padding = normalizeEdges(options.padding ?? { vertical: 8, horizontal: 10 });
+		this.padding = normalizeEdges(options.padding ?? (this.variantValue === "chromeless" ? 0 : { vertical: 8, horizontal: 10 }));
 		this.radius = options.radius;
 		this.onChange = options.onChange;
 		this.onSubmit = options.onSubmit;
@@ -139,6 +147,15 @@ export class Input extends GuiComponent {
 
 	getValue(): string {
 		return this.value;
+	}
+
+	getPlaceholder(): string {
+		return this.placeholder;
+	}
+
+	setA11yLabel(label: string | undefined): void {
+		this.a11yLabelValue = label;
+		this.invalidate();
 	}
 
 	setValue(value: string): void {
@@ -287,19 +304,21 @@ export class Input extends GuiComponent {
 		const radius = this.radius ?? ctx.theme.radiusMedium;
 		const wellBg = ctx.theme.dark ? ctx.theme.surfaceMuted : ctx.theme.surface;
 
-		if (focused) {
-			drawFocusHalo(ctx, r, radius, 0.22, 3);
+		if (this.variantValue !== "chromeless") {
+			if (focused) {
+				drawFocusHalo(ctx, r, radius, 0.22, 3);
+			}
+			ctx.fillRect(r.x, r.y, r.width, r.height, wellBg, radius);
+			ctx.strokeRect(
+				r.x,
+				r.y,
+				r.width,
+				r.height,
+				focused ? ctx.theme.borderFocus : ctx.theme.border,
+				1,
+				radius,
+			);
 		}
-		ctx.fillRect(r.x, r.y, r.width, r.height, wellBg, radius);
-		ctx.strokeRect(
-			r.x,
-			r.y,
-			r.width,
-			r.height,
-			focused ? ctx.theme.borderFocus : ctx.theme.border,
-			1,
-			radius,
-		);
 
 		const inner = this.innerRect();
 		if (inner.width <= 0 || inner.height <= 0) return;
@@ -399,7 +418,7 @@ export class Input extends GuiComponent {
 			role: "textField",
 			stateFlags: flags,
 			rect: this.layoutRect,
-			label: this.placeholder.length > 0 ? this.placeholder : "Text Input",
+			label: this.a11yLabelValue ?? (this.placeholder.length > 0 ? this.placeholder : "Text Input"),
 			value: this.value,
 		});
 	}

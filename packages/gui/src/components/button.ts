@@ -20,10 +20,11 @@ import type { GuiKeyEvent } from "../keys.ts";
 import { type A11yActionKind, type GuiA11yNode, SGUI_A11Y_STATE_ENABLED, SGUI_A11Y_STATE_FOCUSED, SGUI_CURSOR_ARROW, SGUI_CURSOR_POINTER, SGUI_FONT_REGULAR } from "../protocol.ts";
 import { drawVectorIcon, type VectorIconName } from "./vector.ts";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+export type ButtonVariant = "primary" | "inverse" | "secondary" | "ghost" | "subtle" | "danger";
 
 export interface ButtonOptions {
 	readonly label: string;
+	readonly a11yLabel?: string;
 	readonly variant?: ButtonVariant;
 	readonly disabled?: boolean;
 	readonly fontSize?: number;
@@ -31,14 +32,20 @@ export interface ButtonOptions {
 	readonly padding?: PaddingInput;
 	readonly radius?: number;
 	readonly minWidth?: number;
+	readonly height?: number;
+	readonly fillWidth?: boolean;
+	readonly align?: "start" | "center";
 	readonly leadingIcon?: VectorIconName;
 	readonly iconSize?: number;
+	readonly trailingIcon?: VectorIconName;
+	readonly trailingIconSize?: number;
 	readonly pill?: boolean;
 	readonly onClick?: () => void;
 }
 
 export class Button extends GuiComponent {
 	private labelValue: string;
+	private a11yLabelValue: string | undefined;
 	private variant: ButtonVariant;
 	private disabled: boolean;
 	private fontSize: number | undefined;
@@ -46,8 +53,13 @@ export class Button extends GuiComponent {
 	private padding: Edges;
 	private radius: number | undefined;
 	private minWidth: number;
+	private fixedHeight: number | undefined;
+	private fillWidthValue: boolean;
+	private alignValue: "start" | "center";
 	private leadingIcon: VectorIconName | undefined;
 	private iconSize: number | undefined;
+	private trailingIcon: VectorIconName | undefined;
+	private trailingIconSize: number | undefined;
 	private pill: boolean;
 	private pressed: boolean;
 	onClick: (() => void) | undefined;
@@ -55,6 +67,7 @@ export class Button extends GuiComponent {
 	constructor(options: ButtonOptions) {
 		super();
 		this.labelValue = options.label;
+		this.a11yLabelValue = options.a11yLabel;
 		this.variant = options.variant ?? "secondary";
 		this.disabled = options.disabled ?? false;
 		this.fontSize = options.fontSize;
@@ -62,8 +75,13 @@ export class Button extends GuiComponent {
 		this.padding = normalizeEdges(options.padding ?? { vertical: 6, horizontal: 12 });
 		this.radius = options.radius;
 		this.minWidth = options.minWidth ?? 0;
+		this.fixedHeight = options.height;
+		this.fillWidthValue = options.fillWidth ?? false;
+		this.alignValue = options.align ?? "center";
 		this.leadingIcon = options.leadingIcon;
 		this.iconSize = options.iconSize;
+		this.trailingIcon = options.trailingIcon;
+		this.trailingIconSize = options.trailingIconSize;
 		this.pill = options.pill ?? false;
 		this.onClick = options.onClick;
 		this.pressed = false;
@@ -114,14 +132,17 @@ export class Button extends GuiComponent {
 
 	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const metrics = ctx.measureText(this.textStyle(ctx), 0, this.labelValue);
-		const iconSz = this.leadingIcon !== undefined ? (this.iconSize ?? Math.max(12, this.fontSize ?? ctx.theme.fontSizeBody)) : 0;
+		const fs = this.fontSize ?? ctx.theme.fontSizeBody;
+		const iconSz = this.leadingIcon !== undefined ? (this.iconSize ?? Math.max(12, fs)) : 0;
 		const iconGap = this.leadingIcon !== undefined && this.labelValue.length > 0 ? 6 : 0;
-		const contentW = iconSz + iconGap + metrics.width;
-		const contentH = Math.max(metrics.lineHeight, iconSz);
-		const naturalW = Math.max(this.minWidth, contentW + this.padding.left + this.padding.right);
+		const trailSz = this.trailingIcon !== undefined ? (this.trailingIconSize ?? Math.max(10, fs - 1)) : 0;
+		const trailGap = this.trailingIcon !== undefined && (this.labelValue.length > 0 || iconSz > 0) ? 5 : 0;
+		const contentW = iconSz + iconGap + Math.ceil(metrics.width) + trailGap + trailSz;
+		const contentH = Math.max(metrics.lineHeight, iconSz, trailSz);
+		const naturalW = this.fillWidthValue ? maxWidth : Math.max(this.minWidth, contentW + this.padding.left + this.padding.right);
 		return {
 			width: Math.min(maxWidth, naturalW),
-			height: contentH + this.padding.top + this.padding.bottom,
+			height: this.fixedHeight ?? (Math.ceil(contentH) + this.padding.top + this.padding.bottom),
 		};
 	}
 
@@ -132,15 +153,16 @@ export class Button extends GuiComponent {
 	} {
 		const t = ctx.theme;
 		if (this.disabled) {
+			const borderless = this.variant === "ghost" || this.variant === "subtle";
 			return {
-				fill: this.variant === "ghost" ? undefined : t.surfaceMuted,
-				border: this.variant === "ghost" ? undefined : t.border,
+				fill: borderless ? undefined : t.surfaceMuted,
+				border: borderless ? undefined : t.border,
 				text: t.textDisabled,
 			};
 		}
 
 		const hovered = this.isHovered();
-		const focused = this.isFocused();
+		const focused = this.isFocusVisible();
 
 		let fill: Color | undefined;
 		let border: Color | undefined;
@@ -152,6 +174,14 @@ export class Button extends GuiComponent {
 				border = focused ? t.textOnAccent : fill;
 				text = t.textOnAccent;
 				break;
+			case "inverse": {
+				const invBg = t.inverseBg ?? (t.dark ? rgbColor(231, 233, 236) : rgbColor(32, 34, 39));
+				const invFg = t.inverseFg ?? (t.dark ? rgbColor(23, 24, 28) : rgbColor(248, 248, 249));
+				fill = this.pressed ? mixColors(invBg, t.background, 0.16) : hovered ? mixColors(invBg, t.background, 0.08) : invBg;
+				border = focused ? t.borderFocus : fill;
+				text = invFg;
+				break;
+			}
 			case "danger":
 				fill = this.pressed ? mixColors(t.danger, t.background, 0.2) : hovered ? t.dangerHover : t.danger;
 				border = focused ? t.textOnAccent : fill;
@@ -163,6 +193,11 @@ export class Button extends GuiComponent {
 					: hovered
 						? t.surfaceElevated
 						: undefined;
+				border = focused ? t.borderFocus : undefined;
+				text = t.text;
+				break;
+			case "subtle":
+				fill = this.pressed ? t.surfaceSelected : hovered ? t.surfaceOverlayStrong : t.sidebarItemBg;
 				border = focused ? t.borderFocus : undefined;
 				text = t.text;
 				break;
@@ -180,9 +215,10 @@ export class Button extends GuiComponent {
 		const r = this.layoutRect;
 		const radius = this.pill ? r.height * 0.5 : (this.radius ?? ctx.theme.radiusMedium);
 		const colors = this.resolveColors(ctx);
-		const focused = this.isFocused();
+		const focused = this.isFocusVisible();
 
-		if (!this.disabled && !this.pressed && this.variant !== "ghost") {
+		const flatVariant = this.variant === "ghost" || this.variant === "subtle";
+		if (!this.disabled && !this.pressed && !flatVariant) {
 			ctx.fillRect(
 				r.x,
 				r.y + 1,
@@ -197,10 +233,10 @@ export class Button extends GuiComponent {
 		}
 		if (colors.fill !== undefined) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, colors.fill, radius);
-			if (!this.disabled && !this.pressed && this.variant !== "ghost" && r.width > 8 && r.height > 4) {
+			if (!this.disabled && !this.pressed && !flatVariant && r.width > 8 && r.height > 4) {
 				const hlInset = Math.min(radius, 6);
 				const hlAlpha =
-					this.variant === "secondary" ? (ctx.theme.dark ? 0.06 : 0.45) : 0.16;
+					this.variant === "secondary" || this.variant === "inverse" ? (ctx.theme.dark ? 0.06 : 0.35) : 0.16;
 				ctx.fillRect(
 					r.x + hlInset,
 					r.y + 1,
@@ -216,11 +252,17 @@ export class Button extends GuiComponent {
 
 		const style = this.textStyle(ctx);
 		const metrics = ctx.measureText(style, 0, this.labelValue);
-		const iconSz = this.leadingIcon !== undefined ? (this.iconSize ?? Math.max(12, this.fontSize ?? ctx.theme.fontSizeBody)) : 0;
+		const fs = this.fontSize ?? ctx.theme.fontSizeBody;
+		const iconSz = this.leadingIcon !== undefined ? (this.iconSize ?? Math.max(12, fs)) : 0;
 		const iconGap = this.leadingIcon !== undefined && this.labelValue.length > 0 ? 6 : 0;
-		const contentW = iconSz + iconGap + metrics.width;
+		const trailSz = this.trailingIcon !== undefined ? (this.trailingIconSize ?? Math.max(10, fs - 1)) : 0;
+		const trailGap = this.trailingIcon !== undefined && (this.labelValue.length > 0 || iconSz > 0) ? 5 : 0;
+		const contentW = iconSz + iconGap + metrics.width + trailGap + trailSz;
 		const innerW = Math.max(0, r.width - this.padding.left - this.padding.right);
-		let cursorX = r.x + this.padding.left + Math.max(0, (innerW - contentW) * 0.5);
+		let cursorX =
+			this.alignValue === "start"
+				? r.x + this.padding.left
+				: r.x + this.padding.left + Math.max(0, (innerW - contentW) * 0.5);
 
 		ctx.pushClip(r);
 		if (this.leadingIcon !== undefined) {
@@ -231,6 +273,12 @@ export class Button extends GuiComponent {
 		if (this.labelValue.length > 0) {
 			const textY = r.y + Math.max(0, (r.height - metrics.lineHeight) * 0.5);
 			ctx.drawStyledText(cursorX, textY, 0, colors.text, style, this.labelValue);
+			cursorX += metrics.width;
+		}
+		if (this.trailingIcon !== undefined) {
+			cursorX += trailGap;
+			const trailY = r.y + Math.max(0, (r.height - trailSz) * 0.5);
+			drawVectorIcon(ctx, this.trailingIcon, cursorX, trailY, trailSz, ctx.theme.textMuted);
 		}
 		ctx.popClip();
 	}
@@ -283,7 +331,7 @@ export class Button extends GuiComponent {
 			role: "button",
 			stateFlags: flags,
 			rect: this.layoutRect,
-			label: this.labelValue,
+			label: this.a11yLabelValue ?? this.labelValue,
 		});
 	}
 
@@ -401,6 +449,13 @@ export class IconButton extends GuiComponent {
 		this.invalidate();
 	}
 
+	setColors(colors: { readonly color?: Color; readonly background?: Color; readonly hoverBackground?: Color }): void {
+		if ("color" in colors) this.colorValue = colors.color;
+		if ("background" in colors) this.backgroundValue = colors.background;
+		if ("hoverBackground" in colors) this.hoverBackgroundValue = colors.hoverBackground;
+		this.invalidate();
+	}
+
 	measure(_ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
 		return {
 			width: Math.min(maxWidth, this.sizeValue),
@@ -413,7 +468,7 @@ export class IconButton extends GuiComponent {
 		const r = this.layoutRect;
 		const t = ctx.theme;
 		const hovered = !this.disabledValue && this.isHovered();
-		const focused = !this.disabledValue && ctx.isFocused(this);
+		const focused = !this.disabledValue && ctx.isFocusVisible(this);
 		const radius = this.radiusValue ?? t.radiusSmall;
 
 		let bg = this.backgroundValue;

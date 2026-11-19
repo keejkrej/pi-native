@@ -91,7 +91,7 @@ export {
 } from "./components/controls.ts";
 export { Editor, type EditorOptions, type EditorPosition, type EditorVariant } from "./components/editor.ts";
 export { Image, type ImageFitMode, type ImageOptions } from "./components/image.ts";
-export { Input, type InputOptions } from "./components/input.ts";
+export { Input, type InputOptions, type InputVariant } from "./components/input.ts";
 export { type KillPushOptions, KillRing } from "./components/kill-ring.ts";
 export { Loader, type LoaderOptions } from "./components/loader.ts";
 export {
@@ -140,6 +140,7 @@ export { GuiApp, type GuiAppOptions, type OverlayAnchor, type OverlayHandle, typ
 export {
 	HeadlessBackend,
 	type HeadlessBackendOptions,
+	type HeadlessTextMeasurer,
 	type HeadlessWindowChromeState,
 } from "./headless-backend.ts";
 export {
@@ -164,6 +165,7 @@ export {
 export {
 	Box,
 	type BoxOptions,
+	type BoxStyleInfo,
 	Container,
 	type CornerRadii,
 	Divider,
@@ -174,10 +176,12 @@ export {
 	type StackAlignment,
 	type StackChild,
 	type StackEntry,
+	type StackJustify,
 	type StackOptions,
 	VStack,
 } from "./layout.ts";
 export { NativeBackend, NativeDriver } from "./native-backend.ts";
+export { renderDrawListToPng } from "./native.ts";
 export {
 	type OklabTriplet,
 	okhslToRgb,

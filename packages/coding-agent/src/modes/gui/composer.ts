@@ -78,9 +78,10 @@ import type {
 	GuiSessionStatus,
 	GuiWorkspaceFileEntry,
 } from "./types.ts";
+import { annotateSpecNode, providerIconForId, registerSpecChildren } from "./ui-spec-meta.ts";
 
-const COMPOSER_MAX_WIDTH = 760;
-const COMPOSER_HORIZONTAL_INSET = 16;
+const COMPOSER_MAX_WIDTH = 720;
+const COMPOSER_HORIZONTAL_INSET = 20;
 const COMPOSER_CARD_RADIUS = 13;
 const ACTION_CIRCLE_SIZE = 26;
 const FOOTER_HEIGHT = 28;
@@ -119,7 +120,8 @@ export interface WakuComposerOptions {
 	readonly initialTheme?: GuiTheme;
 	readonly slashCommands?: readonly SlashCommand[];
 	readonly clipboard?: WakuComposerClipboardBridge;
-	readonly onOpenModelPicker?: () => void;
+	readonly onOpenModelPicker?: (anchorRect?: Rect) => void;
+	readonly onOpenThinkingPicker?: (anchorRect?: Rect) => void;
 	readonly onOpenAttachDialog?: () => void;
 	readonly onToggleShellMode?: (active: boolean) => void;
 	readonly onSlashCommand?: (command: string, args: string) => boolean | Promise<boolean>;
@@ -155,9 +157,10 @@ export interface WakuComposerHandle {
 /** Configuration options for {@link createWakuFooterBar}. */
 export interface WakuFooterBarOptions {
 	readonly initialTheme?: GuiTheme;
-	readonly onWorkspaceClick?: () => void;
-	readonly onGitBranchClick?: () => void;
-	readonly onContextClick?: (usage: GuiContextUsage | undefined) => void;
+	readonly onProjectClick?: (anchorRect?: Rect) => void;
+	readonly onWorkspaceClick?: (anchorRect?: Rect) => void;
+	readonly onGitBranchClick?: (anchorRect?: Rect) => void;
+	readonly onContextClick?: (usage: GuiContextUsage | undefined, anchorRect?: Rect) => void;
 }
 
 /** Handle returned by {@link createWakuFooterBar}. */
@@ -165,6 +168,10 @@ export interface WakuFooterBarHandle {
 	readonly root: GuiComponent;
 	readonly providerBadge: Badge;
 	readonly statusLoader: Loader;
+	readonly projectButton: GuiComponent;
+	readonly workspaceButton: GuiComponent;
+	readonly gitBranchButton: GuiComponent;
+	readonly contextButton: GuiComponent;
 	applyTheme(theme: GuiTheme): void;
 	applySnapshot(snapshot: GuiSessionSnapshot): void;
 	handleEvent(event: GuiControllerEvent): void;
@@ -217,10 +224,13 @@ function formatSnippet(text: string, maxChars = 64): string {
 }
 
 function formatModelLabel(status: GuiSessionStatus): string {
-	if (status.activeModel === undefined) return "Model: Select";
+	if (status.activeModel === undefined) return "Select model";
 	const raw = status.activeModel.label || `${status.activeModel.provider}/${status.activeModel.id}`;
-	const truncated = raw.length > 34 ? `${raw.slice(0, 31)}…` : raw;
-	return `Model: ${truncated}`;
+	return raw.length > 34 ? `${raw.slice(0, 31)}…` : raw;
+}
+
+function formatThinkingChipLabel(level: ThinkingLevel): string {
+	return level.length > 0 ? level[0]!.toUpperCase() + level.slice(1) : "Off";
 }
 
 function mimeFromExtension(ext: string): string {
@@ -465,7 +475,7 @@ class ComposerActionCircle extends GuiComponent {
 		const t = ctx.theme;
 		const radius = Math.min(r.width, r.height) * 0.5;
 		const hovered = this.isHovered();
-		const focused = ctx.isFocused(this);
+		const focused = ctx.isFocusVisible(this);
 
 		if (focused) {
 			drawFocusHalo(ctx, r, radius, 0.28, 3);
@@ -478,13 +488,17 @@ class ComposerActionCircle extends GuiComponent {
 
 		if (this.modeValue === "stop") {
 			icon = "stop";
-			const baseBg = t.textBright;
-			bg = this.pressed ? mixColors(baseBg, t.background, 0.25) : hovered ? mixColors(baseBg, t.background, 0.12) : baseBg;
-			iconColor = t.background;
+			bg = this.pressed
+				? mixColors(t.surfaceOverlayStrong, t.background, 0.12)
+				: hovered
+					? withAlpha(t.danger, 0.18)
+					: t.surfaceOverlayStrong;
+			iconColor = t.text;
 		} else if (this.activeDraftValue) {
 			icon = "arrow-up";
-			bg = this.pressed ? mixColors(t.accent, t.background, 0.18) : hovered ? t.accentHover : t.accent;
-			iconColor = t.textOnAccent;
+			const baseBg = t.inverseBg ?? t.textBright;
+			bg = this.pressed ? mixColors(baseBg, t.background, 0.18) : hovered ? mixColors(baseBg, t.background, 0.08) : baseBg;
+			iconColor = t.inverseFg ?? t.background;
 		} else {
 			icon = "arrow-up";
 			bg = hovered ? t.surfaceHover : t.surfaceElevated;
@@ -496,7 +510,7 @@ class ComposerActionCircle extends GuiComponent {
 		if (border !== undefined) {
 			ctx.strokeRect(r.x, r.y, r.width, r.height, border, 1, radius);
 		}
-		const iconSize = this.modeValue === "stop" ? 11 : 13;
+		const iconSize = this.modeValue === "stop" ? 16 : 13;
 		drawVectorIcon(
 			ctx,
 			icon,
@@ -589,21 +603,7 @@ class ComposerCardContainer extends Box {
 
 	override render(ctx: GuiRenderContext): void {
 		if (!this.visible) return;
-		const r = this.layoutRect;
-		const focused = this.isFocusedCheck !== undefined && this.isFocusedCheck();
-		if (focused) {
-			drawFocusHalo(ctx, r, COMPOSER_CARD_RADIUS, 0.2, 3);
-		}
 		super.render(ctx);
-		if (focused) {
-			const cr = this.getCornerRadii();
-			if (cr !== undefined && (cr.tl !== cr.br || cr.tr !== cr.bl)) {
-				const radius = Math.max(cr.tl, cr.br);
-				ctx.strokeRect(r.x, r.y, r.width, r.height, ctx.theme.accent, 1, radius);
-			} else {
-				ctx.strokeRect(r.x, r.y, r.width, r.height, ctx.theme.accent, 1, COMPOSER_CARD_RADIUS);
-			}
-		}
 	}
 }
 
@@ -616,6 +616,7 @@ class WakuComposerRoot extends GuiComponent {
 		super();
 		this.innerColumn = innerColumn;
 		this.innerColumn.setParent(this);
+		registerSpecChildren(this, () => [this.innerColumn]);
 	}
 
 	setOnPostLayoutSync(fn: (() => void) | undefined): void {
@@ -719,20 +720,35 @@ export function createWakuComposer(
 	const belowWidgetsBox = new VStack({ gap: 6 });
 	belowWidgetsBox.visible = false;
 
-	// Docked Queue Tray (top corners rounded, bottom square docked onto composerCard)
-	const queueRowsStack = new VStack({ gap: 4 });
-	const queueRadii: CornerRadii = { tl: 10, tr: 10, br: 0, bl: 0 };
-	const composerDockedRadii: CornerRadii = { tl: 0, tr: 0, br: COMPOSER_CARD_RADIUS, bl: COMPOSER_CARD_RADIUS };
-	const queueTray = new Box({
-		background: theme.surfaceMuted,
-		borderColor: theme.border,
-		borderWidth: 1,
-		cornerRadii: queueRadii,
-		padding: { top: 6, right: 10, bottom: 6, left: 10 },
+	// Queued tray above the always-rounded 13px composer card
+	const queueRowsStack = new VStack({ gap: 0 });
+	const queueRadii: CornerRadii = { tl: 12, tr: 12, br: 0, bl: 0 };
+	const queueTray = annotateSpecNode(
+		new Box({
+			background: theme.surfaceComposer,
+			borderColor: theme.border,
+			borderEdges: { top: 1, right: 1, bottom: 0, left: 1 },
+			cornerRadii: queueRadii,
+			padding: { top: 4, right: 0, bottom: 4, left: 0 },
+			minHeight: 38,
+			fillWidth: true,
+			child: queueRowsStack,
+		}),
+		{
+			key: "workspace.main.queue_tray",
+			role: "region",
+			flowComponent: queueRowsStack,
+			margin: [0, 14, 0, 14],
+			size: { w: "fill", h: "hug" },
+			skipChildren: true,
+		},
+	);
+	const queueTrayInset = new Box({
+		padding: { horizontal: 14 },
 		fillWidth: true,
-		child: queueRowsStack,
+		child: queueTray,
 	});
-	queueTray.visible = false;
+	queueTrayInset.visible = false;
 
 	// Attachment tiles row above editor inside composerCard
 	const attachmentsRow = new WrappingPillRow([], 6, 6);
@@ -757,98 +773,170 @@ export function createWakuComposer(
 	popupCard.focusable = false;
 
 	// Chromeless multi-line editor
-	const editor = new ComposerEditor({
-		variant: "chromeless",
-		placeholder: "Ask anything, / for commands, @ for files, ! for bash...",
-		minLines: 1,
-		maxLines: 7,
-		padding: { top: 2, right: 4, bottom: 2, left: 4 },
-		submitOnEnter: true,
-		clearOnSubmit: false,
+	const editor = annotateSpecNode(
+		new ComposerEditor({
+			variant: "chromeless",
+			placeholder: "Do anything…",
+			a11yLabel: "Prompt editor",
+			minHeight: 28,
+			minLines: 1,
+			maxLines: 7,
+			padding: 0,
+			submitOnEnter: true,
+			clearOnSubmit: false,
+		}),
+		{
+			key: "workspace.main.composer.editor",
+			role: "textbox",
+			flow: { type: "block" },
+			padding: [0, 0, 0, 0],
+			margin: [0, 0, 0, 0],
+			border: [0, 0, 0, 0],
+			size: { w: "fill", h: "hug" },
+			text: { value: "Prompt editor", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		},
+	);
+
+	const editorWrap = new Box({
+		padding: { horizontal: 12 },
+		fillWidth: true,
+		child: editor,
 	});
 
 	// Bottom Control Bar components
-	const modelButton = new Button({
-		label: formatModelLabel(currentStatus),
-		variant: "ghost",
-		leadingIcon: "sparkles",
-		iconSize: 12,
-		fontSize: theme.fontSizeSmall,
-		padding: { vertical: 4, horizontal: 8 },
-		pill: true,
-		onClick: () => {
-			if (options?.onOpenModelPicker !== undefined) {
-				options.onOpenModelPicker();
-			}
+	const modelButton = annotateSpecNode(
+		new Button({
+			label: formatModelLabel(currentStatus),
+			a11yLabel: "Select Model Chip",
+			variant: "ghost",
+			leadingIcon: providerIconForId(currentStatus.activeModel?.provider),
+			trailingIcon: "chevron-down",
+			trailingIconSize: 10,
+			iconSize: 13,
+			height: 24,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 6 },
+			radius: 6,
+			onClick: () => {
+				if (options?.onOpenModelPicker !== undefined) {
+					options.onOpenModelPicker(modelButton.layoutRect);
+				}
+			},
+		}),
+		{
+			key: "workspace.main.composer.model_chip",
+			role: "button",
+			size: { w: "hug", h: 24 },
+			padding: [0, 0, 0, 0],
+			variant: "menu-chip",
+			text: { value: "Select Model Chip", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
-	});
+	);
 
-	const thinkingButton = new Button({
-		label: `Thinking: ${currentStatus.thinkingLevel}`,
-		variant: "ghost",
-		leadingIcon: "sliders",
-		iconSize: 12,
-		fontSize: theme.fontSizeSmall,
-		padding: { vertical: 4, horizontal: 8 },
-		pill: true,
-		onClick: () => {
-			const levels =
-				currentStatus.availableThinkingLevels.length > 0
-					? currentStatus.availableThinkingLevels
-					: DEFAULT_THINKING_LEVELS;
-			const curIdx = levels.indexOf(currentStatus.thinkingLevel);
-			const next = levels[(curIdx + 1) % levels.length] ?? "off";
-			controller.setThinkingLevel(next);
-			currentStatus = { ...currentStatus, thinkingLevel: next };
-			thinkingButton.setLabel(`Thinking: ${next}`);
-			composerCard.invalidate();
+	const thinkingButton = annotateSpecNode(
+		new Button({
+			label: formatThinkingChipLabel(currentStatus.thinkingLevel),
+			a11yLabel: "Select Thinking Chip",
+			variant: "ghost",
+			leadingIcon: "sliders",
+			trailingIcon: "chevron-down",
+			trailingIconSize: 10,
+			iconSize: 12,
+			height: 24,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 6 },
+			radius: 6,
+			onClick: () => {
+				if (options?.onOpenThinkingPicker !== undefined) {
+					options.onOpenThinkingPicker(thinkingButton.layoutRect);
+					return;
+				}
+				const levels =
+					currentStatus.availableThinkingLevels.length > 0
+						? currentStatus.availableThinkingLevels
+						: DEFAULT_THINKING_LEVELS;
+				const curIdx = levels.indexOf(currentStatus.thinkingLevel);
+				const next = levels[(curIdx + 1) % levels.length] ?? "off";
+				controller.setThinkingLevel(next);
+				currentStatus = { ...currentStatus, thinkingLevel: next };
+				thinkingButton.setLabel(formatThinkingChipLabel(next));
+				composerCard.invalidate();
+			},
+		}),
+		{
+			key: "workspace.main.composer.thinking_chip",
+			role: "button",
+			size: { w: "hug", h: 24 },
+			padding: [0, 0, 0, 0],
+			variant: "menu-chip",
+			text: { value: "Select Thinking Chip", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
-	});
+	);
 
-	const attachButton = new IconButton({
-		icon: "plus",
-		size: 26,
-		iconSize: 13,
-		radius: 13,
-		label: "Attach file or image",
-		onClick: () => {
-			if (options?.onOpenAttachDialog !== undefined) {
-				options.onOpenAttachDialog();
-			}
+	const attachButton = annotateSpecNode(
+		new IconButton({
+			icon: "plus",
+			size: 24,
+			iconSize: 13,
+			radius: 12,
+			label: "Attach clipboard image",
+			onClick: () => {
+				if (options?.onOpenAttachDialog !== undefined) {
+					options.onOpenAttachDialog();
+				}
+			},
+		}),
+		{
+			key: "workspace.main.composer.attach",
+			role: "button",
+			size: { w: 24, h: 24 },
+			variant: "icon-button",
+			text: { value: "Attach clipboard image", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
-	});
+	);
 
-	const shellButton = new Button({
-		label: "!",
-		variant: "ghost",
-		leadingIcon: "terminal",
-		iconSize: 12,
-		fontSize: theme.fontSizeSmall,
-		padding: { vertical: 4, horizontal: 8 },
-		pill: true,
-		onClick: () => {
-			const current = editor.getText();
-			const trimmedStart = current.trimStart();
-			if (trimmedStart.startsWith("!!")) {
-				editor.setText(trimmedStart.slice(2).trimStart());
-			} else if (trimmedStart.startsWith("!")) {
-				editor.setText(trimmedStart.slice(1).trimStart());
-			} else {
-				editor.setText(`!${current}`);
-			}
-			const nowActive = editor.getText().trimStart().startsWith("!");
-			if (options?.onToggleShellMode !== undefined) {
-				options.onToggleShellMode(nowActive);
-			}
-			app?.setFocus(editor);
+	const shellButton = annotateSpecNode(
+		new Button({
+			label: "! Shell",
+			variant: "secondary",
+			leadingIcon: "terminal",
+			iconSize: 12,
+			height: 24,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 8 },
+			pill: true,
+			onClick: () => {
+				const current = editor.getText();
+				const trimmedStart = current.trimStart();
+				if (trimmedStart.startsWith("!!")) {
+					editor.setText(trimmedStart.slice(2).trimStart());
+				} else if (trimmedStart.startsWith("!")) {
+					editor.setText(trimmedStart.slice(1).trimStart());
+				} else {
+					editor.setText(`!${current}`);
+				}
+				const nowActive = editor.getText().trimStart().startsWith("!");
+				if (options?.onToggleShellMode !== undefined) {
+					options.onToggleShellMode(nowActive);
+				}
+				app?.setFocus(editor);
+			},
+		}),
+		{
+			key: "workspace.main.composer.bash_badge",
+			role: "status",
+			size: { w: "hug", h: 24 },
+			variant: "bash-badge",
 		},
-	});
+	);
+	shellButton.visible = false;
 
 	const steerButton = new Button({
 		label: "Steer",
 		variant: "secondary",
+		height: 24,
 		fontSize: theme.fontSizeSmall,
-		padding: { vertical: 4, horizontal: 10 },
+		padding: { vertical: 2, horizontal: 10 },
 		pill: true,
 		onClick: () => {
 			submitCurrent("steer");
@@ -867,16 +955,60 @@ export function createWakuComposer(
 			void controller.abort();
 		},
 	});
+	stopButton.visible = false;
 
-	const actionCircle = new ComposerActionCircle({
-		onSend: () => submitCurrent("auto"),
-		onStop: () => {
-			void controller.abort();
+	const queueFollowupBtn = annotateSpecNode(
+		new IconButton({
+			icon: "arrow-up",
+			size: ACTION_CIRCLE_SIZE,
+			iconSize: 13,
+			radius: ACTION_CIRCLE_SIZE * 0.5,
+			color: theme.inverseFg ?? theme.background,
+			background: theme.inverseBg ?? theme.textBright,
+			hoverBackground: mixColors(theme.inverseBg ?? theme.textBright, theme.background, 0.08),
+			label: "Queue Follow-up",
+			onClick: () => submitCurrent("followUp"),
+		}),
+		{
+			key: "workspace.main.composer.queue_followup",
+			role: "button",
+			size: { w: ACTION_CIRCLE_SIZE, h: ACTION_CIRCLE_SIZE },
+			variant: "circle-action-primary",
+			text: { value: "Queue Follow-up", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
+	);
+	queueFollowupBtn.visible = currentStatus.isStreaming;
+
+	const actionCircle = annotateSpecNode(
+		new ComposerActionCircle({
+			onSend: () => submitCurrent("auto"),
+			onStop: () => {
+				void controller.abort();
+			},
+		}),
+		{
+			key: "workspace.main.composer.send",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "center", align: "center", wrap: "nowrap", gap: 0 },
+			size: { w: ACTION_CIRCLE_SIZE, h: ACTION_CIRCLE_SIZE },
+			variant: "circle-action",
+			text: () => ({
+				value: currentStatus.isStreaming ? "Stop" : "Send",
+				wrap: "nowrap",
+				lines: 1,
+				overflow: "ellipsis",
+			}),
+		},
+	);
+
+	const rightActionsCluster = new HStack({
+		gap: 6,
+		align: "center",
+		children: [steerButton, actionCircle, queueFollowupBtn],
 	});
 
 	const controlsRow = new HStack({
-		gap: 6,
+		gap: 4,
 		align: "center",
 		children: [
 			modelButton,
@@ -884,27 +1016,65 @@ export function createWakuComposer(
 			attachButton,
 			shellButton,
 			{ child: new Spacer(), grow: 1 },
-			stopButton,
-			steerButton,
-			actionCircle,
+			rightActionsCluster,
 		],
 	});
 
-	const cardStack = new VStack({
-		gap: 8,
-		children: [attachmentsRow, editor, controlsRow],
+	const controlsBox = annotateSpecNode(
+		new Box({
+			height: 26,
+			fillWidth: true,
+			child: controlsRow,
+		}),
+		{
+			key: "workspace.main.composer.toolbar",
+			role: "toolbar",
+			flowComponent: controlsRow,
+			padding: [0, 10, 0, 10],
+			margin: [8, 0, 0, 0],
+			size: { w: "fill", h: 26 },
+		},
+	);
+
+	const toolbarInset = new Box({
+		padding: { horizontal: 10 },
+		fillWidth: true,
+		child: controlsBox,
 	});
 
-	const composerCard = new ComposerCardContainer({
-		background: theme.surfaceComposer,
-		borderColor: theme.border,
-		borderWidth: 1,
-		radius: COMPOSER_CARD_RADIUS,
-		padding: 12,
-		shadow: "md",
+	const attachmentsInset = new Box({
+		padding: { horizontal: 12 },
 		fillWidth: true,
-		child: cardStack,
+		child: attachmentsRow,
 	});
+	attachmentsInset.visible = false;
+
+	const cardStack = new VStack({
+		gap: 8,
+		children: [attachmentsInset, editorWrap, toolbarInset],
+	});
+
+	const composerCard = annotateSpecNode(
+		new ComposerCardContainer({
+			background: theme.surfaceComposer,
+			borderColor: theme.border,
+			borderWidth: 1,
+			radius: COMPOSER_CARD_RADIUS,
+			maxWidth: COMPOSER_MAX_WIDTH,
+			padding: { top: 10, bottom: 10, left: 0, right: 0 },
+			shadow: "md",
+			fillWidth: true,
+			child: cardStack,
+		}),
+		{
+			key: "workspace.main.composer",
+			role: "region",
+			flowComponent: cardStack,
+			margin: [0, 20, 0, 20],
+			size: { w: COMPOSER_MAX_WIDTH, h: "hug" },
+			variant: "composer-card",
+		},
+	);
 	composerCard.setFocusPredicate(() => editorHasFocus || editor.isFocused());
 
 	const innerColumn = new VStack({
@@ -912,7 +1082,7 @@ export function createWakuComposer(
 		children: [
 			aboveWidgetsBox,
 			inlineAutocompleteSlot,
-			queueTray,
+			queueTrayInset,
 			composerCard,
 			belowWidgetsBox,
 		],
@@ -926,11 +1096,12 @@ export function createWakuComposer(
 		const hasDraft = trimmed.length > 0 || attachments.length > 0;
 		const isShell = text.trimStart().startsWith("!");
 
-		shellButton.setVariant(isShell ? "secondary" : "ghost");
-		shellButton.setLabel(isShell ? "! Shell" : "!");
+		shellButton.visible = isShell;
+		shellButton.setLabel(text.trimStart().startsWith("!!") ? "!! Shell" : "! Shell");
 
 		const streaming = currentStatus.isStreaming;
 		steerButton.visible = streaming && hasDraft;
+		queueFollowupBtn.visible = streaming;
 		actionCircle.setState(streaming ? "stop" : "send", hasDraft);
 		composerCard.invalidate();
 	};
@@ -938,11 +1109,13 @@ export function createWakuComposer(
 	const renderAttachmentTiles = () => {
 		if (attachments.length === 0) {
 			attachmentsRow.visible = false;
+			attachmentsInset.visible = false;
 			attachmentsRow.setChildren([]);
 			syncActionAndShellControls();
 			return;
 		}
 		attachmentsRow.visible = true;
+		attachmentsInset.visible = true;
 		const tiles: GuiComponent[] = [];
 		for (let i = 0; i < attachments.length; i++) {
 			const item = attachments[i];
@@ -1038,54 +1211,194 @@ export function createWakuComposer(
 		syncActionAndShellControls();
 	};
 
+	const editQueuedMessage = (msg: (typeof queuedMessages)[number]) => {
+		controller.removeQueuedMessage(msg.id);
+		editor.setText(msg.text);
+		if (msg.attachments !== undefined) {
+			attachments = msg.attachments.slice();
+			renderAttachmentTiles();
+		}
+		syncActionAndShellControls();
+		app?.setFocus(editor);
+	};
+
 	const renderQueueTray = () => {
 		if (queuedMessages.length === 0) {
 			queueTray.visible = false;
+			queueTrayInset.visible = false;
 			replaceStackChildren(queueRowsStack, []);
-			composerCard.setCornerRadii(undefined);
-			composerCard.setRadius(COMPOSER_CARD_RADIUS);
-			composerCard.invalidate();
+			queueTray.invalidate();
 			return;
 		}
 		queueTray.visible = true;
-		composerCard.setCornerRadii(composerDockedRadii);
+		queueTrayInset.visible = true;
 		const rows: GuiComponent[] = [];
 		for (let i = 0; i < queuedMessages.length; i++) {
 			const msg = queuedMessages[i];
 			if (msg === undefined) continue;
-			const badge = new Badge({
-				label: msg.kind === "steer" ? "Steer" : "Follow-up",
-				variant: msg.kind === "steer" ? "warning" : "accent",
-				fontSize: Math.max(10, theme.fontSizeSmall - 1),
-				padding: { vertical: 2, horizontal: 7 },
+			const leadingIcon = new VectorIcon({
+				name: msg.kind === "steer" ? "arrow-right" : "queue",
+				size: 12,
+				color: theme.textMuted,
 			});
 			const attachSuffix =
 				msg.attachments !== undefined && msg.attachments.length > 0
 					? ` [+${msg.attachments.length}]`
 					: "";
+			const kindPrefix = msg.kind === "steer" ? "Steer: " : "";
 			const snippet = new TruncatedText({
-				text: `${formatSnippet(msg.text)}${attachSuffix}`,
-				fontSize: theme.fontSizeSmall,
-				color: theme.textSecondary,
+				text: `${kindPrefix}${formatSnippet(msg.text, 512)}${attachSuffix}`,
+				fontSize: 12.5,
+				color: theme.textPrimary,
+			});
+			const snippetTrigger = new ClickableContainer({
+				label: "Edit queued message",
+				fillWidth: true,
+				borderWidth: 0,
+				radius: 4,
+				padding: 0,
+				child: snippet,
+				onClick: () => {
+					editQueuedMessage(msg);
+				},
 			});
 			const msgId = msg.id;
+			const actionControls: StackChild[] = [];
+			if (msg.kind !== "steer") {
+				actionControls.push(
+					new ClickableContainer({
+						label: "Steer",
+						height: 24,
+						radius: 6,
+						borderWidth: 0,
+						hoverBackground: theme.surfaceOverlayStrong,
+						padding: { top: 0, right: 7, bottom: 0, left: 7 },
+						child: new HStack({
+							gap: 5,
+							align: "center",
+							children: [
+								new VectorIcon({ name: "corner-down-right", size: 11, color: theme.textSecondary }),
+								new Text({ text: "Steer", fontSize: 12.5, color: theme.textSecondary, wrap: false }),
+							],
+						}),
+						onClick: () => {
+							controller.removeQueuedMessage(msgId);
+							void controller.steerMessage(msg.text, msg.attachments);
+							app?.setFocus(editor);
+						},
+					}),
+				);
+			}
 			const cancelBtn = new IconButton({
-				icon: "close",
-				size: 18,
-				iconSize: 10,
-				radius: 5,
+				icon: "trash",
+				size: 24,
+				iconSize: 12,
+				radius: 6,
+				color: theme.textSecondary,
+				hoverBackground: theme.surfaceOverlayStrong,
 				label: "Remove queued message",
 				onClick: () => {
 					controller.removeQueuedMessage(msgId);
 					app?.setFocus(editor);
 				},
 			});
-			const row = new HStack({
-				gap: 8,
-				align: "center",
-				children: [badge, snippet, { child: new Spacer(), grow: 1 }, cancelBtn],
+			actionControls.push(cancelBtn);
+
+			let queueMenuHandle: OverlayHandle | undefined;
+			const moreBtn = new IconButton({
+				icon: "ellipsis",
+				size: 24,
+				iconSize: 12.5,
+				radius: 6,
+				color: theme.textSecondary,
+				hoverBackground: theme.surfaceOverlayStrong,
+				label: "Queued message actions",
+				onClick: () => {
+					if (app === undefined) return;
+					if (queueMenuHandle !== undefined) {
+						queueMenuHandle.hide();
+						queueMenuHandle = undefined;
+						return;
+					}
+					const makeActionItem = (
+						labelText: string,
+						iconName: VectorIconName,
+						onSelect: () => void,
+					): ClickableContainer =>
+						new ClickableContainer({
+							label: labelText,
+							height: 28,
+							radius: 6,
+							borderWidth: 0,
+							fillWidth: true,
+							hoverBackground: theme.surfaceOverlayStrong,
+							padding: { top: 0, right: 8, bottom: 0, left: 8 },
+							child: new HStack({
+								gap: 8,
+								align: "center",
+								children: [
+									new VectorIcon({ name: iconName, size: 12, color: theme.textSecondary }),
+									new Text({ text: labelText, fontSize: 12.5, color: theme.text, wrap: false }),
+								],
+							}),
+							onClick: () => {
+								queueMenuHandle?.hide();
+								queueMenuHandle = undefined;
+								onSelect();
+							},
+						});
+					const menuBox = new Box({
+						width: 176,
+						background: theme.surfaceRaised,
+						borderColor: theme.borderStrong,
+						borderWidth: 1,
+						radius: 8,
+						padding: 4,
+						shadow: "md",
+						child: new VStack({
+							gap: 2,
+							align: "stretch",
+							children: [
+								makeActionItem("Edit in composer", "edit", () => {
+									editQueuedMessage(msg);
+								}),
+								makeActionItem("Remove follow-up", "trash", () => {
+									controller.removeQueuedMessage(msgId);
+									app?.setFocus(editor);
+								}),
+							],
+						}),
+					});
+					queueMenuHandle = app.showOverlay(menuBox, {
+						anchorRect: moreBtn.layoutRect,
+						width: 176,
+						radius: 8,
+						shadow: "md",
+						dismissOnBackdropClick: true,
+						dismissOnEscape: true,
+						onDismiss: () => {
+							queueMenuHandle = undefined;
+						},
+					});
+				},
 			});
-			rows.push(row);
+			actionControls.push(moreBtn);
+
+			const rowContent = new Box({
+				height: 30,
+				fillWidth: true,
+				padding: { top: 0, right: 6, bottom: 0, left: 12 },
+				child: new HStack({
+					gap: 9,
+					align: "center",
+					children: [
+						leadingIcon,
+						{ child: snippetTrigger, grow: 1, shrink: 1 },
+						new HStack({ gap: 2, align: "center", children: actionControls }),
+					],
+				}),
+			});
+			rows.push(rowContent);
 		}
 		replaceStackChildren(queueRowsStack, rows);
 		queueTray.invalidate();
@@ -1553,8 +1866,9 @@ export function createWakuComposer(
 
 	const updateStatus = (nextStatus: GuiSessionStatus) => {
 		currentStatus = nextStatus;
+		modelButton.setLeadingIcon(providerIconForId(nextStatus.activeModel?.provider));
 		modelButton.setLabel(formatModelLabel(nextStatus));
-		thinkingButton.setLabel(`Thinking: ${nextStatus.thinkingLevel}`);
+		thinkingButton.setLabel(formatThinkingChipLabel(nextStatus.thinkingLevel));
 		stopButton.setDisabled(!nextStatus.isStreaming);
 		syncActionAndShellControls();
 	};
@@ -1620,10 +1934,15 @@ export function createWakuComposer(
 
 	const applyTheme = (nextTheme: GuiTheme) => {
 		theme = nextTheme;
-		queueTray.setBackground(theme.surfaceMuted);
-		queueTray.setBorder(theme.border, 1);
+		queueTray.setBackground(theme.surfaceComposer);
+		queueTray.setBorderEdges({ top: 1, right: 1, bottom: 0, left: 1 }, theme.border);
+		queueFollowupBtn.setColors({
+			color: theme.inverseFg ?? theme.background,
+			background: theme.inverseBg ?? theme.textBright,
+			hoverBackground: mixColors(theme.inverseBg ?? theme.textBright, theme.background, 0.08),
+		});
 		composerCard.setBackground(theme.surfaceComposer);
-		composerCard.setBorder(theme.border, 1);
+		composerCard.setBorder(theme.border, 1, COMPOSER_CARD_RADIUS);
 		popupCard.setBackground(theme.surfaceElevated);
 		popupCard.setBorder(theme.borderStrong, 1);
 		for (let i = 0; i < aboveWidgetCards.length; i++) {
@@ -1740,66 +2059,65 @@ function computeDirtyCounts(changedFiles: readonly GuiChangedFile[]): {
 }
 
 class FooterBarContainer extends GuiComponent {
-	private readonly row: HStack;
+	private readonly box: Box;
 
-	constructor(row: HStack) {
+	constructor(box: Box) {
 		super();
-		this.row = row;
-		this.row.setParent(this);
+		this.box = box;
+		this.box.setParent(this);
+		registerSpecChildren(this, () => [this.box]);
 	}
 
 	override attachHost(host: GuiHost | undefined): void {
 		super.attachHost(host);
-		this.row.attachHost(host);
+		this.box.attachHost(host);
 	}
 
 	override onThemeChange(theme: GuiTheme): void {
 		super.onThemeChange(theme);
-		this.row.onThemeChange(theme);
+		this.box.onThemeChange(theme);
 	}
 
 	measure(_ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
-		const h = maxHeight !== undefined ? Math.min(maxHeight, FOOTER_HEIGHT) : FOOTER_HEIGHT;
+		const outerH = 4 + FOOTER_HEIGHT + 8;
+		const h = maxHeight !== undefined ? Math.min(maxHeight, outerH) : outerH;
 		return { width: maxWidth, height: h };
 	}
 
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
-		const padX = 12;
-		const innerW = Math.max(0, rect.width - padX * 2);
-		const innerH = Math.max(0, rect.height - 2);
-		this.row.layout(ctx, { x: rect.x + padX, y: rect.y + 1, width: innerW, height: innerH });
+		const availW = Math.max(0, rect.width - COMPOSER_HORIZONTAL_INSET * 2);
+		const colW = Math.min(COMPOSER_MAX_WIDTH, availW);
+		const colX = rect.x + Math.max(COMPOSER_HORIZONTAL_INSET, (rect.width - colW) * 0.5);
+		this.box.layout(ctx, { x: colX, y: rect.y + 4, width: colW, height: FOOTER_HEIGHT });
 	}
 
 	render(ctx: GuiRenderContext): void {
 		if (!this.visible) return;
-		const r = this.layoutRect;
-		ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.surface);
-		ctx.fillRect(r.x, r.y, r.width, 1, ctx.theme.border);
-		this.row.render(ctx);
+		this.box.render(ctx);
 	}
 
 	override hitTest(x: number, y: number): GuiComponent | undefined {
 		if (!this.visible || !pointInRect(x, y, this.layoutRect)) return undefined;
-		return this.row.hitTest(x, y) ?? this;
+		return this.box.hitTest(x, y) ?? this;
 	}
 
 	override collectFocusables(out: GuiComponent[]): void {
 		if (!this.visible) return;
-		this.row.collectFocusables(out);
+		this.box.collectFocusables(out);
 	}
 
 	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
 		if (!this.visible) return;
-		this.row.collectAccessibilityNodes(out, ctx);
+		this.box.collectAccessibilityNodes(out, ctx);
 	}
 
 	override findComponentByA11yId(nodeId: number): GuiComponent | undefined {
-		return this.row.findComponentByA11yId(nodeId);
+		return this.box.findComponentByA11yId(nodeId);
 	}
 }
 
-/** Create the 28px Waku workspace status footer bar with git chip, extension statuses, and context ring gauge. */
+/** Create the 28px Waku workspace footer bar centered at 720px under the composer. */
 export function createWakuFooterBar(
 	controller: GuiSessionController,
 	options?: WakuFooterBarOptions,
@@ -1811,63 +2129,80 @@ export function createWakuFooterBar(
 	let currentPercent = 0;
 	let formattedContextLabel = "0 / 0 (0%)";
 
-	const folderIcon = new VectorIcon({ name: "folder", size: 12, color: theme.textMuted });
-	const workspaceLabel = new TruncatedText({
-		text: basename(initialSnap.status.cwd) || initialSnap.status.cwd,
-		fontSize: theme.fontSizeSmall,
-	});
-	const workspaceBtn = new ClickableContainer({
-		label: `Workspace: ${initialSnap.status.cwd}`,
-		hoverBackground: theme.surfaceHover,
-		radius: 6,
-		padding: { top: 2, right: 6, bottom: 2, left: 6 },
-		focusable: options?.onWorkspaceClick !== undefined,
-		child: new HStack({
-			gap: 5,
-			align: "center",
-			children: [
-				folderIcon,
-				new Box({ maxWidth: 160, child: workspaceLabel }),
-			],
+	const projectBtn = annotateSpecNode(
+		new Button({
+			label: basename(initialSnap.status.cwd) || initialSnap.status.cwd || "Project",
+			a11yLabel: "Select Project",
+			variant: "ghost",
+			leadingIcon: "folder",
+			trailingIcon: "chevron-down",
+			trailingIconSize: 10,
+			iconSize: 12,
+			height: 26,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 6 },
+			radius: 6,
+			onClick: () => options?.onProjectClick?.(projectBtn.layoutRect),
 		}),
-		onClick: options?.onWorkspaceClick,
-	});
-
-	const gitBranchText = new Text({
-		text: initialSnap.gitBranch || initialSnap.status.gitBranch || "",
-		fontSize: theme.fontSizeSmall,
-		fontWeight: 500,
-		color: theme.textSecondary,
-	});
-	const gitDiffText = new Text({
-		text: "",
-		fontFamily: SGUI_FONT_MONO,
-		fontSize: Math.max(10, theme.fontSizeSmall - 1),
-		color: theme.textMuted,
-	});
-	gitDiffText.visible = false;
-
-	const gitBranchBtn = new ClickableContainer({
-		label: "Git branch",
-		hoverBackground: theme.surfaceHover,
-		radius: 6,
-		padding: { top: 2, right: 6, bottom: 2, left: 6 },
-		focusable: true,
-		child: new HStack({
-			gap: 5,
-			align: "center",
-			children: [
-				new VectorIcon({ name: "git-branch", size: 12, color: theme.textMuted }),
-				gitBranchText,
-				gitDiffText,
-			],
-		}),
-		onClick: () => {
-			if (options?.onGitBranchClick !== undefined) {
-				options.onGitBranchClick();
-			}
+		{
+			key: "workspace.main.footer.project_chip",
+			role: "button",
+			size: { w: "hug", h: 26 },
+			padding: [0, 0, 0, 0],
+			variant: "menu-chip",
+			text: { value: "Select Project", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
-	});
+	);
+
+	const workspaceBtn = annotateSpecNode(
+		new Button({
+			label: "Local",
+			a11yLabel: "Select Workspace",
+			variant: "ghost",
+			leadingIcon: "laptop",
+			trailingIcon: "chevron-down",
+			trailingIconSize: 10,
+			iconSize: 12,
+			height: 26,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 6 },
+			radius: 6,
+			onClick: () => options?.onWorkspaceClick?.(workspaceBtn.layoutRect),
+		}),
+		{
+			key: "workspace.main.footer.workspace_chip",
+			role: "button",
+			size: { w: "hug", h: 26 },
+			padding: [0, 0, 0, 0],
+			variant: "menu-chip",
+			text: { value: "Select Workspace", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		},
+	);
+
+	const gitBranchBtn = annotateSpecNode(
+		new Button({
+			label: initialSnap.gitBranch || initialSnap.status.gitBranch || "main",
+			a11yLabel: "Switch Git Branch",
+			variant: "ghost",
+			leadingIcon: "git-branch",
+			trailingIcon: "chevron-down",
+			trailingIconSize: 10,
+			iconSize: 12,
+			height: 26,
+			fontSize: theme.fontSizeSmall,
+			padding: { vertical: 2, horizontal: 6 },
+			radius: 6,
+			onClick: () => options?.onGitBranchClick?.(gitBranchBtn.layoutRect),
+		}),
+		{
+			key: "workspace.main.footer.branch_chip",
+			role: "button",
+			size: { w: "hug", h: 26 },
+			padding: [0, 0, 0, 0],
+			variant: "menu-chip",
+			text: { value: "Switch Git Branch", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		},
+	);
 
 	const providerBadge = new Badge({
 		label: initialSnap.status.activeModel?.provider ?? "offline",
@@ -1882,7 +2217,15 @@ export function createWakuFooterBar(
 		running: initialSnap.status.isStreaming,
 	});
 
-	const statusesRow = new HStack({ gap: 8, align: "center" });
+	const statusesRow = annotateSpecNode(
+		new HStack({ gap: 6, align: "center" }),
+		{
+			key: "workspace.main.footer.extension_status",
+			role: "status",
+			size: { w: "hug", h: 24 },
+		},
+	);
+	statusesRow.visible = false;
 
 	const ringCanvas = new VectorCanvas({
 		width: 16,
@@ -1906,58 +2249,70 @@ export function createWakuFooterBar(
 						? ctx.theme.danger
 						: currentPercent >= 75
 							? ctx.theme.warning
-							: ctx.theme.accent;
+							: ctx.theme.gauge;
 				surface.drawRing(cx, cy, radius, startAngle, endAngle, thickness, ringColor, true);
 			}
 		},
 	});
 
-	const contextText = new Text({
-		text: formattedContextLabel,
-		fontFamily: SGUI_FONT_MONO,
-		fontSize: theme.fontSizeSmall,
-		color: theme.textSecondary,
-	});
-
-	const contextBtn = new ClickableContainer({
-		label: `Context window: ${formattedContextLabel}`,
-		hoverBackground: theme.surfaceHover,
-		radius: 6,
-		padding: { top: 2, right: 6, bottom: 2, left: 6 },
-		focusable: true,
-		child: new HStack({
-			gap: 6,
-			align: "center",
-			children: [ringCanvas, contextText],
+	const contextBtn = annotateSpecNode(
+		new ClickableContainer({
+			label: "Context Window Usage",
+			hoverBackground: theme.surfaceHover,
+			borderWidth: 0,
+			radius: 6,
+			padding: 4,
+			height: 24,
+			focusable: true,
+			child: ringCanvas,
+			onClick: () => {
+				if (options?.onContextClick !== undefined) {
+					options.onContextClick(currentUsage, contextBtn.layoutRect);
+				}
+			},
 		}),
-		onClick: () => {
-			if (options?.onContextClick !== undefined) {
-				options.onContextClick(currentUsage);
-			}
+		{
+			key: "workspace.main.footer.context_gauge",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "center", align: "center", wrap: "nowrap", gap: 0 },
+			padding: [0, 0, 0, 0],
+			size: { w: 24, h: 24 },
+			variant: "usage-gauge",
+			text: { value: "Context Window Usage", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
 		},
-	});
+	);
 
 	const footerRow = new HStack({
-		gap: 8,
+		gap: 2,
 		align: "center",
-		children: [workspaceBtn, gitBranchBtn, providerBadge, statusLoader, statusesRow, { child: new Spacer(), grow: 1 }, contextBtn],
+		children: [projectBtn, workspaceBtn, gitBranchBtn, statusesRow, { child: new Spacer(), grow: 1 }, contextBtn],
 	});
-	const root = new FooterBarContainer(footerRow);
+
+	const footerBox = annotateSpecNode(
+		new Box({
+			maxWidth: COMPOSER_MAX_WIDTH,
+			height: FOOTER_HEIGHT,
+			fillWidth: true,
+			padding: { horizontal: 10 },
+			child: footerRow,
+		}),
+		{
+			key: "workspace.main.footer",
+			role: "region",
+			flowComponent: footerRow,
+			margin: [4, 20, 8, 20],
+			size: { w: COMPOSER_MAX_WIDTH, h: FOOTER_HEIGHT },
+			variant: "workspace-footer",
+		},
+	);
+
+	const root = new FooterBarContainer(footerBox);
 
 	const updateContextUsage = (usage: GuiContextUsage | undefined) => {
 		currentUsage = usage;
 		const summary = formatContextUsageSummary(usage);
 		currentPercent = summary.percent;
 		formattedContextLabel = summary.label;
-		contextText.setText(summary.label);
-		const color =
-			summary.percent >= 90
-				? theme.danger
-				: summary.percent >= 75
-					? theme.warning
-					: theme.textSecondary;
-		contextText.setColor(color);
-		contextBtn.setLabel(`Context window: ${summary.label}`);
 		ringCanvas.invalidate();
 		contextBtn.invalidate();
 	};
@@ -1975,7 +2330,7 @@ export function createWakuFooterBar(
 			if (entry === undefined) continue;
 			pills.push(
 				new Box({
-					maxWidth: 180,
+					maxWidth: 160,
 					child: new TruncatedText({
 						text: `${entry.key}: ${entry.text}`,
 						fontSize: Math.max(10, theme.fontSizeSmall - 1),
@@ -1989,24 +2344,13 @@ export function createWakuFooterBar(
 
 	const updateGitAndWorkspace = (snapshot: GuiSessionSnapshot) => {
 		const cwd = snapshot.status.cwd;
-		workspaceLabel.setText(basename(cwd) || cwd);
-		workspaceBtn.setLabel(`Workspace: ${cwd}`);
-
-		const branch = snapshot.gitBranch || snapshot.status.gitBranch || "";
-		const isGit = snapshot.isGitRepo || snapshot.status.isGitRepo === true || branch.length > 0;
-		gitBranchBtn.visible = isGit;
-		if (isGit) {
-			const counts = computeDirtyCounts(snapshot.changedFiles);
-			gitBranchText.setText(branch.length > 0 ? branch : "detached");
-			const hasDirty = counts.additions > 0 || counts.deletions > 0;
-			gitDiffText.visible = hasDirty;
-			if (hasDirty) {
-				gitDiffText.setText(`+${counts.additions} -${counts.deletions}`);
-				gitBranchBtn.setLabel(`Git branch: ${branch || "detached"} (+${counts.additions} -${counts.deletions})`);
-			} else {
-				gitBranchBtn.setLabel(`Git branch: ${branch || "detached"}`);
-			}
-		}
+		projectBtn.setLabel(basename(cwd) || cwd || "Project");
+		const branch = snapshot.gitBranch || snapshot.status.gitBranch || "main";
+		const counts = computeDirtyCounts(snapshot.changedFiles);
+		const dirtySuffix =
+			counts.additions > 0 || counts.deletions > 0 ? ` (+${counts.additions} -${counts.deletions})` : "";
+		gitBranchBtn.setLabel(`${branch}${dirtySuffix}`);
+		gitBranchBtn.visible = true;
 	};
 
 	const updateStatusIndicators = (status: GuiSessionStatus) => {
@@ -2060,9 +2404,7 @@ export function createWakuFooterBar(
 
 	const applyTheme = (nextTheme: GuiTheme) => {
 		theme = nextTheme;
-		folderIcon.setColor(theme.textMuted);
-		gitBranchText.setColor(theme.textSecondary);
-		gitDiffText.setColor(theme.textMuted);
+		contextBtn.setHoverBackground(theme.surfaceHover);
 		updateContextUsage(currentUsage);
 		renderStatuses(controller.getSnapshot().statuses);
 		root.invalidate();
@@ -2075,6 +2417,10 @@ export function createWakuFooterBar(
 		root,
 		providerBadge,
 		statusLoader,
+		projectButton: projectBtn,
+		workspaceButton: workspaceBtn,
+		gitBranchButton: gitBranchBtn,
+		contextButton: contextBtn,
 		applyTheme,
 		applySnapshot,
 		handleEvent,

@@ -5,6 +5,7 @@ import {
 	Button,
 	type Color,
 	type CornerRadii,
+	Divider,
 	drawFocusHalo,
 	type Edges,
 	type GuiA11yNode,
@@ -45,6 +46,7 @@ import type {
 	GuiSessionStatus,
 	GuiTranscriptEntry,
 } from "./types.ts";
+import { registerSpecChildren } from "./ui-spec-meta.ts";
 
 /** Base themed card interface preserved across GUI modes. */
 export interface ThemedCard {
@@ -62,6 +64,7 @@ export interface UserMessageCardHandle extends ThemedCard {
 	setSearchQuery(query: string, activeMatchIndex?: number): void;
 	countSearchMatches(query: string): number;
 	getText(): string;
+	getBubbleBox(): Box;
 }
 
 /** Assistant message card handle preserved for gui-mode.ts compatibility. */
@@ -154,6 +157,8 @@ export interface TurnClusterCardHandle extends ThemedCard {
 	countThinkingMatches(query: string): number;
 	countAnswerMatches(query: string): number;
 	isEmpty(): boolean;
+	getWorkedFoldButton(): GuiComponent;
+	getAssistantBox(): Box;
 }
 
 /** Options for bottom-of-turn changed files pill row. */
@@ -211,6 +216,7 @@ export interface ClickableContainerOptions {
 	readonly cornerRadii?: CornerRadii;
 	readonly padding?: PaddingInput;
 	readonly fillWidth?: boolean;
+	readonly height?: number;
 	readonly focusable?: boolean;
 	readonly onClick?: () => void;
 }
@@ -229,6 +235,7 @@ export class ClickableContainer extends GuiComponent {
 	private cornerRadii: CornerRadii | undefined;
 	private padding: Edges;
 	private fillWidthValue: boolean;
+	private fixedHeightValue: number | undefined;
 	private hovered = false;
 	private pressed = false;
 	private onClickFn: (() => void) | undefined;
@@ -248,6 +255,7 @@ export class ClickableContainer extends GuiComponent {
 		this.cornerRadii = options.cornerRadii;
 		this.padding = normalizeEdges(options.padding);
 		this.fillWidthValue = options.fillWidth ?? false;
+		this.fixedHeightValue = options.height;
 		this.focusable = options.focusable ?? true;
 		this.cursor = SGUI_CURSOR_POINTER;
 		this.onClickFn = options.onClick;
@@ -305,7 +313,7 @@ export class ClickableContainer extends GuiComponent {
 		const totalW = this.fillWidthValue
 			? maxWidth
 			: Math.min(maxWidth, measured.width + this.padding.left + this.padding.right);
-		const totalH = measured.height + this.padding.top + this.padding.bottom;
+		const totalH = this.fixedHeightValue ?? measured.height + this.padding.top + this.padding.bottom;
 		return {
 			width: Math.max(0, totalW),
 			height: Math.max(0, maxHeight !== undefined ? Math.min(maxHeight, totalH) : totalH),
@@ -375,7 +383,7 @@ export class ClickableContainer extends GuiComponent {
 			this.child.render(ctx);
 		}
 
-		if (this.focusable && this.isFocused()) {
+		if (this.focusable && this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, this.radius);
 		}
 	}
@@ -609,8 +617,12 @@ export class SearchableText extends GuiComponent {
 			const w = line.length > 0 ? ctx.getTextCaretX(style, line, line.length) : 0;
 			if (w > maxLineW) maxLineW = w;
 		}
+		const width =
+			lines.length > 1
+				? Math.max(0, maxWidth)
+				: Math.min(maxWidth, Math.max(16, Math.ceil(maxLineW)));
 		return {
-			width: Math.min(maxWidth, Math.max(16, Math.ceil(maxLineW))),
+			width,
 			height: Math.max(lineHeight, lines.length * lineHeight),
 		};
 	}
@@ -1206,7 +1218,7 @@ export function createWelcomeCard(initialTheme: GuiTheme, initialStatus: GuiSess
 	};
 }
 
-/** Upgraded Waku right-aligned user bubble with asymmetric corners, attachment pills, and hover Copy/Fork actions. */
+/** Waku right-aligned user bubble (`maxWidth: 540`, `radius: 12`, hover Copy/Fork actions). */
 export function createUserMessageCard(
 	initialTheme: GuiTheme,
 	text: string,
@@ -1214,8 +1226,7 @@ export function createUserMessageCard(
 ): UserMessageCardHandle {
 	let theme = initialTheme;
 	let currentText = text;
-	const maxBubbleWidth = options.maxBubbleWidth ?? 600;
-	const bubbleRadii: CornerRadii = { tl: 12, tr: 12, br: 4, bl: 12 };
+	const maxBubbleWidth = options.maxBubbleWidth ?? 540;
 
 	const messageText = new SearchableText({
 		text,
@@ -1237,16 +1248,17 @@ export function createUserMessageCard(
 	bubbleChildren.push(messageText);
 
 	const bubbleContent = new VStack({
-		gap: 8,
+		gap: 6,
 		children: bubbleChildren,
 	});
 
 	const bubbleBox = new Box({
 		background: theme.surfaceRaised,
-		borderColor: withAlpha(theme.border, theme.dark ? 0.9 : 0.75),
+		borderColor: theme.surfaceRaised,
 		borderWidth: 1,
-		cornerRadii: bubbleRadii,
-		padding: { horizontal: 14, vertical: 10 },
+		radius: 12,
+		maxWidth: maxBubbleWidth,
+		padding: { horizontal: 11, vertical: 7 },
 		child: bubbleContent,
 	});
 
@@ -1290,13 +1302,12 @@ export function createUserMessageCard(
 		align: "center",
 		children: [{ child: new Spacer(), grow: 1 }, copyBtn, forkBtn],
 	});
+	actionRow.visible = false;
 
 	let isHovered = false;
 	const applyActionVisibility = () => {
-		const showBorder = isHovered
-			? withAlpha(theme.borderStrong, theme.dark ? 0.85 : 0.7)
-			: withAlpha(theme.border, theme.dark ? 0.9 : 0.75);
-		bubbleBox.setBorder(showBorder, 1);
+		actionRow.visible = isHovered;
+		bubbleBox.setBorder(isHovered ? theme.borderStrong : theme.surfaceRaised, 1, 12);
 	};
 
 	const column = new VStack({
@@ -1308,6 +1319,7 @@ export function createUserMessageCard(
 		isHovered = hovered;
 		applyActionVisibility();
 	});
+	registerSpecChildren(slot, () => [bubbleBox]);
 
 	class UserBubbleRoot extends Box {
 		override attachHost(host: GuiHost | undefined): void {
@@ -1317,13 +1329,16 @@ export function createUserMessageCard(
 	}
 
 	const root = new UserBubbleRoot({
-		padding: { top: 6, bottom: 2 },
+		padding: 0,
 		fillWidth: true,
 		child: slot,
 	});
 
 	return {
 		root,
+		getBubbleBox(): Box {
+			return bubbleBox;
+		},
 		getText(): string {
 			return currentText;
 		},
@@ -1384,7 +1399,7 @@ export function createAssistantMessageCard(
 	});
 	const thinkingDrawer = new ThreadRailContainer(
 		thinkingMarkdown,
-		withAlpha(theme.borderStrong, theme.dark ? 0.65 : 0.75),
+		theme.borderStrong,
 	);
 	const thinkingSection = new VStack({
 		gap: 4,
@@ -1503,7 +1518,7 @@ export function createAssistantMessageCard(
 			thinkingLabel.setColor(theme.textMuted);
 			thinkingHeaderBtn.setBackground(withAlpha(theme.surfaceMuted, 0.55));
 			thinkingHeaderBtn.setHoverBackground(theme.surfaceHover);
-			thinkingDrawer.setRailColor(withAlpha(theme.borderStrong, theme.dark ? 0.65 : 0.75));
+			thinkingDrawer.setRailColor(theme.borderStrong);
 			refresh();
 		},
 	};
@@ -1582,7 +1597,7 @@ export function createToolExecutionCard(
 		label: `Tool: ${toolName}`,
 		background: withAlpha(theme.surfaceMuted, theme.dark ? 0.65 : 0.75),
 		hoverBackground: theme.surfaceHover,
-		borderColor: withAlpha(theme.border, 0.75),
+		borderColor: theme.border,
 		borderWidth: 1,
 		radius: 8,
 		padding: { horizontal: 10, vertical: 6 },
@@ -1744,7 +1759,7 @@ export function createToolExecutionCard(
 			titleLabel.setColor(theme.textBright);
 			headerBtn.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.65 : 0.75));
 			headerBtn.setHoverBackground(theme.surfaceHover);
-			headerBtn.setBorderColor(withAlpha(theme.border, 0.75));
+			headerBtn.setBorderColor(theme.border);
 			detailBox.setBackground(theme.codeBlockBg);
 			detailBox.setBorder(theme.border, 1);
 			refresh();
@@ -1776,7 +1791,7 @@ export function createChangedFilesCard(
 	});
 	const root = new Box({
 		background: withAlpha(theme.surfaceMuted, theme.dark ? 0.4 : 0.55),
-		borderColor: withAlpha(theme.border, 0.7),
+		borderColor: theme.border,
 		borderWidth: 1,
 		radius: 8,
 		padding: { horizontal: 10, vertical: 8 },
@@ -1862,7 +1877,7 @@ export function createChangedFilesCard(
 			headerIcon.setColor(theme.textMuted);
 			headerText.setColor(theme.textMuted);
 			root.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.4 : 0.55));
-			root.setBorder(withAlpha(theme.border, 0.7), 1);
+			root.setBorder(theme.border, 1);
 			rebuild();
 		},
 	};
@@ -1899,27 +1914,40 @@ export function createTurnClusterCard(
 	const tools: TurnToolEntry[] = [];
 	const toolMap = new Map<string, ToolCardHandle>();
 
-	const clusterChevron = new VectorIcon({ name: "chevron-right", size: 12, color: theme.textMuted });
-	const clusterStatusIcon = new VectorIcon({ name: "activity", size: 13, color: theme.accent });
+	const clusterLeftRule = new Divider({ direction: "horizontal", color: theme.border });
+	const clusterRightRule = new Divider({ direction: "horizontal", color: theme.border });
+	const clusterChevron = new VectorIcon({ name: "chevron-right", size: 11, color: theme.textMuted });
 	const clusterSummaryLabel = new Text({
 		text: "Working...",
 		fontSize: theme.fontSizeSmall,
-		fontWeight: 600,
-		color: theme.textSecondary,
+		fontWeight: 500,
+		color: theme.textMuted,
+		wrap: false,
+	});
+	const clusterLabelGroup = new HStack({
+		gap: 5,
+		align: "center",
+		justify: "center",
+		children: [clusterSummaryLabel, clusterChevron],
 	});
 
 	const clusterHeaderBtn = new ClickableContainer({
 		label: "Toggle turn activity",
-		background: withAlpha(theme.surfaceMuted, theme.dark ? 0.48 : 0.65),
-		hoverBackground: theme.surfaceHover,
-		borderColor: withAlpha(theme.border, 0.5),
-		borderWidth: 1,
-		radius: 8,
-		padding: { horizontal: 10, vertical: 5 },
+		borderWidth: 0,
+		radius: 6,
+		padding: 0,
+		height: 24,
+		fillWidth: true,
+		hoverBackground: theme.hover,
 		child: new HStack({
-			gap: 6,
+			gap: 10,
 			align: "center",
-			children: [clusterChevron, clusterStatusIcon, clusterSummaryLabel],
+			justify: "center",
+			children: [
+				{ child: clusterLeftRule, grow: 1, shrink: 1 },
+				{ child: clusterLabelGroup, shrink: 0 },
+				{ child: clusterRightRule, grow: 1, shrink: 1 },
+			],
 		}),
 		onClick: () => {
 			userPinnedExpanded = !expanded;
@@ -1955,7 +1983,7 @@ export function createTurnClusterCard(
 	});
 	const railContainer = new ThreadRailContainer(
 		railStack,
-		withAlpha(theme.borderStrong, theme.dark ? 0.65 : 0.75),
+		theme.borderStrong,
 	);
 	railContainer.visible = false;
 
@@ -2005,12 +2033,21 @@ export function createTurnClusterCard(
 	});
 	changedFilesCard.root.visible = false;
 
+	const assistantStack = new VStack({
+		gap: 8,
+		children: [answerMarkdown, calloutBox, changedFilesCard.root],
+	});
+	const assistantBox = new Box({
+		fillWidth: true,
+		child: assistantStack,
+	});
+
 	const turnStack = new VStack({
-		gap: 10,
-		children: [clusterSection, answerMarkdown, calloutBox, changedFilesCard.root],
+		gap: 12,
+		children: [clusterSection, assistantBox],
 	});
 	const root = new Box({
-		padding: { vertical: 6 },
+		padding: 0,
 		fillWidth: true,
 		child: turnStack,
 	});
@@ -2028,7 +2065,7 @@ export function createTurnClusterCard(
 	const refresh = () => {
 		const hasThinking = currentThinking.trim().length > 0;
 		const hasTools = tools.length > 0;
-		const hasSteps = hasThinking || hasTools;
+		const hasSteps = hasThinking || hasTools || (explicitDurationMs !== undefined && explicitDurationMs > 0);
 
 		if (userPinnedExpanded === undefined) {
 			// Keep expanded while working on steps; collapse smoothly once final answer is delivered.
@@ -2043,11 +2080,9 @@ export function createTurnClusterCard(
 			clusterSummaryLabel.setText(summaryText);
 			clusterHeaderBtn.setLabel(summaryText);
 			clusterChevron.setName(expanded ? "chevron-down" : "chevron-right");
-			clusterStatusIcon.setName(isEnded ? "sparkles" : "activity");
-			clusterStatusIcon.setColor(isEnded ? theme.textMuted : theme.accent);
 			railContainer.setRailColor(
 				isEnded
-					? withAlpha(theme.borderStrong, theme.dark ? 0.65 : 0.75)
+					? theme.borderStrong
 					: withAlpha(theme.accent, 0.75),
 			);
 
@@ -2057,19 +2092,7 @@ export function createTurnClusterCard(
 
 			toolListStack.visible = hasTools;
 			railContainer.visible = expanded;
-			if (hasTools && !expanded) {
-				const summaryParts: string[] = [];
-				for (let i = 0; i < tools.length; i++) {
-					const entry = tools[i];
-					if (entry === undefined) continue;
-					const statusStr = entry.ended ? (entry.isError ? "Error" : "Complete") : "Running";
-					summaryParts.push(`Tool: ${entry.toolName} · ${statusStr}`);
-				}
-				collapsedToolsText.setText(summaryParts.join("  "));
-				collapsedToolsText.visible = true;
-			} else {
-				collapsedToolsText.visible = false;
-			}
+			collapsedToolsText.visible = false;
 		}
 
 		const hasAnswer = currentText.trim().length > 0;
@@ -2197,10 +2220,10 @@ export function createTurnClusterCard(
 		applyTheme(nextTheme: GuiTheme) {
 			theme = nextTheme;
 			clusterChevron.setColor(theme.textMuted);
-			clusterSummaryLabel.setColor(theme.textSecondary);
-			clusterHeaderBtn.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.48 : 0.65));
-			clusterHeaderBtn.setHoverBackground(theme.surfaceHover);
-			clusterHeaderBtn.setBorderColor(withAlpha(theme.border, 0.5));
+			clusterSummaryLabel.setColor(theme.textMuted);
+			clusterLeftRule.setColor(theme.border);
+			clusterRightRule.setColor(theme.border);
+			clusterHeaderBtn.setHoverBackground(theme.hover);
 			collapsedToolsText.setColor(theme.textMuted);
 			thinkingLabel.setColor(theme.textMuted);
 			for (let i = 0; i < tools.length; i++) {
@@ -2208,6 +2231,12 @@ export function createTurnClusterCard(
 			}
 			changedFilesCard.applyTheme(theme);
 			refresh();
+		},
+		getWorkedFoldButton() {
+			return clusterHeaderBtn;
+		},
+		getAssistantBox() {
+			return assistantBox;
 		},
 	};
 }
@@ -2383,7 +2412,7 @@ function createCollapsibleSummaryCard(
 		label: headingText,
 		background: withAlpha(theme.surfaceMuted, theme.dark ? 0.55 : 0.7),
 		hoverBackground: theme.surfaceHover,
-		borderColor: withAlpha(theme.border, 0.75),
+		borderColor: theme.border,
 		borderWidth: 1,
 		radius: 8,
 		padding: { horizontal: 10, vertical: 6 },
@@ -2401,7 +2430,7 @@ function createCollapsibleSummaryCard(
 	});
 	const bodyBox = new Box({
 		background: withAlpha(theme.surface, theme.dark ? 0.7 : 0.85),
-		borderColor: withAlpha(theme.border, 0.75),
+		borderColor: theme.border,
 		borderWidth: 1,
 		radius: 8,
 		padding: { horizontal: 12, vertical: 8 },
@@ -2450,9 +2479,9 @@ function createCollapsibleSummaryCard(
 			label.setColor(theme.textSecondary);
 			headerBtn.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.55 : 0.7));
 			headerBtn.setHoverBackground(theme.surfaceHover);
-			headerBtn.setBorderColor(withAlpha(theme.border, 0.75));
+			headerBtn.setBorderColor(theme.border);
 			bodyBox.setBackground(withAlpha(theme.surface, theme.dark ? 0.7 : 0.85));
-			bodyBox.setBorder(withAlpha(theme.border, 0.75), 1);
+			bodyBox.setBorder(theme.border, 1);
 		},
 	};
 }
@@ -2495,7 +2524,7 @@ export function createExtensionWidgetCard(
 	});
 	const root = new Box({
 		background: withAlpha(theme.surfaceMuted, theme.dark ? 0.55 : 0.75),
-		borderColor: withAlpha(theme.border, 0.8),
+		borderColor: theme.border,
 		borderWidth: 1,
 		radius: 8,
 		padding: { horizontal: 10, vertical: 6 },
@@ -2532,7 +2561,7 @@ export function createExtensionWidgetCard(
 		applyTheme(nextTheme: GuiTheme) {
 			theme = nextTheme;
 			root.setBackground(withAlpha(theme.surfaceMuted, theme.dark ? 0.55 : 0.75));
-			root.setBorder(withAlpha(theme.border, 0.8), 1);
+			root.setBorder(theme.border, 1);
 			keyLabel.setColor(theme.textMuted);
 			renderLines();
 		},

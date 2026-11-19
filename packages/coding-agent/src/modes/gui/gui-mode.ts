@@ -37,13 +37,19 @@ import {
 	openGitBranchModal,
 	openGitCommitModal,
 	openModelPicker,
+	openProjectPicker,
 	openSessionPicker,
 	openSettingsModal,
+	openSidebarOptionsPopover,
+	openThinkingPicker,
+	openWorkspacePicker,
 	resolveAppearanceTheme,
+	type WakuSettingsCategory,
 } from "./overlays.ts";
-import { createWakuRightPanel, type WakuRightPanelHandle } from "./right-panel.ts";
-import { createWakuSidebar, type WakuSidebarHandle } from "./sidebar.ts";
+import { createWakuRightPanel, type RightPanelTab, type WakuRightPanelHandle } from "./right-panel.ts";
+import { createWakuSidebar, SIDEBAR_DEFAULT_WIDTH, type WakuSidebarHandle } from "./sidebar.ts";
 import { createWakuTranscriptView, type WakuTranscriptViewHandle } from "./transcript.ts";
+import { annotateSpecNode, registerSpecChildren } from "./ui-spec-meta.ts";
 import type {
 	GuiControllerEvent,
 	GuiPendingPrompt,
@@ -106,6 +112,10 @@ function isValidThinkingArg(value: string): value is ThinkingLevel {
 type ActiveOverlayKind =
 	| "command"
 	| "model"
+	| "thinking"
+	| "project"
+	| "workspace"
+	| "sidebar_options"
 	| "session"
 	| "settings"
 	| "branch"
@@ -137,17 +147,24 @@ export interface PiGuiHandle {
 	readonly menus: readonly MenuSpec[];
 	readonly sidebar: WakuSidebarHandle;
 	readonly headerBar: WakuHeaderBarHandle;
+	readonly toastBanner: WakuToastBannerHandle;
 	readonly rightPanel: WakuRightPanelHandle;
 	readonly transcriptView: WakuTranscriptViewHandle;
 	readonly composer: WakuComposerHandle;
 	readonly footerBar: WakuFooterBarHandle;
-	readonly openModelPicker: () => void;
-	readonly openSettings: () => void;
-	readonly openCommandPalette: () => void;
+	readonly openModelPicker: (anchorRect?: Rect, initialQuery?: string, initialFavoritesOnly?: boolean) => void;
+	readonly openThinkingPicker: (anchorRect?: Rect) => void;
+	readonly openProjectPicker: (anchorRect?: Rect) => void;
+	readonly openWorkspacePicker: (anchorRect?: Rect) => void;
+	readonly openSidebarOptions: (anchorRect?: Rect) => void;
+	readonly openGitBranchModal: (anchorRect?: Rect, initialMode?: "list" | "create") => void;
+	readonly openGitCommitModal: () => void;
+	readonly openSettings: (initialCategory?: WakuSettingsCategory) => void;
+	readonly openCommandPalette: (initialQuery?: string) => void;
 	readonly openSessionPicker: () => void;
-	readonly openContextPopover: () => void;
+	readonly openContextPopover: (anchorRect?: Rect) => void;
 	readonly toggleSidebar: () => void;
-	readonly toggleRightPanel: (tab?: "changes" | "files" | "tree") => void;
+	readonly toggleRightPanel: (tab?: RightPanelTab) => void;
 	readonly closeOverlay: () => void;
 	readonly hasActiveOverlay: () => boolean;
 	readonly toggleTheme: () => void;
@@ -204,7 +221,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 	};
 
 	const syncWindowChrome = (snapshot: GuiSessionSnapshot, theme: GuiTheme): void => {
-		const sidebarWidth = snapshot.layout.sidebarCollapsed ? 0 : snapshot.layout.sidebarWidth || 260;
+		const sidebarWidth = snapshot.layout.sidebarCollapsed ? 0 : snapshot.layout.sidebarWidth || SIDEBAR_DEFAULT_WIDTH;
 		app.setWindowChrome(theme.dark, sidebarWidth, true);
 	};
 
@@ -216,6 +233,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		composer?: WakuComposerHandle;
 		footerBar?: WakuFooterBarHandle;
 		rightPanel?: WakuRightPanelHandle;
+		mainPane?: Box;
 	} = {};
 
 	const closeOverlay = (): void => {
@@ -258,6 +276,8 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 	const applyThemeToShell = (theme: GuiTheme): void => {
 		currentTheme = theme;
 		headerTitle.setColor(theme.textBright);
+		const snap = controller.getSnapshot();
+		shell.mainPane?.setBorderEdges({ left: snap.layout.sidebarCollapsed ? 0 : 1 }, theme.sidebarBorder);
 		shell.sidebar?.applyTheme(theme);
 		shell.headerBar?.applyTheme(theme);
 		shell.toastBanner?.applyTheme(theme);
@@ -265,7 +285,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		shell.composer?.applyTheme(theme);
 		shell.footerBar?.applyTheme(theme);
 		shell.rightPanel?.applyTheme(theme);
-		syncWindowChrome(controller.getSnapshot(), theme);
+		syncWindowChrome(snap, theme);
 		app.invalidate();
 	};
 
@@ -289,11 +309,12 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		const snap = { ...controller.getSnapshot(), layout: nextLayout };
 		shell.sidebar?.update(snap);
 		shell.headerBar?.update(snap);
+		shell.mainPane?.setBorderEdges({ left: nextLayout.sidebarCollapsed ? 0 : 1 }, currentTheme.sidebarBorder);
 		syncWindowChrome(snap, currentTheme);
 		app.invalidate();
 	};
 
-	const toggleRightPanel = (tab?: "changes" | "files" | "tree"): void => {
+	const toggleRightPanel = (tab?: RightPanelTab): void => {
 		const layout = controller.getSnapshot().layout;
 		if (tab !== undefined) {
 			const shouldOpen = !layout.rightPanelOpen || layout.rightPanelTab !== tab;
@@ -313,12 +334,51 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		app.invalidate();
 	};
 
-	const openModelPickerModal = (): void => {
+	const openModelPickerModal = (
+		anchorRect?: Rect,
+		initialQuery?: string,
+		initialFavoritesOnly?: boolean,
+	): void => {
+		const chipRect = anchorRect ?? (composer.modelButton.layoutRect.width > 0 ? composer.modelButton.layoutRect : undefined);
 		showManagedOverlay("model", (onDismiss) =>
 			openModelPicker(app, controller, {
-				onOpenSettings: () => openSettingsModalOverlay(),
+				anchorRect: chipRect,
+				initialQuery,
+				initialFavoritesOnly,
+				onOpenSettings: () => openSettingsModalOverlay("providers"),
 				onDismiss,
 			}),
+		);
+	};
+
+	const openThinkingPickerModal = (anchorRect?: Rect): void => {
+		const chipRect =
+			anchorRect ?? (composer.thinkingButton.layoutRect.width > 0 ? composer.thinkingButton.layoutRect : undefined);
+		showManagedOverlay("thinking", (onDismiss) =>
+			openThinkingPicker(app, controller, { anchorRect: chipRect, onDismiss }),
+		);
+	};
+
+	const openProjectPickerModal = (anchorRect?: Rect): void => {
+		const chipRect =
+			anchorRect ?? (footerBar.projectButton.layoutRect.width > 0 ? footerBar.projectButton.layoutRect : undefined);
+		showManagedOverlay("project", (onDismiss) =>
+			openProjectPicker(app, controller, { anchorRect: chipRect, onDismiss }),
+		);
+	};
+
+	const openWorkspacePickerModal = (anchorRect?: Rect): void => {
+		const chipRect =
+			anchorRect ?? (footerBar.workspaceButton.layoutRect.width > 0 ? footerBar.workspaceButton.layoutRect : undefined);
+		showManagedOverlay("workspace", (onDismiss) =>
+			openWorkspacePicker(app, controller, { anchorRect: chipRect, onDismiss }),
+		);
+	};
+
+	const openSidebarOptionsModal = (anchorRect?: Rect): void => {
+		const btnRect = anchorRect ?? sidebar.getOptionsButtonRect();
+		showManagedOverlay("sidebar_options", (onDismiss) =>
+			openSidebarOptionsPopover(app, controller, { anchorRect: btnRect, onDismiss }),
 		);
 	};
 
@@ -326,9 +386,10 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		showManagedOverlay("session", (onDismiss) => openSessionPicker(app, controller, { onDismiss }));
 	};
 
-	const openSettingsModalOverlay = (): void => {
+	const openSettingsModalOverlay = (initialCategory?: WakuSettingsCategory): void => {
 		showManagedOverlay("settings", (onDismiss) =>
 			openSettingsModal(app, controller, {
+				initialCategory,
 				onOpenModelPicker: () => openModelPickerModal(),
 				onToggleTheme: toggleTheme,
 				onDismiss,
@@ -336,8 +397,12 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		);
 	};
 
-	const openGitBranchModalOverlay = (): void => {
-		showManagedOverlay("branch", (onDismiss) => openGitBranchModal(app, controller, { onDismiss }));
+	const openGitBranchModalOverlay = (anchorRect?: Rect, initialMode?: "list" | "create"): void => {
+		const chipRect =
+			anchorRect ?? (footerBar.gitBranchButton.layoutRect.width > 0 ? footerBar.gitBranchButton.layoutRect : undefined);
+		showManagedOverlay("branch", (onDismiss) =>
+			openGitBranchModal(app, controller, { anchorRect: chipRect, initialMode, onDismiss }),
+		);
 	};
 
 	const openGitCommitModalOverlay = (): void => {
@@ -348,9 +413,10 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		showManagedOverlay("context", (onDismiss) => openContextPopover(app, controller, { anchorRect, onDismiss }));
 	};
 
-	const openCommandPaletteModal = (): void => {
+	const openCommandPaletteModal = (initialQuery?: string): void => {
 		showManagedOverlay("command", (onDismiss) =>
 			openCommandPalette(app, controller, {
+				initialQuery,
 				onNewSession: async () => {
 					await controller.newSession();
 				},
@@ -568,8 +634,9 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 			void controller.newSession();
 		},
 		onToggleSidebar: toggleSidebar,
-		onOpenSettings: openSettingsModalOverlay,
+		onOpenSettings: () => openSettingsModalOverlay("general"),
 		onToggleTheme: toggleTheme,
+		onOpenSidebarOptions: openSidebarOptionsModal,
 		onResize: (width) => {
 			const snap = controller.getSnapshot();
 			if (!snap.layout.sidebarCollapsed) {
@@ -593,7 +660,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		onGoForward: () => {
 			void controller.goForward();
 		},
-		onOpenGitBranch: openGitBranchModalOverlay,
+		onOpenGitBranch: () => openGitBranchModalOverlay(),
 		onToggleRightPanel: () => toggleRightPanel(),
 	});
 	shell.headerBar = headerBar;
@@ -602,7 +669,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 	shell.toastBanner = toastBanner;
 
 	const transcriptView = createWakuTranscriptView(app, controller, {
-		maxColumnWidth: 760,
+		maxColumnWidth: 720,
 		initialTheme: currentTheme,
 		onSelectPrompt: (promptText) => {
 			shell.composer?.setText(promptText);
@@ -641,7 +708,8 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 	const composer = createWakuComposer(app, controller, {
 		initialTheme: currentTheme,
 		slashCommands,
-		onOpenModelPicker: openModelPickerModal,
+		onOpenModelPicker: (anchorRect) => openModelPickerModal(anchorRect),
+		onOpenThinkingPicker: (anchorRect) => openThinkingPickerModal(anchorRect),
 		onOpenAttachDialog: () => {
 			shell.composer?.focus();
 		},
@@ -660,17 +728,19 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 
 	const footerBar = createWakuFooterBar(controller, {
 		initialTheme: currentTheme,
-		onWorkspaceClick: () => toggleRightPanel("files"),
-		onGitBranchClick: openGitBranchModalOverlay,
-		onContextClick: () => openContextPopoverOverlay(),
+		onProjectClick: (anchorRect) => openProjectPickerModal(anchorRect),
+		onWorkspaceClick: (anchorRect) => openWorkspacePickerModal(anchorRect),
+		onGitBranchClick: (anchorRect) => openGitBranchModalOverlay(anchorRect),
+		onContextClick: (_usage, anchorRect) => openContextPopoverOverlay(anchorRect),
 	});
 	shell.footerBar = footerBar;
 
 	const rightPanel = createWakuRightPanel(app, controller, {
 		onClose: () => toggleRightPanel(),
 		onOpenCommitModal: openGitCommitModalOverlay,
-		onOpenBranchModal: openGitBranchModalOverlay,
+		onOpenBranchModal: () => openGitBranchModalOverlay(),
 	});
+	rightPanel.setSpecMode("workspace");
 	shell.rightPanel = rightPanel;
 
 	const centerColumn = new VStack({
@@ -683,18 +753,58 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 			footerBar.root,
 		],
 	});
+	const mainPane = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		padding: 0,
+		borderEdges: { left: initialSnap.layout.sidebarCollapsed ? 0 : 1 },
+		borderColor: currentTheme.sidebarBorder,
+		child: centerColumn,
+	});
+	shell.mainPane = mainPane;
 
 	const shellRow = new HStack({
 		gap: 0,
 		align: "stretch",
 		children: [
 			sidebar.root,
-			{ child: centerColumn, grow: 1, shrink: 1 },
+			{ child: mainPane, grow: 1, shrink: 1 },
 			rightPanel.root,
 		],
 	});
 
 	const root = new WakuShellRoot(shellRow, currentTheme, applyThemeToShell);
+	annotateSpecNode(root, {
+		key: "workspace",
+		role: "main",
+		size: () => {
+			const metrics = app.getWindowMetrics();
+			return { w: metrics.width, h: metrics.height };
+		},
+		flow: { type: "flex", dir: "row", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+	});
+	annotateSpecNode(mainPane, {
+		key: "workspace.main",
+		role: "region",
+		variant: () => (currentTheme.dark ? "canvas-dark" : "canvas-light"),
+		size: { w: "fill", h: "fill" },
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+	});
+	registerSpecChildren(root, () => {
+		const out = [];
+		if (sidebar.root.visible) out.push(sidebar.root);
+		out.push(mainPane);
+		if (rightPanel.root.visible) out.push(rightPanel.root);
+		return out;
+	});
+	registerSpecChildren(mainPane, () => {
+		const out = [headerBar.root, transcriptView.root, composer.root, footerBar.root];
+		const toastComp = toastBanner.getActiveOverlayComponent();
+		if (toastComp !== undefined && toastBanner.hasActiveToast()) {
+			out.push(toastComp);
+		}
+		return out;
+	});
 	app.setRoot(root);
 	syncWindowChrome(initialSnap, currentTheme);
 
@@ -761,6 +871,7 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 				if (targetTheme !== currentTheme) {
 					app.setTheme(targetTheme);
 				}
+				mainPane.setBorderEdges({ left: snap.layout.sidebarCollapsed ? 0 : 1 }, currentTheme.sidebarBorder);
 				sidebar.update(snap);
 				headerBar.update(snap);
 				rightPanel.update(snap);
@@ -980,15 +1091,22 @@ export function mountPiGui(app: GuiApp, options: PiGuiOptions): PiGuiHandle {
 		menus,
 		sidebar,
 		headerBar,
+		toastBanner,
 		rightPanel,
 		transcriptView,
 		composer,
 		footerBar,
 		openModelPicker: openModelPickerModal,
+		openThinkingPicker: openThinkingPickerModal,
+		openProjectPicker: openProjectPickerModal,
+		openWorkspacePicker: openWorkspacePickerModal,
+		openSidebarOptions: openSidebarOptionsModal,
+		openGitBranchModal: openGitBranchModalOverlay,
+		openGitCommitModal: openGitCommitModalOverlay,
 		openSettings: openSettingsModalOverlay,
 		openCommandPalette: openCommandPaletteModal,
 		openSessionPicker: openSessionPickerModal,
-		openContextPopover: () => openContextPopoverOverlay(),
+		openContextPopover: openContextPopoverOverlay,
 		toggleSidebar,
 		toggleRightPanel,
 		closeOverlay,

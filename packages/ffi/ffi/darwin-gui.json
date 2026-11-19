@@ -65,6 +65,12 @@
 		},
 		{ "name": "sguiSetAppMenu", "symbol": "sgui_set_app_menu", "params": ["bytes"], "returns": "i32" },
 		{ "name": "sguiSetA11yTree", "symbol": "sgui_set_a11y_tree", "params": ["u32", "bytes"], "returns": "i32" },
+		{
+			"name": "sguiRenderPng",
+			"symbol": "sgui_render_png",
+			"params": ["f64", "f64", "f64", "bytes", "string"],
+			"returns": "i32"
+		},
 		{ "name": "piFfiAvailable", "symbol": "pi_ffi_available", "params": [], "returns": "i32" },
 		{
 			"name": "piFfiReadScratch",

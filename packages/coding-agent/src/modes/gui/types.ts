@@ -200,9 +200,10 @@ export interface GuiLayoutPreferences {
 	sidebarCollapsed: boolean;
 	rightPanelWidth: number;
 	rightPanelOpen: boolean;
-	rightPanelTab: "changes" | "files" | "tree";
+	rightPanelTab: "changes" | "files" | "terminal" | "tree";
 	diffViewMode: "unified" | "split";
 	sidebarGroupBy: "updated" | "project";
+	sidebarOrderBy?: "newest" | "oldest";
 	appearance: "system" | "dark" | "light";
 	pinnedSessionIds: string[];
 	sessionCustomNames: Record<string, string>;

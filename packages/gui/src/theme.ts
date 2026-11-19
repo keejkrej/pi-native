@@ -2,7 +2,7 @@
  * Semantic theme tokens for dark and light desktop appearances.
  */
 
-import { type Color, parseColor, withAlpha } from "./colors.ts";
+import { type Color, parseColor, rgbaColor, withAlpha } from "./colors.ts";
 
 export type ThemeMode = "system" | "dark" | "light";
 
@@ -13,12 +13,17 @@ export interface GuiTheme {
 	readonly surfaceElevated: Color;
 	readonly surfaceRaised: Color;
 	readonly surfaceComposer: Color;
+	readonly surfaceInset: Color;
+	readonly surfaceTerminal: Color;
+	readonly surfaceOverlay: Color;
+	readonly surfaceOverlayStrong: Color;
 	readonly surfaceMuted: Color;
 	readonly surfaceHover: Color;
 	readonly hover: Color;
 	readonly surfaceActive: Color;
 	readonly surfaceSelected: Color;
 	readonly sidebarBg: Color;
+	readonly sidebarItemBg: Color;
 	readonly sidebarTint: Color;
 	readonly sidebarBorder: Color;
 	readonly inputBg: Color;
@@ -34,12 +39,16 @@ export interface GuiTheme {
 	readonly textOnAccent: Color;
 	readonly accent: Color;
 	readonly accentHover: Color;
+	readonly gauge: Color;
 	readonly danger: Color;
 	readonly dangerHover: Color;
 	readonly success: Color;
+	readonly favorite: Color;
 	readonly warning: Color;
 	readonly warn: Color;
 	readonly info: Color;
+	readonly inverseBg: Color;
+	readonly inverseFg: Color;
 	readonly diffAddText: Color;
 	readonly diffAddBg: Color;
 	readonly diffDelText: Color;
@@ -77,66 +86,75 @@ export interface GuiTheme {
 
 export type ThemePalette = GuiTheme;
 
-const darkAccent = parseColor("#e2795b");
-const lightAccent = parseColor("#c85f44");
+const darkAccent = parseColor("#E2795B");
+const lightAccent = parseColor("#C85F44");
 
 export const darkGuiTheme: GuiTheme = {
 	dark: true,
-	background: parseColor("#1a1a1a"),
-	surface: parseColor("#181818"),
+	background: parseColor("#1A1A1A"),
+	surface: parseColor("#1A1A1A"),
 	surfaceElevated: parseColor("#232323"),
 	surfaceRaised: parseColor("#232323"),
 	surfaceComposer: parseColor("#212121"),
-	surfaceMuted: parseColor("#2d2d2e"),
-	surfaceHover: parseColor("#2f2e2f"),
-	hover: parseColor("#2f2e2f"),
-	surfaceActive: parseColor("#2d2d2e"),
-	surfaceSelected: parseColor("#2d2d2e"),
+	surfaceInset: parseColor("#151515"),
+	surfaceTerminal: parseColor("#151515"),
+	surfaceOverlay: rgbaColor(227, 229, 232, 0.05),
+	surfaceOverlayStrong: rgbaColor(227, 229, 232, 0.09),
+	surfaceMuted: parseColor("#2B2B2B"),
+	surfaceHover: rgbaColor(227, 229, 232, 0.05),
+	hover: rgbaColor(227, 229, 232, 0.05),
+	surfaceActive: rgbaColor(227, 229, 232, 0.09),
+	surfaceSelected: rgbaColor(227, 229, 232, 0.09),
 	sidebarBg: parseColor("#181818"),
+	sidebarItemBg: rgbaColor(240, 240, 240, 0.06),
 	sidebarTint: withAlpha(parseColor("#181818"), 0.88),
-	sidebarBorder: withAlpha(parseColor("#ffffff"), 0.08),
-	inputBg: parseColor("#4b4b4b"),
-	border: parseColor("#2d2c2e"),
-	borderStrong: parseColor("#424242"),
+	sidebarBorder: parseColor("#292929"),
+	inputBg: parseColor("#2A2A2A"),
+	border: rgbaColor(227, 229, 232, 0.07),
+	borderStrong: rgbaColor(227, 229, 232, 0.14),
 	borderFocus: darkAccent,
-	text: parseColor("#ecebed"),
-	textPrimary: parseColor("#ecebed"),
-	textBright: parseColor("#f3f2f4"),
-	textSecondary: parseColor("#a0a0a0"),
-	textMuted: parseColor("#737272"),
-	textDisabled: parseColor("#5a595b"),
-	textOnAccent: parseColor("#ffffff"),
+	text: parseColor("#E2E2E2"),
+	textPrimary: parseColor("#E2E2E2"),
+	textBright: parseColor("#F3F2F4"),
+	textSecondary: parseColor("#A3A3A3"),
+	textMuted: parseColor("#7D7D7D"),
+	textDisabled: parseColor("#575757"),
+	textOnAccent: parseColor("#FFFFFF"),
 	accent: darkAccent,
-	accentHover: parseColor("#eb8e74"),
-	danger: parseColor("#eb8074"),
-	dangerHover: parseColor("#f2978d"),
-	success: parseColor("#86c798"),
-	warning: parseColor("#e4b65e"),
-	warn: parseColor("#e4b65e"),
-	info: parseColor("#78b2df"),
-	diffAddText: parseColor("#86c798"),
-	diffAddBg: parseColor("#21372a"),
-	diffDelText: parseColor("#eb8074"),
-	diffDelBg: parseColor("#3b2424"),
+	accentHover: parseColor("#EB8E74"),
+	gauge: parseColor("#3B82F6"),
+	danger: parseColor("#E2726A"),
+	dangerHover: parseColor("#F08A83"),
+	success: parseColor("#62C987"),
+	favorite: parseColor("#EAB308"),
+	warning: parseColor("#E0B36A"),
+	warn: parseColor("#E0B36A"),
+	info: parseColor("#3B82F6"),
+	inverseBg: parseColor("#E7E9EC"),
+	inverseFg: parseColor("#17181C"),
+	diffAddText: parseColor("#62C987"),
+	diffAddBg: parseColor("#21372A"),
+	diffDelText: parseColor("#E2726A"),
+	diffDelBg: parseColor("#3B2424"),
 	selection: withAlpha(darkAccent, 0.28),
 	codeBackground: parseColor("#151515"),
 	codeBlockBg: parseColor("#151515"),
-	codeText: parseColor("#e0a882"),
-	codeWash: withAlpha(darkAccent, 0.14),
-	syntaxKeyword: parseColor("#c98bc0"),
-	syntaxLiteral: parseColor("#d9a05b"),
-	syntaxString: parseColor("#94c08a"),
-	syntaxComment: parseColor("#737272"),
-	syntaxNumber: parseColor("#d9a05b"),
-	syntaxType: parseColor("#8fb8d9"),
-	syntaxFunction: parseColor("#8fb8d9"),
-	syntaxMeta: parseColor("#a0a0a0"),
-	searchMatchBg: withAlpha(parseColor("#efc612"), 0.22),
-	activeSearchMatchBg: withAlpha(parseColor("#ff8000"), 0.78),
-	link: parseColor("#78b2df"),
-	quoteBorder: parseColor("#424242"),
-	scrollbarTrack: withAlpha(parseColor("#ffffff"), 0.03),
-	scrollbarThumb: withAlpha(parseColor("#ffffff"), 0.24),
+	codeText: parseColor("#E0A882"),
+	codeWash: rgbaColor(227, 229, 232, 0.08),
+	syntaxKeyword: parseColor("#C98BC0"),
+	syntaxLiteral: parseColor("#D9A05B"),
+	syntaxString: parseColor("#94C08A"),
+	syntaxComment: parseColor("#7D7D7D"),
+	syntaxNumber: parseColor("#D9A05B"),
+	syntaxType: parseColor("#8FB8D9"),
+	syntaxFunction: parseColor("#8FB8D9"),
+	syntaxMeta: parseColor("#A3A3A3"),
+	searchMatchBg: withAlpha(parseColor("#EFC612"), 0.22),
+	activeSearchMatchBg: withAlpha(parseColor("#FF8000"), 0.78),
+	link: parseColor("#3B82F6"),
+	quoteBorder: rgbaColor(227, 229, 232, 0.14),
+	scrollbarTrack: withAlpha(parseColor("#FFFFFF"), 0.03),
+	scrollbarThumb: withAlpha(parseColor("#FFFFFF"), 0.24),
 	shadow: withAlpha(parseColor("#000000"), 0.48),
 	fontSizeBody: 13,
 	fontSizeSmall: 11,
@@ -144,66 +162,75 @@ export const darkGuiTheme: GuiTheme = {
 	fontSizeHeading: 18,
 	radiusSmall: 6,
 	radiusMedium: 8,
-	radiusLarge: 14,
+	radiusLarge: 15,
 	radiusBubble: 12,
-	radiusComposer: 16,
+	radiusComposer: 13,
 };
 
 export const lightGuiTheme: GuiTheme = {
 	dark: false,
-	background: parseColor("#f6f5f6"),
-	surface: parseColor("#f3f3f3"),
-	surfaceElevated: parseColor("#ececec"),
-	surfaceRaised: parseColor("#ececec"),
-	surfaceComposer: parseColor("#ffffff"),
-	surfaceMuted: parseColor("#e2e1e4"),
-	surfaceHover: parseColor("#e6e5e7"),
-	hover: parseColor("#e6e5e7"),
-	surfaceActive: parseColor("#e2e1e4"),
-	surfaceSelected: parseColor("#e2e1e4"),
-	sidebarBg: parseColor("#f3f3f3"),
-	sidebarTint: withAlpha(parseColor("#f3f3f3"), 0.88),
-	sidebarBorder: withAlpha(parseColor("#000000"), 0.08),
-	inputBg: parseColor("#ffffff"),
-	border: parseColor("#dedcdf"),
-	borderStrong: parseColor("#c9c7cb"),
+	background: parseColor("#F6F5F6"),
+	surface: parseColor("#F6F5F6"),
+	surfaceElevated: parseColor("#ECECEC"),
+	surfaceRaised: parseColor("#ECECEC"),
+	surfaceComposer: parseColor("#FFFFFF"),
+	surfaceInset: parseColor("#E6E6E6"),
+	surfaceTerminal: parseColor("#FFFFFF"),
+	surfaceOverlay: rgbaColor(28, 30, 34, 0.05),
+	surfaceOverlayStrong: rgbaColor(28, 30, 34, 0.09),
+	surfaceMuted: parseColor("#E2E1E4"),
+	surfaceHover: rgbaColor(28, 30, 34, 0.05),
+	hover: rgbaColor(28, 30, 34, 0.05),
+	surfaceActive: rgbaColor(28, 30, 34, 0.09),
+	surfaceSelected: rgbaColor(28, 30, 34, 0.09),
+	sidebarBg: parseColor("#F3F3F3"),
+	sidebarItemBg: rgbaColor(20, 20, 20, 0.06),
+	sidebarTint: withAlpha(parseColor("#F3F3F3"), 0.88),
+	sidebarBorder: rgbaColor(20, 20, 20, 0.12),
+	inputBg: parseColor("#FFFFFF"),
+	border: rgbaColor(28, 30, 34, 0.08),
+	borderStrong: rgbaColor(28, 30, 34, 0.15),
 	borderFocus: lightAccent,
 	text: parseColor("#242424"),
 	textPrimary: parseColor("#242424"),
 	textBright: parseColor("#111111"),
 	textSecondary: parseColor("#666666"),
 	textMuted: parseColor("#858585"),
-	textDisabled: parseColor("#a8a8aa"),
-	textOnAccent: parseColor("#ffffff"),
+	textDisabled: parseColor("#A4A4A4"),
+	textOnAccent: parseColor("#FFFFFF"),
 	accent: lightAccent,
-	accentHover: parseColor("#b55036"),
-	danger: parseColor("#b9382c"),
-	dangerHover: parseColor("#9f2b20"),
-	success: parseColor("#237b3b"),
-	warning: parseColor("#b57c14"),
-	warn: parseColor("#b57c14"),
-	info: parseColor("#2f6690"),
-	diffAddText: parseColor("#237b3b"),
-	diffAddBg: parseColor("#e6f4ea"),
-	diffDelText: parseColor("#b9382c"),
-	diffDelBg: parseColor("#fce8e6"),
+	accentHover: parseColor("#B55036"),
+	gauge: parseColor("#2563EB"),
+	danger: parseColor("#C64A42"),
+	dangerHover: parseColor("#AB3B34"),
+	success: parseColor("#2F8F52"),
+	favorite: parseColor("#CA8A04"),
+	warning: parseColor("#A66B20"),
+	warn: parseColor("#A66B20"),
+	info: parseColor("#2563EB"),
+	inverseBg: parseColor("#202227"),
+	inverseFg: parseColor("#F8F8F9"),
+	diffAddText: parseColor("#2F8F52"),
+	diffAddBg: parseColor("#E6F4EA"),
+	diffDelText: parseColor("#C64A42"),
+	diffDelBg: parseColor("#FCE8E6"),
 	selection: withAlpha(lightAccent, 0.22),
-	codeBackground: parseColor("#f0f0f0"),
-	codeBlockBg: parseColor("#f0f0f0"),
-	codeText: parseColor("#9a5528"),
-	codeWash: withAlpha(lightAccent, 0.10),
-	syntaxKeyword: parseColor("#9a4b92"),
-	syntaxLiteral: parseColor("#9a6019"),
-	syntaxString: parseColor("#3f7a36"),
+	codeBackground: parseColor("#E6E6E6"),
+	codeBlockBg: parseColor("#E6E6E6"),
+	codeText: parseColor("#9A5528"),
+	codeWash: rgbaColor(28, 30, 34, 0.07),
+	syntaxKeyword: parseColor("#9A4B92"),
+	syntaxLiteral: parseColor("#9A6019"),
+	syntaxString: parseColor("#3F7A36"),
 	syntaxComment: parseColor("#858585"),
-	syntaxNumber: parseColor("#9a6019"),
-	syntaxType: parseColor("#2f6690"),
-	syntaxFunction: parseColor("#2f6690"),
+	syntaxNumber: parseColor("#9A6019"),
+	syntaxType: parseColor("#2F6690"),
+	syntaxFunction: parseColor("#2F6690"),
 	syntaxMeta: parseColor("#666666"),
-	searchMatchBg: withAlpha(parseColor("#efc824"), 0.24),
-	activeSearchMatchBg: withAlpha(parseColor("#ff8a14"), 0.70),
-	link: parseColor("#2f6690"),
-	quoteBorder: parseColor("#c9c7cb"),
+	searchMatchBg: withAlpha(parseColor("#EFC824"), 0.24),
+	activeSearchMatchBg: withAlpha(parseColor("#FF8A14"), 0.70),
+	link: parseColor("#2563EB"),
+	quoteBorder: rgbaColor(28, 30, 34, 0.15),
 	scrollbarTrack: withAlpha(parseColor("#000000"), 0.03),
 	scrollbarThumb: withAlpha(parseColor("#000000"), 0.22),
 	shadow: withAlpha(parseColor("#000000"), 0.16),
@@ -213,9 +240,9 @@ export const lightGuiTheme: GuiTheme = {
 	fontSizeHeading: 18,
 	radiusSmall: 6,
 	radiusMedium: 8,
-	radiusLarge: 14,
+	radiusLarge: 15,
 	radiusBubble: 12,
-	radiusComposer: 16,
+	radiusComposer: 13,
 };
 
 export const DARK_THEME: GuiTheme = darkGuiTheme;

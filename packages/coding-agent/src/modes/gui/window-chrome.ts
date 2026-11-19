@@ -6,10 +6,8 @@
 
 import { basename } from "node:path";
 import {
-	Badge,
 	Box,
 	type Color,
-	Divider,
 	drawFocusHalo,
 	drawVectorIcon,
 	type GuiA11yNode,
@@ -26,30 +24,29 @@ import {
 	type OverlayHandle,
 	pointInRect,
 	type Rect,
-	ScrollView,
 	type Size,
 	Spacer,
 	Text,
 	TruncatedText,
+	VectorIcon,
 	type VectorIconName,
-	VStack,
 	WindowDragArea,
-	withAlpha,
 	SGUI_A11Y_STATE_ENABLED,
 	SGUI_A11Y_STATE_FOCUSED,
 	SGUI_CURSOR_ARROW,
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_REGULAR,
 } from "@pi-ts/gui";
-import { lookupSessionCustomName, openGitBranchModal } from "./overlays.ts";
+import { lookupSessionCustomName } from "./overlays.ts";
 import type {
 	GuiExternalOpener,
 	GuiSessionController,
 	GuiSessionSnapshot,
 	GuiToastEntry,
 } from "./types.ts";
+import { annotateSpecNode, registerSpecChildren } from "./ui-spec-meta.ts";
 
-export const TRAFFIC_LIGHT_CLEARANCE = 76;
+export const TRAFFIC_LIGHT_CLEARANCE = 86;
 export const HEADER_BAR_HEIGHT = 48;
 export const DEFAULT_TOAST_AUTO_DISMISS_MS = 4500;
 
@@ -375,257 +372,194 @@ export function createWakuHeaderBar(
 ): WakuHeaderBarHandle {
 	let currentTheme = app.getTheme();
 	let latestSnapshot = controller.getSnapshot();
-	let openersPopover: OverlayHandle | undefined;
 
-	const trafficLightSpacer = new Spacer(TRAFFIC_LIGHT_CLEARANCE, 1);
-
-	const sidebarToggleBtn = new IconButton({
-		icon: "panel-left",
-		size: 28,
-		iconSize: 15,
-		label: "Toggle Sidebar",
-		onClick: () => {
-			if (callbacks.onToggleSidebar) {
-				callbacks.onToggleSidebar();
-			} else {
-				const cur = controller.getSnapshot().layout.sidebarCollapsed;
-				controller.updateLayoutPreferences({ sidebarCollapsed: !cur });
-			}
+	const sidebarToggleBtn = annotateSpecNode(
+		new IconButton({
+			icon: "panel-left",
+			size: 26,
+			iconSize: 14,
+			label: "Toggle Sidebar",
+			onClick: () => {
+				if (callbacks.onToggleSidebar) {
+					callbacks.onToggleSidebar();
+				} else {
+					const cur = controller.getSnapshot().layout.sidebarCollapsed;
+					controller.updateLayoutPreferences({ sidebarCollapsed: !cur });
+				}
+			},
+		}),
+		{
+			key: "workspace.main.header.sidebar_toggle",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Toggle Sidebar", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/panel-left.svg", alt: "Toggle Sidebar", w: 14, h: 14 },
 		},
-	});
+	);
 
-	const newSessionBtn = new IconButton({
-		icon: "compose",
-		size: 28,
-		iconSize: 15,
-		label: "New Session",
-		onClick: () => {
-			if (callbacks.onNewSession) {
-				callbacks.onNewSession();
-			} else {
-				void controller.newSession();
-			}
+	const backBtn = annotateSpecNode(
+		new IconButton({
+			icon: "arrow-left",
+			size: 26,
+			iconSize: 14,
+			label: "Previous Session",
+			disabled: !controller.canGoBack(),
+			onClick: () => {
+				if (callbacks.onGoBack) {
+					callbacks.onGoBack();
+				} else {
+					void controller.goBack();
+				}
+			},
+		}),
+		{
+			key: "workspace.main.header.nav_back",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Previous Session", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/arrow-left.svg", alt: "Previous Session", w: 14, h: 14 },
 		},
-	});
+	);
 
-	const backBtn = new IconButton({
-		icon: "arrow-left",
-		size: 28,
-		iconSize: 14,
-		label: "Back",
-		disabled: !controller.canGoBack(),
-		onClick: () => {
-			if (callbacks.onGoBack) {
-				callbacks.onGoBack();
-			} else {
-				void controller.goBack();
-			}
+	const forwardBtn = annotateSpecNode(
+		new IconButton({
+			icon: "arrow-right",
+			size: 26,
+			iconSize: 14,
+			label: "Next Session",
+			disabled: !controller.canGoForward(),
+			onClick: () => {
+				if (callbacks.onGoForward) {
+					callbacks.onGoForward();
+				} else {
+					void controller.goForward();
+				}
+			},
+		}),
+		{
+			key: "workspace.main.header.nav_forward",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Next Session", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/arrow-right.svg", alt: "Next Session", w: 14, h: 14 },
 		},
-	});
-
-	const forwardBtn = new IconButton({
-		icon: "arrow-right",
-		size: 28,
-		iconSize: 14,
-		label: "Forward",
-		disabled: !controller.canGoForward(),
-		onClick: () => {
-			if (callbacks.onGoForward) {
-				callbacks.onGoForward();
-			} else {
-				void controller.goForward();
-			}
-		},
-	});
+	);
 
 	const sessionTitleText = new TruncatedText({
-		text: "New Session",
+		text: "New task",
 		fontSize: currentTheme.fontSizeBody,
-		fontWeight: 600,
-		color: currentTheme.textBright,
+		fontWeight: 500,
+		color: currentTheme.textPrimary,
+	});
+	annotateSpecNode(sessionTitleText, {
+		key: "workspace.main.header.title",
+		role: "heading",
+		flow: { type: "inline" },
+		size: { w: "hug", h: "hug" },
+		text: () => ({
+			value: sessionTitleText.getText(),
+			wrap: "nowrap",
+			lines: 1,
+			overflow: "ellipsis",
+		}),
 	});
 
-	const workspacePill = new Badge({
-		label: basename(latestSnapshot.status.cwd) || latestSnapshot.status.cwd,
-		leadingIcon: "folder",
-		variant: "neutral",
-		fontSize: currentTheme.fontSizeSmall,
-	});
-
-	const branchChip = new WakuHeaderChip({
-		label: latestSnapshot.gitBranch || "No branch",
-		leadingIcon: "git-branch",
-		disabled: !latestSnapshot.isGitRepo && latestSnapshot.gitBranch.length === 0,
-		onClick: () => {
-			if (callbacks.onOpenGitBranch) {
-				callbacks.onOpenGitBranch();
-			} else {
-				openGitBranchModal(app, controller);
-			}
-		},
-	});
-
-	const openExternalPopover = (): void => {
-		if (openersPopover !== undefined) {
-			openersPopover.hide();
-			openersPopover = undefined;
-			return;
-		}
-		const theme = app.getTheme();
-		const openers =
-			latestSnapshot.openers.length > 0 ? latestSnapshot.openers : controller.getExternalOpeners();
-		const list = new VStack({ gap: 3 });
-
-		if (openers.length === 0) {
-			list.addChild(
-				new Box({
-					padding: { vertical: 10, horizontal: 8 },
-					child: new Text({ text: "No external openers detected", color: theme.textMuted, fontSize: theme.fontSizeSmall }),
-				}),
-			);
-		} else {
-			for (let i = 0; i < openers.length; i++) {
-				const opener = openers[i];
-				if (opener === undefined) continue;
-				list.addChild(
-					new OpenerMenuRow(opener, () => {
-						openersPopover?.hide();
-						openersPopover = undefined;
-						void controller.openInExternalApp(opener.id);
-					}),
-				);
-			}
-		}
-
-		const card = new Box({
-			background: theme.surfaceElevated,
-			borderColor: theme.borderStrong,
-			borderWidth: 1,
-			radius: 10,
-			shadow: "lg",
-			padding: 8,
-			width: 240,
-			child: new VStack({
-				gap: 6,
-				children: [
-					new Text({
-						text: "Open Workspace In...",
-						fontSize: theme.fontSizeSmall,
-						fontWeight: 600,
-						color: theme.textMuted,
-						padding: { horizontal: 6, vertical: 2 },
-					}),
-					new Box({ maxHeight: 280, fillWidth: true, child: new ScrollView({ child: list }) }),
-				],
-			}),
-		});
-
-		openersPopover = app.showOverlay(card, {
-			anchorRect: openInButton.layoutRect,
-			width: 240,
-			maxWidth: 260,
-			maxHeight: 340,
-			modal: true,
-			radius: 10,
-			shadow: "lg",
-			dismissOnBackdropClick: true,
-			dismissOnEscape: true,
-			backdropColor: withAlpha(theme.background, 0.05),
-			onDismiss: () => {
-				openersPopover = undefined;
+	const rightPanelToggleBtn = annotateSpecNode(
+		new IconButton({
+			icon: "panel-right",
+			size: 26,
+			iconSize: 14,
+			label: "Toggle Right Panel",
+			active: latestSnapshot.layout.rightPanelOpen,
+			onClick: () => {
+				if (callbacks.onToggleRightPanel) {
+					callbacks.onToggleRightPanel();
+				} else {
+					const cur = controller.getSnapshot().layout.rightPanelOpen;
+					controller.updateLayoutPreferences({ rightPanelOpen: !cur });
+				}
 			},
-		});
-	};
-
-	const openInButton = new WakuHeaderChip({
-		label: "Open in...",
-		leadingIcon: "external-link",
-		trailingIcon: "chevron-down",
-		onClick: openExternalPopover,
-	});
-
-	const changedCountBadge = new Badge({
-		label: "0",
-		variant: "accent",
-		fontSize: 10,
-		padding: { vertical: 2, horizontal: 6 },
-	});
-	changedCountBadge.visible = false;
-
-	const rightPanelToggleBtn = new IconButton({
-		icon: "panel-right",
-		size: 28,
-		iconSize: 15,
-		label: "Toggle Right Panel",
-		active: latestSnapshot.layout.rightPanelOpen,
-		onClick: () => {
-			if (callbacks.onToggleRightPanel) {
-				callbacks.onToggleRightPanel();
-			} else {
-				const cur = controller.getSnapshot().layout.rightPanelOpen;
-				controller.updateLayoutPreferences({ rightPanelOpen: !cur });
-			}
+		}),
+		{
+			key: "workspace.main.header.right_panel_toggle",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Toggle Right Panel", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/panel-right.svg", alt: "Toggle Right Panel", w: 14, h: 14 },
 		},
+	);
+
+	const navCluster = new HStack({
+		gap: 2,
+		align: "center",
+		children: [backBtn, forwardBtn],
+	});
+
+	const collapsedControlsCluster = new HStack({
+		gap: 6,
+		align: "center",
+		children: [sidebarToggleBtn, navCluster],
+	});
+
+	const leftGroup = new HStack({
+		gap: 8,
+		align: "center",
+		children: [collapsedControlsCluster, { child: sessionTitleText, shrink: 1 }],
 	});
 
 	const row = new HStack({
 		gap: 8,
 		align: "center",
-		padding: { horizontal: 12, vertical: 8 },
-		children: [
-			trafficLightSpacer,
-			sidebarToggleBtn,
-			newSessionBtn,
-			backBtn,
-			forwardBtn,
-			{ child: new Spacer(), grow: 1 },
-			sessionTitleText,
-			workspacePill,
-			branchChip,
-			{ child: new Spacer(), grow: 1 },
-			openInButton,
-			changedCountBadge,
-			rightPanelToggleBtn,
-		],
+		justify: "space-between",
+		children: [{ child: leftGroup, grow: 1, shrink: 1 }, rightPanelToggleBtn],
 	});
 
 	const dragArea = new WindowDragArea({
-		height: HEADER_BAR_HEIGHT - 1,
+		height: HEADER_BAR_HEIGHT,
 		child: row,
 	});
 
-	const bottomDivider = new Divider({ direction: "horizontal" });
-	const headerContainer = new VStack({
-		gap: 0,
-		align: "stretch",
-		children: [dragArea, bottomDivider],
-	});
-
-	const rootBox = new Box({
-		height: HEADER_BAR_HEIGHT,
-		fillWidth: true,
-		background: currentTheme.background,
-		child: headerContainer,
-	});
+	const rootBox = annotateSpecNode(
+		new Box({
+			height: HEADER_BAR_HEIGHT,
+			fillWidth: true,
+			padding: { horizontal: 14 },
+			background: currentTheme.background,
+			child: dragArea,
+		}),
+		{
+			key: "workspace.main.header",
+			role: "region",
+			flowComponent: row,
+			size: { w: "fill", h: HEADER_BAR_HEIGHT },
+			variant: "borderless-header",
+		},
+	);
 
 	const resolveSessionTitle = (snapshot: GuiSessionSnapshot): string => {
 		const activeId = snapshot.status.sessionId;
 		if (activeId !== undefined) {
 			const custom = lookupSessionCustomName(snapshot.layout.sessionCustomNames, activeId);
-			if (custom !== undefined) return custom;
+			if (custom !== undefined && custom.trim().length > 0) return custom.trim();
 		}
 		if (snapshot.status.sessionName && snapshot.status.sessionName.trim().length > 0) {
-			return snapshot.status.sessionName.trim();
+			const trimmed = snapshot.status.sessionName.trim();
+			if (trimmed !== "New Session") return trimmed;
 		}
 		if (activeId !== undefined) {
 			for (let i = 0; i < snapshot.sessions.length; i++) {
 				const item = snapshot.sessions[i];
 				if (item !== undefined && item.id === activeId && item.title.trim().length > 0) {
-					return item.title.trim();
+					const trimmed = item.title.trim();
+					if (trimmed !== "New Session") return trimmed;
 				}
 			}
 		}
-		return "New Session";
+		return "New task";
 	};
 
 	const syncFromSnapshot = (snapshot: GuiSessionSnapshot): void => {
@@ -633,10 +567,11 @@ export function createWakuHeaderBar(
 		const collapsed = snapshot.layout.sidebarCollapsed;
 		const metricsInset = app.getWindowMetrics().insetLeft;
 		const clearance = metricsInset > 0 ? Math.max(TRAFFIC_LIGHT_CLEARANCE, metricsInset) : TRAFFIC_LIGHT_CLEARANCE;
-		trafficLightSpacer.setSize(clearance, 1);
-		trafficLightSpacer.visible = collapsed;
+		rootBox.setPadding({ top: 0, bottom: 0, right: 14, left: collapsed ? clearance : 14 });
+		collapsedControlsCluster.visible = collapsed;
 		sidebarToggleBtn.visible = collapsed;
-		newSessionBtn.visible = collapsed;
+		backBtn.visible = collapsed;
+		forwardBtn.visible = collapsed;
 
 		const canBack = snapshot.status.canGoBack ?? controller.canGoBack();
 		const canForward = snapshot.status.canGoForward ?? controller.canGoForward();
@@ -644,16 +579,7 @@ export function createWakuHeaderBar(
 		forwardBtn.setDisabled(!canForward);
 
 		sessionTitleText.setText(resolveSessionTitle(snapshot));
-		workspacePill.setLabel(basename(snapshot.status.cwd) || snapshot.status.cwd || "workspace");
-
-		const hasBranch = snapshot.gitBranch.length > 0 || snapshot.isGitRepo;
-		branchChip.visible = hasBranch;
-		branchChip.setLabel(snapshot.gitBranch || "detached");
-		branchChip.setDisabled(!hasBranch);
-
-		const changedCount = snapshot.changedFiles.length;
-		changedCountBadge.visible = changedCount > 0;
-		changedCountBadge.setLabel(`${changedCount}`);
+		rightPanelToggleBtn.visible = !snapshot.layout.rightPanelOpen;
 		rightPanelToggleBtn.setActive(snapshot.layout.rightPanelOpen);
 	};
 
@@ -665,111 +591,149 @@ export function createWakuHeaderBar(
 		applyTheme: (theme: GuiTheme) => {
 			currentTheme = theme;
 			rootBox.setBackground(theme.background);
-			sessionTitleText.setColor(theme.textBright);
-			bottomDivider.setColor(theme.border);
+			sessionTitleText.setColor(theme.textPrimary);
 		},
-		dispose: () => {
-			openersPopover?.hide();
-			openersPopover = undefined;
-		},
+		dispose: () => {},
 	};
+}
+
+function toastStatusStyle(level: GuiToastEntry["level"], theme: GuiTheme): { readonly icon: VectorIconName; readonly color: Color } {
+	switch (level) {
+		case "error":
+			return { icon: "alert", color: theme.danger };
+		case "warning":
+			return { icon: "alert", color: theme.warning };
+		default:
+			return { icon: "check", color: theme.success };
+	}
 }
 
 /** Clickable pill surface wrapping floating toast notification content. */
 class WakuToastPill extends GuiComponent {
 	private toast: GuiToastEntry;
+	private currentTheme: GuiTheme;
+	private readonly statusIcon: VectorIcon;
 	private readonly closeBtn: IconButton;
+	private readonly cardBox: Box;
+	private readonly row: HStack;
+	private readonly msgText: Text;
 	private readonly onDismiss: (id: string) => void;
 
-	constructor(toast: GuiToastEntry, onDismiss: (id: string) => void) {
+	constructor(theme: GuiTheme, toast: GuiToastEntry, onDismiss: (id: string) => void) {
 		super();
 		this.toast = toast;
+		this.currentTheme = theme;
 		this.onDismiss = onDismiss;
 		this.cursor = SGUI_CURSOR_POINTER;
-		this.closeBtn = new IconButton({
-			icon: "close",
-			size: 22,
-			iconSize: 11,
-			label: "Dismiss notification",
-			onClick: () => this.onDismiss(this.toast.id),
+		const st = toastStatusStyle(toast.level, theme);
+		this.statusIcon = new VectorIcon({
+			name: st.icon,
+			size: 14,
+			color: st.color,
 		});
-		this.closeBtn.setParent(this);
+		this.closeBtn = annotateSpecNode(
+			new IconButton({
+				icon: "close",
+				size: 26,
+				iconSize: 12,
+				label: "Dismiss notification",
+				onClick: () => this.onDismiss(this.toast.id),
+			}),
+			{
+				key: "workspace.toast.dismiss",
+				role: "button",
+				size: { w: 26, h: 26 },
+				variant: "icon-button",
+				text: { value: "Dismiss notification", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+				asset: { kind: "icon", ref: "icons/x.svg", alt: "Dismiss notification", w: 12, h: 12 },
+			},
+		);
+		this.msgText = new Text({
+			text: toast.message,
+			fontSize: theme.fontSizeBody,
+			fontWeight: 500,
+			color: theme.textPrimary,
+			wrap: true,
+		});
+		this.row = new HStack({
+			gap: 8,
+			align: "center",
+			children: [
+				this.statusIcon,
+				{ child: this.msgText, grow: 1, shrink: 1 },
+				this.closeBtn,
+			],
+		});
+		this.cardBox = annotateSpecNode(
+			new Box({
+				width: 560,
+				maxWidth: 560,
+				background: theme.surfaceElevated,
+				borderColor: theme.borderStrong,
+				borderWidth: 1,
+				radius: 10,
+				padding: { top: 7, right: 10, bottom: 7, left: 10 },
+				child: this.row,
+			}),
+			{
+				key: "workspace.toast",
+				role: "status",
+				flowComponent: this.row,
+				size: { w: "hug", h: "hug" },
+				variant: "toast-card",
+				text: null,
+			},
+		);
+		this.cardBox.setParent(this);
+		registerSpecChildren(this, () => [this.cardBox]);
+	}
+
+	getCardBox(): Box {
+		return this.cardBox;
 	}
 
 	override attachHost(host: GuiHost | undefined): void {
 		super.attachHost(host);
-		this.closeBtn.attachHost(host);
+		this.cardBox.attachHost(host);
 	}
 
 	setToast(toast: GuiToastEntry): void {
 		this.toast = toast;
+		this.msgText.setText(toast.message);
+		const st = toastStatusStyle(toast.level, this.currentTheme);
+		this.statusIcon.setName(st.icon);
+		this.statusIcon.setColor(st.color);
 		this.invalidate();
 	}
 
-	private iconForLevel(level: GuiToastEntry["level"]): VectorIconName {
-		return level === "info" ? "info" : "alert";
+	override onThemeChange(theme: GuiTheme): void {
+		this.currentTheme = theme;
+		this.cardBox.setBackground(theme.surfaceElevated);
+		this.cardBox.setBorder(theme.borderStrong, 1, 10);
+		this.msgText.setColor(theme.textPrimary);
+		const st = toastStatusStyle(this.toast.level, theme);
+		this.statusIcon.setName(st.icon);
+		this.statusIcon.setColor(st.color);
+		this.cardBox.onThemeChange(theme);
 	}
 
-	private colorForLevel(level: GuiToastEntry["level"], theme: GuiTheme): Color {
-		switch (level) {
-			case "error":
-				return theme.danger;
-			case "warning":
-				return theme.warning;
-			case "info":
-			default:
-				return theme.info;
-		}
-	}
-
-	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
-		const style = { fontFamily: SGUI_FONT_REGULAR, fontSize: ctx.theme.fontSizeBody, fontWeight: 500 };
-		const textAvail = Math.max(40, Math.min(maxWidth, 560) - 68);
-		const metrics = ctx.measureText(style, textAvail, this.toast.message);
-		const w = Math.min(maxWidth, Math.max(180, Math.min(560, metrics.width + 72)));
-		const h = Math.max(36, metrics.height + 16);
-		return { width: w, height: h };
+	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
+		return this.cardBox.measure(ctx, Math.min(maxWidth, 560), maxHeight);
 	}
 
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
-		const btnSize = this.closeBtn.measure(ctx, 24, rect.height);
-		this.closeBtn.layout(ctx, {
-			x: rect.x + rect.width - btnSize.width - 8,
-			y: rect.y + Math.max(0, (rect.height - btnSize.height) * 0.5),
-			width: btnSize.width,
-			height: btnSize.height,
-		});
+		this.cardBox.layout(ctx, rect);
 	}
 
 	override hitTest(x: number, y: number): GuiComponent | undefined {
 		if (!this.visible || !pointInRect(x, y, this.layoutRect)) return undefined;
-		const hitBtn = this.closeBtn.hitTest(x, y);
-		if (hitBtn !== undefined) return hitBtn;
-		return this;
+		return this.cardBox.hitTest(x, y) ?? this;
 	}
 
 	render(ctx: GuiRenderContext): void {
 		if (!this.visible) return;
-		const r = this.layoutRect;
-		if (r.width <= 0 || r.height <= 0) return;
-		const t = ctx.theme;
-		const tone = this.colorForLevel(this.toast.level, t);
-		const radius = 10;
-
-		ctx.fillRect(r.x, r.y, r.width, r.height, t.surfaceElevated, radius);
-		ctx.strokeRect(r.x, r.y, r.width, r.height, withAlpha(tone, 0.5), 1, radius);
-
-		const iconSz = 14;
-		drawVectorIcon(ctx, this.iconForLevel(this.toast.level), r.x + 12, r.y + (r.height - iconSz) * 0.5, iconSz, tone);
-
-		const style = { fontFamily: SGUI_FONT_REGULAR, fontSize: t.fontSizeBody, fontWeight: 500 };
-		const textX = r.x + 34;
-		const textW = Math.max(20, this.closeBtn.layoutRect.x - textX - 8);
-		const metrics = ctx.measureText(style, textW, this.toast.message);
-		ctx.drawStyledText(textX, r.y + Math.max(0, (r.height - metrics.height) * 0.5), textW, t.textPrimary, style, this.toast.message);
-
-		this.closeBtn.render(ctx);
+		this.cardBox.render(ctx);
 	}
 
 	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
@@ -785,7 +749,7 @@ class WakuToastPill extends GuiComponent {
 
 	override collectFocusables(out: GuiComponent[]): void {
 		if (!this.visible) return;
-		this.closeBtn.collectFocusables(out);
+		this.cardBox.collectFocusables(out);
 	}
 
 	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
@@ -798,13 +762,13 @@ class WakuToastPill extends GuiComponent {
 			rect: this.layoutRect,
 			stateFlags: SGUI_A11Y_STATE_ENABLED,
 		});
-		this.closeBtn.collectAccessibilityNodes(out, ctx);
+		this.cardBox.collectAccessibilityNodes(out, ctx);
 	}
 
 	override findComponentByA11yId(nodeId: number): GuiComponent | undefined {
 		if (!this.visible) return undefined;
 		if (this.a11yId === nodeId) return this;
-		return this.closeBtn.findComponentByA11yId(nodeId);
+		return this.cardBox.findComponentByA11yId(nodeId);
 	}
 
 	override handleAccessibilityAction(
@@ -813,7 +777,7 @@ class WakuToastPill extends GuiComponent {
 		value: string,
 		ctx: GuiRenderContext,
 	): boolean {
-		return this.closeBtn.handleAccessibilityAction(nodeId, action, value, ctx);
+		return this.cardBox.handleAccessibilityAction(nodeId, action, value, ctx);
 	}
 }
 
@@ -826,6 +790,7 @@ export interface WakuToastBannerHandle {
 	update(snapshotOrToasts: GuiSessionSnapshot | readonly GuiToastEntry[]): void;
 	applyTheme(theme: GuiTheme): void;
 	hasActiveToast(): boolean;
+	getActiveOverlayComponent(): Box | undefined;
 	dispose(): void;
 }
 
@@ -871,19 +836,31 @@ export function createWakuToastBanner(
 		}
 	};
 
+	const computeMainOffsetX = (): number => {
+		const metrics = app.getWindowMetrics();
+		const layout = controller.getSnapshot().layout;
+		const leftW = layout.sidebarCollapsed ? 0 : layout.sidebarWidth || 252;
+		const rightW = layout.rightPanelOpen ? layout.rightPanelWidth || 460 : 0;
+		const mainCenter = leftW + Math.max(0, metrics.width - leftW - rightW) * 0.5;
+		return Math.round(mainCenter - metrics.width * 0.5);
+	};
+
 	const showToast = (toast: GuiToastEntry): void => {
 		clearTimer();
 		activeToastId = toast.id;
 		if (toastPill !== undefined && overlayHandle !== undefined) {
 			toastPill.setToast(toast);
 		} else {
-			toastPill = new WakuToastPill(toast, dismissId);
+			toastPill = new WakuToastPill(app.getTheme(), toast, dismissId);
 			overlayHandle = app.showOverlay(toastPill, {
 				anchor: "top-center",
-				offsetY: 54,
+				margin: 0,
+				offsetX: computeMainOffsetX(),
+				offsetY: 56,
 				maxWidth: 560,
 				modal: false,
 				radius: 10,
+				border: false,
 				shadow: "md",
 				dismissOnBackdropClick: false,
 				dismissOnEscape: false,
@@ -901,7 +878,11 @@ export function createWakuToastBanner(
 	};
 
 	const update = (snapshotOrToasts: GuiSessionSnapshot | readonly GuiToastEntry[]): void => {
-		const toasts = Array.isArray(snapshotOrToasts) ? snapshotOrToasts : ("toasts" in snapshotOrToasts ? snapshotOrToasts.toasts : []);
+		const toasts = Array.isArray(snapshotOrToasts)
+			? snapshotOrToasts
+			: "toasts" in snapshotOrToasts
+				? snapshotOrToasts.toasts
+				: [];
 		const latest = toasts.length > 0 ? toasts[toasts.length - 1] : undefined;
 		if (latest === undefined) {
 			hideToast();
@@ -919,10 +900,12 @@ export function createWakuToastBanner(
 	return {
 		root: placeholder,
 		update,
-		applyTheme: () => {
+		applyTheme: (theme: GuiTheme) => {
+			toastPill?.onThemeChange(theme);
 			toastPill?.invalidate();
 		},
 		hasActiveToast: () => activeToastId !== undefined && overlayHandle !== undefined,
+		getActiveOverlayComponent: () => toastPill?.getCardBox(),
 		dispose: () => {
 			hideToast();
 		},

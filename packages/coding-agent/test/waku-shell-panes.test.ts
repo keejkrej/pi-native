@@ -16,10 +16,12 @@ import {
 	openModelPicker,
 	openSessionPicker,
 	openSettingsModal,
+	openSidebarOptionsPopover,
 } from "../src/modes/gui/overlays.ts";
-import { createWakuRightPanel } from "../src/modes/gui/right-panel.ts";
+import { createWakuRightPanel, RIGHT_PANEL_DEFAULT_WIDTH } from "../src/modes/gui/right-panel.ts";
 import {
 	createWakuSidebar,
+	SIDEBAR_DEFAULT_WIDTH,
 	SIDEBAR_MAX_WIDTH,
 	SIDEBAR_MIN_WIDTH,
 } from "../src/modes/gui/sidebar.ts";
@@ -335,18 +337,21 @@ describe("waku-shell-panes", () => {
 			sidebar.update(controller.getSnapshot());
 			app.renderFrame();
 
-			expect(sidebar.getWidth()).toBe(260);
+			expect(sidebar.getWidth()).toBe(SIDEBAR_DEFAULT_WIDTH);
 			sidebar.setWidth(100);
 			expect(sidebar.getWidth()).toBe(SIDEBAR_MIN_WIDTH);
 			sidebar.setWidth(999);
 			expect(sidebar.getWidth()).toBe(SIDEBAR_MAX_WIDTH);
-			sidebar.setWidth(260);
+			sidebar.setWidth(SIDEBAR_DEFAULT_WIDTH);
 
 			let nodes = backend.getAccessibilityTree();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "New Session")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "New Task")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Search")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Sidebar")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Settings")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Theme")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Previous Session")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Next Session")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Sidebar options")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Open Settings")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label.startsWith("Today"))).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Alpha Session")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Beta Session")).toBeDefined();
@@ -376,11 +381,15 @@ describe("waku-shell-panes", () => {
 			nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label.startsWith("Pinned"))).toBeDefined();
 
-			// Switch grouping to Project -> renders "waku" workspace section
-			const projectSeg = findNode(nodes, (n) => n.role === "button" && n.label === "Project");
-			expect(projectSeg).toBeDefined();
-			backend.triggerA11yPress(projectSeg!.id);
+			// Switch grouping to Project via Sidebar options popover -> renders "waku" workspace section
+			const optionsHandle = openSidebarOptionsPopover(app, controller);
 			app.step(16);
+			nodes = backend.getAccessibilityTree();
+			const projectOpt = findNode(nodes, (n) => n.role === "button" && n.label === "Project");
+			expect(projectOpt).toBeDefined();
+			backend.triggerA11yPress(projectOpt!.id);
+			app.step(16);
+			optionsHandle.hide();
 			sidebar.update(controller.getSnapshot());
 			app.step(16);
 			nodes = backend.getAccessibilityTree();
@@ -423,12 +432,15 @@ describe("waku-shell-panes", () => {
 			await flushMicrotasks();
 			expect(controller.calls.deletes.length).toBe(1);
 
-			// Appearance toggle Dark -> Light updates theme
+			// Settings Appearance switch Dark -> Light updates theme
+			const settingsHandle = openSettingsModal(app, controller, { initialCategory: "appearance" });
+			app.step(16);
 			nodes = backend.getAccessibilityTree();
 			const lightSeg = findNode(nodes, (n) => n.role === "button" && n.label === "Light");
 			expect(lightSeg).toBeDefined();
 			backend.triggerA11yPress(lightSeg!.id);
 			app.step(16);
+			settingsHandle.hide();
 			expect(app.getTheme()).toBe(lightGuiTheme);
 		});
 
@@ -448,13 +460,13 @@ describe("waku-shell-panes", () => {
 
 			app.renderFrame();
 			const nodes = backend.getAccessibilityTree();
-			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "No sessions yet")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Start New Session")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "New Task")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Alpha Session")).toBeUndefined();
 		});
 	});
 
 	describe("window-chrome header & toast", () => {
-		it("handles collapsed vs open sidebar nav, double-click zoom, Open in popover, and Right Panel badge", async () => {
+		it("handles collapsed vs open sidebar nav, double-click zoom, and Right Panel toggle", async () => {
 			const { backend, app, controller } = createTestHarness();
 			controller.seedCanGoBack = true;
 			controller.seedCanGoForward = false;
@@ -472,7 +484,7 @@ describe("waku-shell-panes", () => {
 			app.setRoot(header.root);
 			disposables.push(() => header.dispose());
 
-			// 1. Collapsed sidebar shows left Toggle Sidebar & New Session
+			// 1. Collapsed sidebar shows left Toggle Sidebar, Previous Session, Next Session & Right Panel toggle
 			controller.updateLayoutPreferences({ sidebarCollapsed: true });
 			header.update(controller.getSnapshot());
 			app.renderFrame();
@@ -480,13 +492,12 @@ describe("waku-shell-panes", () => {
 			expect(header.root.layoutRect.height).toBe(HEADER_BAR_HEIGHT);
 			let nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Sidebar")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "New Session")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Back")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "2")).toBeDefined(); // changedFiles badge count
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Previous Session")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Next Session")).toBeDefined();
 
-			// Trigger Back nav and Toggle Sidebar
-			const backBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Back");
-			backend.triggerA11yPress(backBtn!.id);
+			// Trigger Previous Session nav and Toggle Sidebar
+			const prevBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Previous Session");
+			backend.triggerA11yPress(prevBtn!.id);
 			app.step(16);
 			await flushMicrotasks();
 			expect(controller.backCount).toBe(1);
@@ -502,25 +513,12 @@ describe("waku-shell-panes", () => {
 			app.step(16);
 			expect(backend.getWindowActions()).toContain(2);
 
-			// 2. Open sidebar hides redundant sidebar/compose icons from header
+			// 2. Open sidebar hides redundant left chrome nav controls
 			controller.updateLayoutPreferences({ sidebarCollapsed: false });
 			header.update(controller.getSnapshot());
 			app.step(16);
 			nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Sidebar")).toBeUndefined();
-
-			// Open in... popover detects macOS apps and triggers openInExternalApp
-			const openInBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Open in...");
-			expect(openInBtn).toBeDefined();
-			backend.triggerA11yPress(openInBtn!.id);
-			app.step(16);
-			nodes = backend.getAccessibilityTree();
-			const cursorBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Cursor");
-			expect(cursorBtn).toBeDefined();
-			backend.triggerA11yPress(cursorBtn!.id);
-			await flushMicrotasks();
-			app.step(16);
-			expect(controller.calls.openedApps).toEqual(["cursor"]);
 
 			// Toggle right panel button fires callback
 			const rightBtn = findNode(backend.getAccessibilityTree(), (n) => n.role === "button" && n.label === "Toggle Right Panel");
@@ -583,11 +581,11 @@ describe("waku-shell-panes", () => {
 			rightPanel.update(controller.getSnapshot());
 			app.renderFrame();
 
-			expect(rightPanel.getWidth()).toBe(380);
+			expect(rightPanel.getWidth()).toBe(RIGHT_PANEL_DEFAULT_WIDTH);
 			let nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "src/app.ts")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "button" && n.label === "README.md")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Commit...")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Commit")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "unified diff: src/app.ts")).toBeDefined();
 
 			// Switch to Split diff mode
@@ -630,7 +628,15 @@ describe("waku-shell-panes", () => {
 			nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label.endsWith("diff: README.md"))).toBeDefined();
 
+			// Terminal tab: click Terminal button and verify terminal surface switches
+			const terminalTab = findNode(nodes, (n) => n.role === "button" && n.label === "Terminal");
+			expect(terminalTab).toBeDefined();
+			backend.triggerA11yPress(terminalTab!.id);
+			app.step(16);
+			expect(rightPanel.getActiveTab()).toBe("terminal");
+
 			// Tree tab: click entry -> Navigate / Summarize / Fork from here
+			nodes = backend.getAccessibilityTree();
 			const treeTab = findNode(nodes, (n) => n.role === "button" && n.label === "Tree");
 			expect(treeTab).toBeDefined();
 			backend.triggerA11yPress(treeTab!.id);
@@ -771,27 +777,38 @@ describe("waku-shell-panes", () => {
 			await flushMicrotasks();
 			expect(controller.calls.checkouts).toEqual(["feat/gui"]);
 
-			// Create branch
+			// Create branch (switch from branch list to Create and checkout new branch… form first)
 			openGitBranchModal(app, controller);
 			app.step(16);
-			const createBtn = findNode(backend.getAccessibilityTree(), (n) => n.role === "button" && n.label === "Create Branch");
-			const newInput = findAllNodes(backend.getAccessibilityTree(), (n) => n.role === "textField")[1];
+			const newBranchTrigger = findNode(
+				backend.getAccessibilityTree(),
+				(n) => n.role === "button" && n.label === "Create and checkout new branch…",
+			);
+			expect(newBranchTrigger).toBeDefined();
+			backend.triggerA11yPress(newBranchTrigger!.id);
+			app.step(16);
+			const renderedTexts = backend.getRenderedTexts().join("\n");
+			expect(renderedTexts).toContain("Create and checkout new branch");
+			expect(renderedTexts).toContain("Press Return to create · Esc to cancel");
+			const newInput = findNode(backend.getAccessibilityTree(), (n) => n.role === "textField" && n.label === "New branch name");
 			expect(newInput).toBeDefined();
 			backend.triggerA11yFocus(newInput!.id);
 			backend.insertText("feat/new-branch");
 			app.step(16);
-			backend.triggerA11yPress(createBtn!.id);
+			backend.pressKey("enter");
 			app.step(16);
 			await flushMicrotasks();
 			expect(controller.calls.createdBranches).toEqual(["feat/new-branch"]);
 
-			// Git commit modal: uncheck README.md, type commit message, commit
+			// Git commit modal: verify Commit / Commit & Push / Push rows and Include unstaged checkbox
 			openGitCommitModal(app, controller);
 			app.renderFrame();
 			let nodes = backend.getAccessibilityTree();
-			const readmeCheck = findNode(nodes, (n) => n.role === "checkbox" && n.label === "README.md");
-			expect(readmeCheck).toBeDefined();
-			backend.triggerA11yPress(readmeCheck!.id);
+			const unstagedCheck = findNode(nodes, (n) => n.role === "checkbox" && n.label === "Include unstaged");
+			expect(unstagedCheck).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Commit & Push")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Push")).toBeDefined();
+			backend.triggerA11yPress(unstagedCheck!.id);
 			app.step(16);
 			backend.insertText("feat: update app");
 			app.step(16);
@@ -801,10 +818,10 @@ describe("waku-shell-panes", () => {
 			backend.triggerA11yPress(commitBtn!.id);
 			app.step(16);
 			await flushMicrotasks();
-			expect(controller.calls.commits).toEqual([{ message: "feat: update app", paths: ["src/app.ts"] }]);
+			expect(controller.calls.commits).toEqual([{ message: "feat: update app", paths: undefined }]);
 		});
 
-		it("context popover shows breakdown and triggers compactSession", async () => {
+		it("context popover shows breakdown cleanly without extra action buttons", () => {
 			const { backend, app, controller } = createTestHarness();
 			openContextPopover(app, controller);
 			app.renderFrame();
@@ -813,42 +830,46 @@ describe("waku-shell-panes", () => {
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "Context Window")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "142k / 200k tokens")).toBeDefined();
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "71%")).toBeDefined();
-			const compactBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Compact Context");
-			expect(compactBtn).toBeDefined();
-			backend.triggerA11yPress(compactBtn!.id);
-			app.step(16);
-			await flushMicrotasks();
-			expect(controller.calls.compacts).toBe(1);
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Compact Context")).toBeUndefined();
+			const texts = backend.getRenderedTexts().join("\n");
+			expect(texts).toContain("Input Tokens");
+			expect(texts).toContain("Estimated Cost");
 		});
 
-		it("settings modal supports left-rail categories, immediate Enter Toggle Theme, and layout persistence", () => {
+		it("settings modal supports 5 Waku sidebar categories, Appearance Toggle Theme, and layout persistence", () => {
 			const { backend, app, controller } = createTestHarness();
 			const handle = openSettingsModal(app, controller);
 			app.renderFrame();
 
 			let nodes = backend.getAccessibilityTree();
 			expect(findNode(nodes, (n) => n.role === "staticText" && n.label === "Settings")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Theme")).toBeDefined();
-			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Close")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Back")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "textField" && n.label === "Search Settings")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "General")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Appearance")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Providers")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Skills")).toBeDefined();
+			expect(findNode(nodes, (n) => n.role === "button" && n.label === "Usage")).toBeDefined();
 
-			// Enter immediately toggles Dark -> Light via focused Toggle Theme button
-			backend.pressKey("enter");
-			app.step(16);
-			expect(app.getTheme()).toBe(lightGuiTheme);
-			expect(controller.getSnapshot().layout.appearance).toBe("light");
-
-			// Switch to Workspace & Chrome category
-			nodes = backend.getAccessibilityTree();
-			const wsCategory = findNode(nodes, (n) => n.role === "button" && n.label === "Workspace & Chrome");
-			expect(wsCategory).toBeDefined();
-			backend.triggerA11yPress(wsCategory!.id);
-			app.step(16);
-			nodes = backend.getAccessibilityTree();
+			// General category updates Diff Presentation layout persistence
 			const splitDiffBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Split");
 			expect(splitDiffBtn).toBeDefined();
 			backend.triggerA11yPress(splitDiffBtn!.id);
 			app.step(16);
 			expect(controller.getSnapshot().layout.diffViewMode).toBe("split");
+
+			// Switch to Appearance category -> Enter/press Toggle Theme switches Dark -> Light
+			const appearanceBtn = findNode(backend.getAccessibilityTree(), (n) => n.role === "button" && n.label === "Appearance");
+			expect(appearanceBtn).toBeDefined();
+			backend.triggerA11yPress(appearanceBtn!.id);
+			app.step(16);
+			nodes = backend.getAccessibilityTree();
+			const toggleThemeBtn = findNode(nodes, (n) => n.role === "button" && n.label === "Toggle Theme");
+			expect(toggleThemeBtn).toBeDefined();
+			backend.triggerA11yPress(toggleThemeBtn!.id);
+			app.step(16);
+			expect(app.getTheme()).toBe(lightGuiTheme);
+			expect(controller.getSnapshot().layout.appearance).toBe("light");
 
 			// Escape closes Settings modal
 			backend.pressKey("escape");

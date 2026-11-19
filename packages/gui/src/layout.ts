@@ -36,10 +36,12 @@ export interface StackEntry {
 export type StackChild = GuiComponent | StackEntry;
 
 export type StackAlignment = "start" | "center" | "end" | "stretch";
+export type StackJustify = "start" | "center" | "end" | "space-between";
 
 export interface StackOptions {
 	readonly gap?: number;
 	readonly align?: StackAlignment;
+	readonly justify?: StackJustify;
 	readonly padding?: PaddingInput;
 	readonly background?: Color;
 	readonly radius?: number;
@@ -92,6 +94,7 @@ export interface BoxOptions {
 	readonly background?: Color;
 	readonly borderColor?: Color;
 	readonly borderWidth?: number;
+	readonly borderEdges?: PaddingInput;
 	readonly radius?: number;
 	readonly cornerRadii?: CornerRadii;
 	readonly shadow?: BoxShadow;
@@ -102,8 +105,29 @@ export interface BoxOptions {
 	readonly maxWidth?: number;
 	readonly maxHeight?: number;
 	readonly fillWidth?: boolean;
+	readonly fillHeight?: boolean;
 	readonly alignHorizontal?: "start" | "center" | "end";
+	readonly alignVertical?: "start" | "center" | "end";
 	readonly clip?: boolean;
+}
+
+export interface BoxStyleInfo {
+	readonly padding: Edges;
+	readonly background: Color | undefined;
+	readonly borderColor: Color | undefined;
+	readonly borderWidth: number;
+	readonly borderEdges: Edges;
+	readonly radius: number;
+	readonly cornerRadii: CornerRadii | undefined;
+	readonly fixedWidth: number | undefined;
+	readonly fixedHeight: number | undefined;
+	readonly maxWidth: number | undefined;
+	readonly maxHeight: number | undefined;
+	readonly fillWidth: boolean;
+	readonly fillHeight: boolean;
+	readonly alignHorizontal: "start" | "center" | "end";
+	readonly alignVertical: "start" | "center" | "end";
+	readonly clip: boolean;
 }
 
 export class Box extends GuiComponent {
@@ -112,6 +136,7 @@ export class Box extends GuiComponent {
 	private background: Color | undefined;
 	private borderColor: Color | undefined;
 	private borderWidth: number;
+	private borderEdgesValue: Edges | undefined;
 	private radius: number;
 	private cornerRadiiValue: CornerRadii | undefined;
 	private shadow: BoxShadow | undefined;
@@ -122,7 +147,9 @@ export class Box extends GuiComponent {
 	private maxWidthLimit: number | undefined;
 	private maxHeightLimit: number | undefined;
 	private fillWidthValue: boolean;
+	private fillHeightValue: boolean;
 	private alignHorizontal: "start" | "center" | "end";
+	private alignVertical: "start" | "center" | "end";
 	private clipChildren: boolean;
 
 	constructor(options: BoxOptions = {}) {
@@ -131,7 +158,8 @@ export class Box extends GuiComponent {
 		this.padding = normalizeEdges(options.padding);
 		this.background = options.background;
 		this.borderColor = options.borderColor;
-		this.borderWidth = options.borderWidth ?? (options.borderColor !== undefined ? 1 : 0);
+		this.borderEdgesValue = options.borderEdges !== undefined ? normalizeEdges(options.borderEdges) : undefined;
+		this.borderWidth = options.borderWidth ?? (options.borderColor !== undefined && this.borderEdgesValue === undefined ? 1 : 0);
 		this.radius = options.radius ?? 0;
 		this.cornerRadiiValue = options.cornerRadii;
 		this.shadow = options.shadow;
@@ -142,7 +170,9 @@ export class Box extends GuiComponent {
 		this.maxWidthLimit = options.maxWidth;
 		this.maxHeightLimit = options.maxHeight;
 		this.fillWidthValue = options.fillWidth ?? false;
+		this.fillHeightValue = options.fillHeight ?? false;
 		this.alignHorizontal = options.alignHorizontal ?? "start";
+		this.alignVertical = options.alignVertical ?? "start";
 		this.clipChildren = options.clip ?? false;
 		if (this.child !== undefined) {
 			this.child.setParent(this);
@@ -181,11 +211,60 @@ export class Box extends GuiComponent {
 		this.invalidate();
 	}
 
+	setHeight(height: number | undefined): void {
+		this.fixedHeight = height;
+		this.invalidate();
+	}
+
+	setMaxWidth(maxWidth: number | undefined): void {
+		this.maxWidthLimit = maxWidth;
+		this.invalidate();
+	}
+
 	setBorder(color: Color | undefined, width = 1, radius = this.radius): void {
 		this.borderColor = color;
 		this.borderWidth = width;
+		this.borderEdgesValue = undefined;
 		this.radius = radius;
 		this.invalidate();
+	}
+
+	setBorderEdges(edges: PaddingInput | undefined, color: Color | undefined = this.borderColor): void {
+		this.borderEdgesValue = edges !== undefined ? normalizeEdges(edges) : undefined;
+		this.borderColor = color;
+		this.invalidate();
+	}
+
+	private resolvedBorderEdges(): Edges {
+		if (this.borderColor === undefined) {
+			return { top: 0, right: 0, bottom: 0, left: 0 };
+		}
+		if (this.borderEdgesValue !== undefined) {
+			return this.borderEdgesValue;
+		}
+		const bw = Math.max(0, this.borderWidth);
+		return { top: bw, right: bw, bottom: bw, left: bw };
+	}
+
+	getStyleInfo(): BoxStyleInfo {
+		return {
+			padding: { ...this.padding },
+			background: this.background,
+			borderColor: this.borderColor,
+			borderWidth: this.borderWidth,
+			borderEdges: this.resolvedBorderEdges(),
+			radius: this.radius,
+			cornerRadii: this.cornerRadiiValue,
+			fixedWidth: this.fixedWidth,
+			fixedHeight: this.fixedHeight,
+			maxWidth: this.maxWidthLimit,
+			maxHeight: this.maxHeightLimit,
+			fillWidth: this.fillWidthValue,
+			fillHeight: this.fillHeightValue,
+			alignHorizontal: this.alignHorizontal,
+			alignVertical: this.alignVertical,
+			clip: this.clipChildren,
+		};
 	}
 
 	setRadius(radius: number): void {
@@ -212,7 +291,8 @@ export class Box extends GuiComponent {
 	}
 
 	hasBorder(): boolean {
-		return this.borderColor !== undefined && this.borderWidth > 0;
+		const be = this.resolvedBorderEdges();
+		return this.borderColor !== undefined && (be.top > 0 || be.right > 0 || be.bottom > 0 || be.left > 0);
 	}
 
 	hasShadow(): boolean {
@@ -252,9 +332,9 @@ export class Box extends GuiComponent {
 	}
 
 	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
-		const bw = this.borderColor !== undefined ? this.borderWidth : 0;
-		const insetX = this.padding.left + this.padding.right + bw * 2;
-		const insetY = this.padding.top + this.padding.bottom + bw * 2;
+		const be = this.resolvedBorderEdges();
+		const insetX = this.padding.left + this.padding.right + be.left + be.right;
+		const insetY = this.padding.top + this.padding.bottom + be.top + be.bottom;
 		const outerMaxW = this.effectiveMaxWidth(maxWidth);
 		const outerMaxH = this.effectiveMaxHeight(maxHeight);
 		const innerMaxW = Math.max(0, outerMaxW - insetX);
@@ -269,7 +349,9 @@ export class Box extends GuiComponent {
 		}
 
 		let totalW = this.fixedWidth ?? (this.fillWidthValue ? outerMaxW : Math.max(this.minWidth, childW + insetX));
-		let totalH = this.fixedHeight ?? Math.max(this.minHeight, childH + insetY);
+		let totalH =
+			this.fixedHeight ??
+			(this.fillHeightValue && outerMaxH !== undefined ? outerMaxH : Math.max(this.minHeight, childH + insetY));
 		totalW = Math.min(outerMaxW, Math.max(this.minWidth, totalW));
 		if (outerMaxH !== undefined) {
 			totalH = Math.min(outerMaxH, Math.max(this.minHeight, totalH));
@@ -292,17 +374,25 @@ export class Box extends GuiComponent {
 		const hasHeightConstraint = this.fixedHeight !== undefined || this.maxHeightLimit !== undefined;
 		const limitH = hasHeightConstraint ? this.effectiveMaxHeight(rect.height) : undefined;
 		const boxH = limitH !== undefined ? Math.min(rect.height, limitH) : rect.height;
+		let boxY = rect.y;
+		if (boxH < rect.height) {
+			if (this.alignVertical === "center") {
+				boxY = rect.y + Math.max(0, (rect.height - boxH) * 0.5);
+			} else if (this.alignVertical === "end") {
+				boxY = rect.y + Math.max(0, rect.height - boxH);
+			}
+		}
 
-		const resolvedRect: Rect = { x: boxX, y: rect.y, width: boxW, height: boxH };
+		const resolvedRect: Rect = { x: boxX, y: boxY, width: boxW, height: boxH };
 		super.layout(ctx, resolvedRect);
 		if (this.child === undefined || !this.child.visible) {
 			return;
 		}
-		const bw = this.borderColor !== undefined ? this.borderWidth : 0;
-		const innerX = resolvedRect.x + this.padding.left + bw;
-		const innerY = resolvedRect.y + this.padding.top + bw;
-		const innerW = Math.max(0, resolvedRect.width - this.padding.left - this.padding.right - bw * 2);
-		const innerH = Math.max(0, resolvedRect.height - this.padding.top - this.padding.bottom - bw * 2);
+		const be = this.resolvedBorderEdges();
+		const innerX = resolvedRect.x + this.padding.left + be.left;
+		const innerY = resolvedRect.y + this.padding.top + be.top;
+		const innerW = Math.max(0, resolvedRect.width - this.padding.left - this.padding.right - be.left - be.right);
+		const innerH = Math.max(0, resolvedRect.height - this.padding.top - this.padding.bottom - be.top - be.bottom);
 		this.child.layout(ctx, { x: innerX, y: innerY, width: innerW, height: innerH });
 	}
 
@@ -334,7 +424,45 @@ export class Box extends GuiComponent {
 				this.child.render(ctx);
 			}
 		}
-		if (this.borderColor !== undefined && this.borderWidth > 0) {
+		if (this.borderColor !== undefined && this.borderEdgesValue !== undefined) {
+			const be = this.borderEdgesValue;
+			const bw = Math.max(be.top, be.right, be.bottom, be.left);
+			const tl = cr !== undefined ? cr.tl : this.radius;
+			const tr = cr !== undefined ? cr.tr : this.radius;
+			const br = cr !== undefined ? cr.br : this.radius;
+			const bl = cr !== undefined ? cr.bl : this.radius;
+			const hasRoundedBorderCorner =
+				bw > 0 &&
+				((tl > 0 && be.top > 0 && be.left > 0) ||
+					(tr > 0 && be.top > 0 && be.right > 0) ||
+					(br > 0 && be.bottom > 0 && be.right > 0) ||
+					(bl > 0 && be.bottom > 0 && be.left > 0));
+			if (hasRoundedBorderCorner) {
+				const sx = be.left > 0 ? r.x : r.x - bw;
+				const sy = be.top > 0 ? r.y : r.y - bw;
+				const sw = r.width + (be.left > 0 ? 0 : bw) + (be.right > 0 ? 0 : bw);
+				const sh = r.height + (be.top > 0 ? 0 : bw) + (be.bottom > 0 ? 0 : bw);
+				ctx.pushClip(r);
+				ctx.strokeRectCorners(
+					sx,
+					sy,
+					sw,
+					sh,
+					be.top > 0 && be.left > 0 ? tl : 0,
+					be.top > 0 && be.right > 0 ? tr : 0,
+					be.bottom > 0 && be.right > 0 ? br : 0,
+					be.bottom > 0 && be.left > 0 ? bl : 0,
+					this.borderColor,
+					bw,
+				);
+				ctx.popClip();
+			} else {
+				if (be.top > 0) ctx.fillRect(r.x, r.y, r.width, be.top, this.borderColor);
+				if (be.right > 0) ctx.fillRect(r.x + r.width - be.right, r.y, be.right, r.height, this.borderColor);
+				if (be.bottom > 0) ctx.fillRect(r.x, r.y + r.height - be.bottom, r.width, be.bottom, this.borderColor);
+				if (be.left > 0) ctx.fillRect(r.x, r.y, be.left, r.height, this.borderColor);
+			}
+		} else if (this.borderColor !== undefined && this.borderWidth > 0) {
 			if (usePerCorner) {
 				ctx.strokeRectCorners(
 					r.x,
@@ -409,6 +537,7 @@ abstract class StackBase extends GuiComponent {
 	protected readonly entries: StackEntry[];
 	protected gap: number;
 	protected align: StackAlignment;
+	protected justify: StackJustify;
 	protected padding: Edges;
 	protected background: Color | undefined;
 	protected radius: number;
@@ -419,6 +548,7 @@ abstract class StackBase extends GuiComponent {
 		this.entries = [];
 		this.gap = options.gap ?? 0;
 		this.align = options.align ?? "stretch";
+		this.justify = options.justify ?? "start";
 		this.padding = normalizeEdges(options.padding);
 		this.background = options.background;
 		this.radius = options.radius ?? 0;
@@ -430,6 +560,26 @@ abstract class StackBase extends GuiComponent {
 				}
 			}
 		}
+	}
+
+	getStackStyle(): {
+		readonly direction: "vertical" | "horizontal";
+		readonly gap: number;
+		readonly align: StackAlignment;
+		readonly justify: StackJustify;
+		readonly padding: Edges;
+		readonly background: Color | undefined;
+		readonly radius: number;
+	} {
+		return {
+			direction: this.direction,
+			gap: this.gap,
+			align: this.align,
+			justify: this.justify,
+			padding: { ...this.padding },
+			background: this.background,
+			radius: this.radius,
+		};
 	}
 
 	override attachHost(host: GuiHost | undefined): void {
@@ -502,6 +652,11 @@ abstract class StackBase extends GuiComponent {
 
 	setAlign(align: StackAlignment): void {
 		this.align = align;
+		this.invalidate();
+	}
+
+	setJustify(justify: StackJustify): void {
+		this.justify = justify;
 		this.invalidate();
 	}
 
@@ -667,10 +822,29 @@ abstract class StackBase extends GuiComponent {
 		const innerY = rect.y + this.padding.top;
 		const innerW = Math.max(0, rect.width - this.padding.left - this.padding.right);
 		const innerH = Math.max(0, rect.height - this.padding.top - this.padding.bottom);
+		const targetMain = this.direction === "vertical" ? innerH : innerW;
 		const slots = this.computeSlots(ctx, innerW, innerH);
-		this.solveFlex(slots, this.direction === "vertical" ? innerH : innerW);
+		this.solveFlex(slots, targetMain);
+
+		let slotsMain = 0;
+		for (let i = 0; i < slots.length; i++) {
+			const s = slots[i];
+			if (s !== undefined) slotsMain += s.size;
+		}
+		const baseGap = this.gap;
+		const usedMain = slotsMain + baseGap * Math.max(0, slots.length - 1);
+		const extraMain = Math.max(0, targetMain - usedMain);
 
 		let cursor = this.direction === "vertical" ? innerY : innerX;
+		let effectiveGap = baseGap;
+		if (this.justify === "center") {
+			cursor += extraMain * 0.5;
+		} else if (this.justify === "end") {
+			cursor += extraMain;
+		} else if (this.justify === "space-between" && slots.length > 1) {
+			effectiveGap = Math.max(0, (targetMain - slotsMain) / (slots.length - 1));
+		}
+
 		for (let i = 0; i < slots.length; i++) {
 			const slot = slots[i];
 			if (slot === undefined) continue;
@@ -689,7 +863,7 @@ abstract class StackBase extends GuiComponent {
 				else if (this.align === "end") y = innerY + (innerH - h);
 				child.layout(ctx, { x: cursor, y, width: slot.size, height: h });
 			}
-			cursor += slot.size + this.gap;
+			cursor += slot.size + effectiveGap;
 		}
 	}
 
@@ -839,7 +1013,7 @@ export class Divider extends GuiComponent {
 		if (!this.visible) return;
 		const r = this.layoutRect;
 		if (r.width <= 0 || r.height <= 0) return;
-		const color = this.colorValue ?? withAlpha(ctx.theme.border, ctx.theme.dark ? 0.65 : 0.85);
+		const color = this.colorValue ?? ctx.theme.border;
 		if (this.direction === "vertical") {
 			const y = r.y + this.inset;
 			const h = Math.max(0, r.height - this.inset * 2);

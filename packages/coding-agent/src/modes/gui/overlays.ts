@@ -7,6 +7,7 @@
 import { basename } from "node:path";
 import type { ThinkingLevel } from "@pi-ts/agent-core";
 import {
+	Badge,
 	Box,
 	Button,
 	type Color,
@@ -27,31 +28,37 @@ import {
 	HStack,
 	IconButton,
 	Input,
+	Markdown,
 	type OverlayHandle,
 	type OverlayOptions,
 	type PaddingInput,
 	Pill,
 	pointInRect,
+	type RasterSurface,
 	type Rect,
 	resolveTheme,
 	ScrollView,
 	SegmentedControl,
-	type SegmentedItem,
 	type Size,
 	Spacer,
 	Switch,
 	Text,
 	TruncatedText,
+	VectorCanvas,
+	VectorIcon,
 	type VectorIconName,
 	VStack,
 	withAlpha,
 	SGUI_A11Y_STATE_ENABLED,
 	SGUI_A11Y_STATE_FOCUSED,
 	SGUI_A11Y_STATE_SELECTED,
+	SGUI_CURSOR_ARROW,
 	SGUI_CURSOR_POINTER,
 	SGUI_FONT_MONO,
 	SGUI_FONT_REGULAR,
 } from "@pi-ts/gui";
+import { ClickableContainer } from "./cards.ts";
+import { annotateSpecNode, providerIconForId, registerSpecChildren } from "./ui-spec-meta.ts";
 import type {
 	GuiChangedFile,
 	GuiContextUsage,
@@ -143,10 +150,15 @@ class ModalSearchInput extends Input {
 	private readonly onNavigateFn: (delta: number) => void;
 	private readonly onConfirmFn: () => void;
 	private readonly onCancelFn: () => void;
+	private readonly fixedHeightValue: number | undefined;
 
 	constructor(options: {
 		placeholder?: string;
 		value?: string;
+		variant?: "default" | "chromeless";
+		padding?: PaddingInput;
+		height?: number;
+		a11yLabel?: string;
 		onChange?: (value: string) => void;
 		onNavigate: (delta: number) => void;
 		onConfirm: () => void;
@@ -155,7 +167,9 @@ class ModalSearchInput extends Input {
 		super({
 			value: options.value ?? "",
 			placeholder: options.placeholder ?? "Search...",
-			padding: { vertical: 8, horizontal: 10 },
+			variant: options.variant,
+			a11yLabel: options.a11yLabel ?? options.placeholder ?? "Search...",
+			padding: options.padding ?? { vertical: 8, horizontal: 10 },
 			radius: 8,
 			onChange: options.onChange,
 			onSubmit: () => {
@@ -165,6 +179,15 @@ class ModalSearchInput extends Input {
 		this.onNavigateFn = options.onNavigate;
 		this.onConfirmFn = options.onConfirm;
 		this.onCancelFn = options.onCancel;
+		this.fixedHeightValue = options.height;
+	}
+
+	override measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
+		const m = super.measure(ctx, maxWidth, maxHeight);
+		return {
+			width: m.width,
+			height: this.fixedHeightValue ?? m.height,
+		};
 	}
 
 	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
@@ -205,6 +228,9 @@ interface SelectableRowOptions {
 	readonly selected?: boolean;
 	readonly accentCheck?: boolean;
 	readonly indent?: number;
+	readonly height?: number;
+	readonly paddingHorizontal?: number;
+	readonly borderOnSelected?: boolean;
 	readonly onClick: () => void;
 	readonly trailingActions?: readonly IconButton[];
 }
@@ -252,13 +278,14 @@ class WakuOverlayRow extends GuiComponent {
 
 	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const hasSub = this.opts.subtitle !== undefined && this.opts.subtitle.length > 0;
-		const rowH = hasSub ? 46 : 34;
+		const rowH = this.opts.height ?? (hasSub ? 46 : 34);
 		return { width: Math.max(0, maxWidth), height: rowH };
 	}
 
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
-		let rightCursor = rect.x + rect.width - 8;
+		const padX = this.opts.paddingHorizontal ?? 10;
+		let rightCursor = rect.x + rect.width - Math.max(8, padX - 2);
 		for (let i = this.actionButtons.length - 1; i >= 0; i--) {
 			const btn = this.actionButtons[i];
 			if (btn === undefined || !btn.visible) continue;
@@ -292,10 +319,13 @@ class WakuOverlayRow extends GuiComponent {
 
 		const t = ctx.theme;
 		const hovered = this.isHovered();
-		const focused = this.isFocused();
+		const focused = this.isFocusVisible();
 
 		if (this.selectedState) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.surfaceSelected, 8);
+			if (this.opts.borderOnSelected) {
+				ctx.strokeRect(r.x, r.y, r.width, r.height, t.borderStrong, 1, 8);
+			}
 		} else if (hovered) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 8);
 		}
@@ -304,12 +334,13 @@ class WakuOverlayRow extends GuiComponent {
 		}
 
 		const indent = this.opts.indent ?? 0;
-		let cursorX = r.x + 10 + indent;
-		const rightBound = r.x + r.width - 10;
+		const padX = this.opts.paddingHorizontal ?? 10;
+		let cursorX = r.x + padX + indent;
+		const rightBound = r.x + r.width - padX;
 
 		if (this.opts.leadingIcon !== undefined) {
 			const iconSize = 14;
-			const iconColor = this.opts.active ? t.accent : t.textSecondary;
+			const iconColor = this.opts.active ? t.text : t.textSecondary;
 			drawVectorIcon(ctx, this.opts.leadingIcon, cursorX, r.y + (r.height - iconSize) * 0.5, iconSize, iconColor);
 			cursorX += iconSize + 8;
 		}
@@ -331,7 +362,7 @@ class WakuOverlayRow extends GuiComponent {
 				cx,
 				r.y + (r.height - checkSize) * 0.5,
 				checkSize,
-				this.opts.accentCheck !== false ? t.accent : t.textPrimary,
+				this.opts.accentCheck === true ? t.accent : t.textSecondary,
 			);
 			rightReserved += checkSize + 8;
 		}
@@ -339,32 +370,34 @@ class WakuOverlayRow extends GuiComponent {
 		if (this.opts.shortcut !== undefined && this.opts.shortcut.length > 0) {
 			const scStyle = { fontFamily: SGUI_FONT_MONO, fontSize: t.fontSizeSmall, fontWeight: 500 };
 			const scMetrics = ctx.measureText(scStyle, 0, this.opts.shortcut);
-			const scX = rightBound - rightReserved - scMetrics.width - 8;
-			ctx.fillRect(scX, r.y + (r.height - (scMetrics.lineHeight + 4)) * 0.5, scMetrics.width + 8, scMetrics.lineHeight + 4, t.surfaceMuted, 4);
+			const scW = Math.ceil(scMetrics.width);
+			const scX = rightBound - rightReserved - scW - 8;
+			ctx.fillRect(scX, r.y + (r.height - (scMetrics.lineHeight + 4)) * 0.5, scW + 8, scMetrics.lineHeight + 4, t.surfaceMuted, 4);
 			ctx.drawStyledText(
 				scX + 4,
 				r.y + (r.height - scMetrics.lineHeight) * 0.5,
-				scMetrics.width,
+				0,
 				t.textSecondary,
 				scStyle,
 				this.opts.shortcut,
 			);
-			rightReserved += scMetrics.width + 14;
+			rightReserved += scW + 14;
 		}
 
 		if (this.opts.badgeText !== undefined && this.opts.badgeText.length > 0) {
 			const badgeStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: t.fontSizeSmall, fontWeight: 500 };
 			const bMetrics = ctx.measureText(badgeStyle, 0, this.opts.badgeText);
-			const bx = rightBound - rightReserved - bMetrics.width - 6;
+			const bW = Math.ceil(bMetrics.width);
+			const bx = rightBound - rightReserved - bW - 6;
 			ctx.drawStyledText(
 				bx,
 				r.y + (r.height - bMetrics.lineHeight) * 0.5,
-				bMetrics.width + 4,
+				0,
 				t.textMuted,
 				badgeStyle,
 				this.opts.badgeText,
 			);
-			rightReserved += bMetrics.width + 12;
+			rightReserved += bW + 12;
 		}
 
 		const textAvailW = Math.max(20, rightBound - rightReserved - cursorX);
@@ -380,7 +413,7 @@ class WakuOverlayRow extends GuiComponent {
 			cursorX,
 			titleY,
 			textAvailW,
-			this.opts.active ? t.accent : t.textPrimary,
+			this.opts.active ? t.text : t.textPrimary,
 			titleStyle,
 			this.opts.label,
 		);
@@ -496,7 +529,7 @@ class ContextProgressBar extends GuiComponent {
 	}
 
 	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
-		return { width: Math.max(40, maxWidth), height: 8 };
+		return { width: Math.max(40, maxWidth), height: 3 };
 	}
 
 	render(ctx: GuiRenderContext): void {
@@ -508,10 +541,42 @@ class ContextProgressBar extends GuiComponent {
 		ctx.fillRect(r.x, r.y, r.width, r.height, t.surfaceMuted, radius);
 		const fillW = Math.max(this.ratioValue > 0 ? 4 : 0, r.width * this.ratioValue);
 		const barColor =
-			this.ratioValue >= 0.9 ? t.danger : this.ratioValue >= 0.75 ? t.warning : t.accent;
+			this.ratioValue >= 0.9 ? t.danger : this.ratioValue >= 0.75 ? t.warning : t.gauge;
 		if (fillW > 0) {
 			ctx.fillRect(r.x, r.y, Math.min(r.width, fillW), r.height, barColor, radius);
 		}
+	}
+}
+
+/** 30x30 provider icon tile with overlapping 10px status dot ringed in surfaceRaised. */
+class ProviderIconTile extends GuiComponent {
+	private readonly iconName: VectorIconName;
+	private readonly iconColor: Color;
+	private readonly dotColor: Color;
+	private readonly ringColor: Color;
+
+	constructor(iconName: VectorIconName, iconColor: Color, dotColor: Color, ringColor: Color) {
+		super();
+		this.iconName = iconName;
+		this.iconColor = iconColor;
+		this.dotColor = dotColor;
+		this.ringColor = ringColor;
+	}
+
+	measure(_ctx: GuiRenderContext, _maxWidth: number, _maxHeight?: number): Size {
+		return { width: 30, height: 30 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+		ctx.fillRect(r.x, r.y, 30, 30, ctx.theme.surfaceOverlay, 7);
+		drawVectorIcon(ctx, this.iconName, r.x + 7, r.y + 7, 16, this.iconColor);
+		const dotX = r.x + 22;
+		const dotY = r.y + 22;
+		ctx.fillRect(dotX, dotY, 10, 10, this.ringColor, 5);
+		ctx.fillRect(dotX + 2, dotY + 2, 6, 6, this.dotColor, 3);
 	}
 }
 
@@ -552,7 +617,7 @@ class CommitFileCheckRow extends GuiComponent {
 		if (this.isHovered()) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 6);
 		}
-		if (this.isFocused()) {
+		if (this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, 6, 0.2, 2);
 		}
 
@@ -665,6 +730,7 @@ class CommitFileCheckRow extends GuiComponent {
 }
 
 export type WakuCommandGroup =
+	| "Commands"
 	| "Sessions"
 	| "View"
 	| "Git"
@@ -682,6 +748,7 @@ export interface WakuCommandItem {
 }
 
 export interface WakuCommandPaletteOptions {
+	readonly initialQuery?: string;
 	readonly extensionCommands?: readonly WakuCommandItem[];
 	readonly onNewSession?: () => void | Promise<void>;
 	readonly onOpenSessionPicker?: () => void;
@@ -689,7 +756,7 @@ export interface WakuCommandPaletteOptions {
 	readonly onCompactContext?: () => void | Promise<void>;
 	readonly onToggleSidebar?: () => void;
 	readonly onToggleRightPanel?: () => void;
-	readonly onSwitchRightTab?: (tab: "changes" | "files" | "tree") => void;
+	readonly onSwitchRightTab?: (tab: "changes" | "files" | "terminal" | "tree") => void;
 	readonly onToggleDiffMode?: () => void;
 	readonly onToggleTheme?: () => void;
 	readonly onOpenGitBranch?: () => void;
@@ -702,6 +769,7 @@ export interface WakuCommandPaletteOptions {
 }
 
 const COMMAND_GROUP_ORDER: readonly WakuCommandGroup[] = [
+	"Commands",
 	"Sessions",
 	"View",
 	"Git",
@@ -724,18 +792,20 @@ function createModalSurfaceBox(theme: GuiTheme, child: GuiComponent, maxWidth: n
 	});
 }
 
-function addSectionHeader(container: VStack, label: string, theme: GuiTheme): void {
-	container.addChild(
-		new Box({
-			padding: { top: 8, bottom: 3, left: 8, right: 8 },
-			child: new Text({
-				text: label,
-				fontSize: theme.fontSizeSmall,
-				fontWeight: 600,
-				color: theme.textMuted,
-			}),
+function addSectionHeader(container: VStack, label: string, theme: GuiTheme, height?: number): Box {
+	const box = new Box({
+		height,
+		fillWidth: true,
+		padding: height === 30 ? { top: 10, right: 9, bottom: 0, left: 9 } : { top: 8, bottom: 3, left: 8, right: 8 },
+		child: new Text({
+			text: label,
+			fontSize: theme.fontSizeSmall,
+			fontWeight: 600,
+			color: theme.textMuted,
 		}),
-	);
+	});
+	container.addChild(box);
+	return box;
 }
 
 /**
@@ -752,7 +822,7 @@ export function openCommandPalette(
 	const actions: WakuCommandItem[] = [
 		{
 			id: "session.new",
-			group: "Sessions",
+			group: "Commands",
 			label: "New Session",
 			description: "Start a fresh conversation",
 			shortcut: "⌘N",
@@ -766,7 +836,7 @@ export function openCommandPalette(
 		},
 		{
 			id: "session.resume",
-			group: "Sessions",
+			group: "Commands",
 			label: "Switch / Resume Session",
 			description: "Browse sessions across workspaces",
 			shortcut: "⌘⇧O",
@@ -780,7 +850,7 @@ export function openCommandPalette(
 		},
 		{
 			id: "session.fork",
-			group: "Sessions",
+			group: "Commands",
 			label: "Fork Active Session",
 			description: "Branch from the current conversation",
 			run: async () => {
@@ -793,7 +863,7 @@ export function openCommandPalette(
 		},
 		{
 			id: "session.compact",
-			group: "Sessions",
+			group: "Commands",
 			label: "Compact Context",
 			description: "Summarize earlier turns to free context tokens",
 			run: async () => {
@@ -1008,10 +1078,43 @@ export function openCommandPalette(
 	}
 
 	let filteredActions: WakuCommandItem[] = actions.slice();
+	let currentQuery = options.initialQuery ?? "";
 	let selectedIdx = 0;
 	let rowHandles: WakuOverlayRow[] = [];
-	const listStack = new VStack({ gap: 2 });
-	const scrollView = new ScrollView({ child: listStack });
+	const listStack = new VStack({ gap: 0 });
+	const scrollView = new ScrollView({ child: listStack, overlayScrollbar: true });
+	const emptyBox = new Box({
+		height: 179,
+		fillWidth: true,
+		alignHorizontal: "center",
+		alignVertical: "center",
+		child: new VStack({
+			gap: 5,
+			align: "center",
+			justify: "center",
+			children: [
+				new VectorIcon({ name: "search", size: 18, color: theme.textDisabled }),
+				new Text({ text: "No matching tasks or commands", color: theme.textMuted, fontSize: theme.fontSizeBody }),
+			],
+		}),
+	});
+	const resultsBox = new Box({
+		fillWidth: true,
+		height: 420,
+		padding: { top: 0, right: 8, bottom: 8, left: 8 },
+		child: scrollView,
+	});
+	let cardBox: Box | undefined;
+	let firstSectionBox: Box | undefined;
+	let firstSectionLabel = "Commands";
+	let firstRowComp: WakuOverlayRow | undefined;
+	const searchBox = new Box({
+		height: 60,
+		fillWidth: true,
+		padding: { top: 0, right: 19, bottom: 0, left: 19 },
+		borderEdges: { bottom: 1 },
+		borderColor: theme.border,
+	});
 	let overlayHandle: OverlayHandle | undefined;
 
 	const runCommand = (item: WakuCommandItem | undefined): void => {
@@ -1029,7 +1132,42 @@ export function openCommandPalette(
 		}
 	};
 
+	const syncPaletteSpecChildren = (): void => {
+		if (filteredActions.length === 0) {
+			registerSpecChildren(resultsBox, () => [emptyBox]);
+			return;
+		}
+		const children: GuiComponent[] = [];
+		if (firstSectionBox !== undefined) {
+			annotateSpecNode(firstSectionBox, {
+				key: "command_palette.section.0",
+				role: "heading",
+				flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 0 },
+				size: { w: "fill", h: 30 },
+				padding: [10, 9, 0, 9],
+				text: { value: firstSectionLabel, wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+				skipChildren: true,
+			});
+			children.push(firstSectionBox);
+		}
+		if (firstRowComp !== undefined) {
+			annotateSpecNode(firstRowComp, {
+				key: "command_palette.row.0",
+				role: "button",
+				flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+				padding: [0, 11, 0, 11],
+				border: [1, 1, 1, 1],
+				size: { w: "fill", h: 44 },
+				state: () => (selectedIdx === 0 ? "active" : "default"),
+				skipChildren: true,
+			});
+			children.push(firstRowComp);
+		}
+		registerSpecChildren(resultsBox, () => children);
+	};
+
 	const rebuildList = (query: string): void => {
+		currentQuery = query;
 		filteredActions = fuzzyFilter(actions, query, (item) => `${item.group} ${item.label} ${item.description ?? ""}`);
 		if (filteredActions.length === 0) {
 			selectedIdx = 0;
@@ -1038,16 +1176,24 @@ export function openCommandPalette(
 		}
 		listStack.clear();
 		rowHandles = [];
+		firstSectionBox = undefined;
+		firstRowComp = undefined;
 
 		if (filteredActions.length === 0) {
-			listStack.addChild(
-				new Box({
-					padding: { vertical: 16, horizontal: 10 },
-					child: new Text({ text: "No matching commands", color: theme.textMuted, fontSize: theme.fontSizeBody }),
-				}),
-			);
+			cardBox?.setHeight(240);
+			searchBox.setHeight(59);
+			resultsBox.setHeight(179);
+			resultsBox.setPadding({ top: 0, right: 8, bottom: 0, left: 8 });
+			resultsBox.setChild(emptyBox);
+			syncPaletteSpecChildren();
 			return;
 		}
+
+		cardBox?.setHeight(480);
+		searchBox.setHeight(60);
+		resultsBox.setHeight(419);
+		resultsBox.setPadding({ top: 0, right: 8, bottom: 8, left: 8 });
+		resultsBox.setChild(scrollView);
 
 		let flatIdx = 0;
 		for (let gi = 0; gi < COMMAND_GROUP_ORDER.length; gi++) {
@@ -1056,7 +1202,11 @@ export function openCommandPalette(
 			const groupItems = filteredActions.filter((item) => item.group === groupName);
 			if (groupItems.length === 0) continue;
 
-			addSectionHeader(listStack, groupName, theme);
+			const sectionBox = addSectionHeader(listStack, groupName, theme, 30);
+			if (firstSectionBox === undefined) {
+				firstSectionBox = sectionBox;
+				firstSectionLabel = groupName;
+			}
 			for (let ii = 0; ii < groupItems.length; ii++) {
 				const cmd = groupItems[ii];
 				if (cmd === undefined) continue;
@@ -1066,17 +1216,29 @@ export function openCommandPalette(
 					label: cmd.label,
 					subtitle: cmd.description,
 					shortcut: cmd.shortcut,
+					height: 44,
+					paddingHorizontal: 11,
+					borderOnSelected: true,
 					selected: currentFlatIdx === selectedIdx,
 					onClick: () => runCommand(cmd),
 				});
+				if (firstRowComp === undefined) {
+					firstRowComp = row;
+				}
 				rowHandles.push(row);
 				listStack.addChild(row);
 			}
 		}
+		syncPaletteSpecChildren();
 	};
 
 	const searchInput = new ModalSearchInput({
-		placeholder: "Type a command or search...",
+		value: currentQuery,
+		variant: "chromeless",
+		padding: 0,
+		height: 59,
+		placeholder: "Search tasks or run a command…",
+		a11yLabel: "Search tasks or run a command…",
 		onChange: (value) => {
 			selectedIdx = 0;
 			rebuildList(value);
@@ -1094,46 +1256,93 @@ export function openCommandPalette(
 		},
 	});
 
-	rebuildList("");
-
-	const headerRow = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			new Text({ text: "Command Palette", fontSize: theme.fontSizeSmall, fontWeight: 600, color: theme.textMuted }),
-			{ child: new Spacer(), grow: 1 },
-			new IconButton({
-				icon: "close",
-				size: 24,
-				iconSize: 12,
-				label: "Close",
-				onClick: () => overlayHandle?.hide(),
-			}),
-		],
-	});
+	searchBox.setChild(
+		new HStack({
+			gap: 10,
+			align: "center",
+			children: [
+				new VectorIcon({ name: "search", size: 16, color: theme.textMuted }),
+				{ child: searchInput, grow: 1, shrink: 1 },
+			],
+		}),
+	);
 
 	const body = new VStack({
-		gap: 10,
+		gap: 0,
+		align: "stretch",
 		children: [
-			headerRow,
-			searchInput,
-			new Divider(),
-			new Box({ maxHeight: 340, fillWidth: true, child: scrollView }),
+			searchBox,
+			resultsBox,
 		],
 	});
 
-	overlayHandle = app.showOverlay(createModalSurfaceBox(theme, body, 560), {
+	cardBox = new Box({
+		width: 680,
+		height: 480,
+		maxWidth: 680,
+		maxHeight: 480,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 15,
+		shadow: "lg",
+		padding: 0,
+		clip: true,
+		child: body,
+	});
+	rebuildList(currentQuery);
+
+	annotateSpecNode(cardBox, {
+		key: "command_palette.card",
+		role: "dialog",
+		z: 200,
+		border: [0, 0, 0, 0],
+		padding: [0, 0, 0, 0],
+		size: () => ({ w: 680, h: filteredActions.length === 0 ? 240 : 480 }),
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		state: () => (filteredActions.length === 0 ? "empty" : currentQuery.trim().length > 0 ? "filtered" : "default"),
+		text: { value: "Command Palette", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(searchBox, {
+		key: "command_palette.search",
+		role: "textbox",
+		size: { w: "fill", h: 60 },
+		padding: [0, 19, 0, 19],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Search tasks or run a command…", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	annotateSpecNode(resultsBox, {
+		key: "command_palette.results",
+		role: "list",
+		overflow: "auto",
+		size: { w: "fill", h: "fill" },
+		padding: [0, 8, 8, 8],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+	});
+	annotateSpecNode(emptyBox, {
+		key: "command_palette.empty",
+		role: "region",
+		size: { w: "fill", h: 180 },
+		flow: { type: "flex", dir: "column", justify: "center", align: "center", wrap: "nowrap", gap: 5 },
+		text: { value: "No matching tasks or commands", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	registerSpecChildren(cardBox, () => [searchBox, resultsBox]);
+
+	overlayHandle = app.showOverlay(cardBox, {
 		anchor: "top-center",
-		offsetY: 42,
-		width: "90%",
-		maxWidth: 560,
-		maxHeight: 460,
+		offsetY: 56,
+		margin: 16,
+		width: 680,
+		maxWidth: 680,
+		maxHeight: 480,
 		modal: true,
-		radius: 12,
+		radius: 15,
 		shadow: "lg",
 		dismissOnBackdropClick: true,
 		dismissOnEscape: true,
-		backdropColor: withAlpha(theme.background, 0.42),
+		backdropColor: withAlpha(theme.shadow, theme.dark ? 0.45 : 0.16),
 		onDismiss: options.onDismiss,
 	});
 	app.setFocus(searchInput);
@@ -1141,13 +1350,16 @@ export function openCommandPalette(
 }
 
 export interface WakuModelPickerOptions {
+	readonly anchorRect?: Rect;
+	readonly initialFavoritesOnly?: boolean;
+	readonly initialQuery?: string;
 	readonly onOpenSettings?: () => void;
 	readonly onDismiss?: () => void;
 }
 
 /**
- * Open Waku ⌘M Searchable Model Picker grouped by provider with Coral active checkmark,
- * keyboard ↑/↓/Enter/Esc navigation, and "Open Settings" action.
+ * Open Waku 460x390 Anchored Model Picker Popover with left 50px provider/favorites rail,
+ * Escape-clears-search-first behavior, and keyboard navigation.
  */
 export function openModelPicker(
 	app: GuiApp,
@@ -1157,10 +1369,40 @@ export function openModelPicker(
 	const theme = app.getTheme();
 	const models = controller.getAvailableModels();
 	const active = controller.getStatus().activeModel;
-	let filteredModels: GuiModelSummary[] = models.slice();
+	const uniqueProviders: string[] = [];
+	for (let i = 0; i < models.length; i++) {
+		const m = models[i];
+		if (m !== undefined && !uniqueProviders.includes(m.provider)) {
+			uniqueProviders.push(m.provider);
+		}
+	}
+	const defaultProvider =
+		active !== undefined && uniqueProviders.includes(active.provider) ? active.provider : uniqueProviders[0];
+	let favoritesOnly = options.initialFavoritesOnly ?? false;
+	let selectedProvider: string | undefined = favoritesOnly ? undefined : defaultProvider;
+	let searchQuery = options.initialQuery ?? "";
+	let searchClearedState = false;
+	const favoriteKeys = new Set<string>();
+	if (active !== undefined) {
+		favoriteKeys.add(`${active.provider}/${active.id}`);
+	}
+	if (models[0] !== undefined) {
+		favoriteKeys.add(`${models[0].provider}/${models[0].id}`);
+	}
+
+	const initialBase = models.filter((m) => {
+		if (favoritesOnly && !favoriteKeys.has(`${m.provider}/${m.id}`)) {
+			return false;
+		}
+		if (selectedProvider !== undefined && m.provider !== selectedProvider) {
+			return false;
+		}
+		return true;
+	});
+	let filteredModels: GuiModelSummary[] = initialBase;
 	let selectedIdx = Math.max(
 		0,
-		filteredModels.findIndex((m) => active !== undefined && m.provider === active.provider && m.id === active.id),
+		initialBase.findIndex((m) => active !== undefined && m.provider === active.provider && m.id === active.id),
 	);
 	let rowHandles: WakuOverlayRow[] = [];
 	const listStack = new VStack({ gap: 2 });
@@ -1183,7 +1425,20 @@ export function openModelPicker(
 	};
 
 	const rebuildList = (query: string): void => {
-		const rawFiltered = fuzzyFilter(models, query, (m) => `${m.provider} ${m.id} ${m.name} ${m.description}`);
+		searchQuery = query;
+		const searching = query.trim().length > 0;
+		const baseModels = searching
+			? models
+			: models.filter((m) => {
+					if (favoritesOnly && !favoriteKeys.has(`${m.provider}/${m.id}`)) {
+						return false;
+					}
+					if (selectedProvider !== undefined && m.provider !== selectedProvider) {
+						return false;
+					}
+					return true;
+				});
+		const rawFiltered = fuzzyFilter(baseModels, query, (m) => `${m.provider} ${m.id} ${m.name} ${m.description}`);
 		listStack.clear();
 		rowHandles = [];
 		filteredModels = [];
@@ -1192,13 +1447,15 @@ export function openModelPicker(
 			listStack.addChild(
 				new Box({
 					padding: { vertical: 16, horizontal: 10 },
-					child: new Text({ text: "No matching models", color: theme.textMuted }),
+					child: new Text({
+						text: favoritesOnly && !searching ? "No favorite models" : "No matching models",
+						color: theme.textMuted,
+					}),
 				}),
 			);
 			return;
 		}
 
-		// Group stably by provider order
 		const providerOrder: string[] = [];
 		const grouped = new Map<string, GuiModelSummary[]>();
 		for (let i = 0; i < rawFiltered.length; i++) {
@@ -1240,14 +1497,34 @@ export function openModelPicker(
 				const idx = flatIdx;
 				flatIdx += 1;
 				const isActive = active !== undefined && active.provider === model.provider && active.id === model.id;
+				const modelKey = `${model.provider}/${model.id}`;
+				const isFav = favoriteKeys.has(modelKey);
+				const favRowBtn = new IconButton({
+					icon: isFav ? "star-filled" : "star",
+					size: 28,
+					iconSize: 14,
+					radius: 6,
+					color: isFav ? theme.favorite : theme.textDisabled,
+					hoverBackground: theme.surfaceOverlayStrong,
+					label: `${isFav ? "Unfavorite" : "Favorite"} ${model.name || model.id}`,
+					onClick: () => {
+						if (favoriteKeys.has(modelKey)) {
+							favoriteKeys.delete(modelKey);
+						} else {
+							favoriteKeys.add(modelKey);
+						}
+						rebuildList(searchInput.getValue());
+					},
+				});
 				const row = new WakuOverlayRow({
 					label: model.name || model.id,
 					subtitle: model.description,
 					badgeText: model.reasoning ? "Reasoning" : model.id,
 					checked: isActive,
 					active: isActive,
-					accentCheck: true,
+					accentCheck: false,
 					selected: idx === selectedIdx,
+					trailingActions: [favRowBtn],
 					onClick: () => chooseModel(model),
 				});
 				rowHandles.push(row);
@@ -1256,10 +1533,20 @@ export function openModelPicker(
 		}
 	};
 
+	let syncRailSelection = (): void => {};
+
 	const searchInput = new ModalSearchInput({
-		placeholder: "Search models by provider or name...",
+		value: searchQuery,
+		variant: "chromeless",
+		padding: 0,
+		height: 34,
+		placeholder: "Search Models",
+		a11yLabel: "Search Models",
 		onChange: (query) => {
+			searchClearedState = false;
 			selectedIdx = 0;
+			searchQuery = query;
+			syncRailSelection();
 			rebuildList(query);
 		},
 		onNavigate: (delta) => {
@@ -1271,80 +1558,864 @@ export function openModelPicker(
 			chooseModel(filteredModels[selectedIdx]);
 		},
 		onCancel: () => {
+			if (searchInput.getValue().length > 0) {
+				searchQuery = "";
+				searchClearedState = true;
+				searchInput.setValue("");
+				selectedIdx = 0;
+				syncRailSelection();
+				rebuildList("");
+				return;
+			}
 			overlayHandle?.hide();
 		},
 	});
 
-	rebuildList("");
-
-	const header = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			new Text({ text: "Select Model", fontSize: theme.fontSizeHeading, fontWeight: 600, color: theme.textBright }),
-			{ child: new Spacer(), grow: 1 },
-			new IconButton({
-				icon: "close",
-				size: 26,
-				iconSize: 13,
-				label: "Close",
-				onClick: () => overlayHandle?.hide(),
-			}),
-		],
+	const searchFrameBox = new Box({
+		height: 34,
+		fillWidth: true,
+		padding: { top: 0, right: 10, bottom: 0, left: 10 },
+		radius: 9,
+		borderWidth: 0,
+		background: theme.surface,
+		child: new HStack({
+			gap: 8,
+			align: "center",
+			children: [
+				new VectorIcon({ name: "search", size: 14, color: theme.textMuted }),
+				{ child: searchInput, grow: 1, shrink: 1 },
+			],
+		}),
+	});
+	const searchMarginBox = new Box({
+		fillWidth: true,
+		padding: { top: 10, right: 12, bottom: 8, left: 12 },
+		child: searchFrameBox,
 	});
 
-	const footer = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			new Button({
-				label: "Open Settings",
-				variant: "ghost",
-				leadingIcon: "sliders",
+	const providerTabs: IconButton[] = [];
+	const isSearchingNow = (): boolean => searchQuery.trim().length > 0;
+
+	const favBtn = new IconButton({
+		icon: "star",
+		size: 38,
+		iconSize: 17,
+		radius: 7,
+		active: favoritesOnly && !isSearchingNow(),
+		activeBackground: theme.surfaceOverlayStrong,
+		hoverBackground: theme.surfaceOverlay,
+		label: "Filter Favorite Models",
+		onClick: () => {
+			const wasSearching = searchInput.getValue().trim().length > 0;
+			if (wasSearching) {
+				searchQuery = "";
+				searchInput.setValue("");
+				favoritesOnly = true;
+				selectedProvider = undefined;
+				searchClearedState = false;
+			} else {
+				favoritesOnly = !favoritesOnly;
+				if (favoritesOnly) {
+					selectedProvider = undefined;
+					searchClearedState = false;
+				} else if (selectedProvider === undefined) {
+					selectedProvider = defaultProvider;
+				}
+			}
+			syncRailSelection();
+			rebuildList(searchInput.getValue());
+		},
+	});
+
+	for (let i = 0; i < uniqueProviders.length; i++) {
+		const prov = uniqueProviders[i];
+		if (prov === undefined) continue;
+		providerTabs.push(
+			new IconButton({
+				icon: providerIconForId(prov),
+				size: 38,
+				iconSize: 18,
+				radius: 7,
+				active: !favoritesOnly && !isSearchingNow() && selectedProvider === prov,
+				activeBackground: theme.surfaceOverlayStrong,
+				hoverBackground: theme.surfaceOverlay,
+				label: `Filter ${prov}`,
 				onClick: () => {
-					overlayHandle?.hide();
-					if (options.onOpenSettings) {
-						options.onOpenSettings();
+					const wasSearching = searchInput.getValue().trim().length > 0;
+					favoritesOnly = false;
+					searchClearedState = false;
+					if (wasSearching) {
+						searchQuery = "";
+						searchInput.setValue("");
+						selectedProvider = prov;
 					} else {
-						openSettingsModal(app, controller);
+						selectedProvider = selectedProvider === prov ? undefined : prov;
 					}
+					syncRailSelection();
+					rebuildList(searchInput.getValue());
 				},
 			}),
-			{ child: new Spacer(), grow: 1 },
-			new Button({
-				label: "Close",
-				variant: "secondary",
-				onClick: () => overlayHandle?.hide(),
-			}),
-		],
+		);
+	}
+
+	syncRailSelection = (): void => {
+		const searching = isSearchingNow();
+		favBtn.setActive(favoritesOnly && !searching);
+		for (let i = 0; i < uniqueProviders.length; i++) {
+			const prov = uniqueProviders[i];
+			const btn = providerTabs[i];
+			if (prov !== undefined && btn !== undefined) {
+				btn.setActive(!favoritesOnly && !searching && selectedProvider === prov);
+			}
+		}
+	};
+
+	const settingsRailBtn = new IconButton({
+		icon: "sliders",
+		size: 34,
+		iconSize: 14,
+		label: "Open Settings",
+		onClick: () => {
+			overlayHandle?.hide();
+			if (options.onOpenSettings) {
+				options.onOpenSettings();
+			} else {
+				openSettingsModal(app, controller, { initialCategory: "providers" });
+			}
+		},
 	});
 
-	const body = new VStack({
-		gap: 10,
+	const railDivider = new Box({
+		width: 34,
+		height: 1,
+		background: theme.borderStrong,
+	});
+	const railCol = new VStack({
+		gap: 4,
+		align: "center",
 		children: [
-			header,
-			searchInput,
-			new Box({ maxHeight: 310, fillWidth: true, child: scrollView }),
-			new Divider(),
-			footer,
+			favBtn,
+			new Box({ padding: { top: 3, right: 0, bottom: 3, left: 0 }, child: railDivider }),
+			...providerTabs,
+			{ child: new Spacer(), grow: 1 },
+			settingsRailBtn,
+		],
+	});
+	const railBox = new Box({
+		width: 50,
+		fillHeight: true,
+		background: theme.background,
+		cornerRadii: { tl: 11, tr: 0, br: 0, bl: 11 },
+		padding: 5,
+		borderEdges: { right: 1 },
+		borderColor: theme.border,
+		child: railCol,
+	});
+
+	const listBox = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		padding: 9,
+		child: scrollView,
+	});
+
+	const rightCol = new VStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			searchMarginBox,
+			{ child: listBox, grow: 1, shrink: 1 },
+		],
+	});
+	const rightPaneBox = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		background: theme.surfaceRaised,
+		cornerRadii: { tl: 0, tr: 11, br: 11, bl: 0 },
+		padding: 0,
+		child: rightCol,
+	});
+
+	const splitRow = new HStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			railBox,
+			{ child: rightPaneBox, grow: 1, shrink: 1 },
 		],
 	});
 
-	overlayHandle = app.showOverlay(createModalSurfaceBox(theme, body, 560), {
-		anchor: "top-center",
-		offsetY: 56,
-		width: "88%",
-		maxWidth: 560,
-		maxHeight: 490,
+	const popoverBox = new Box({
+		width: 460,
+		height: 390,
+		background: theme.background,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 12,
+		shadow: "lg",
+		padding: 0,
+		clip: true,
+		child: splitRow,
+	});
+
+	rebuildList(searchQuery);
+
+	annotateSpecNode(popoverBox, {
+		key: "popover.model_picker",
+		role: "dialog",
+		z: 100,
+		variant: "anchored-popover",
+		size: { w: 460, h: 390 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		state: () => (searchClearedState ? "search-cleared" : favoritesOnly ? "favorites" : "default"),
+		text: { value: "Model Picker Popover", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(railBox, {
+		key: "popover.model_picker.rail",
+		role: "toolbar",
+		size: { w: 50, h: "fill" },
+		padding: [5, 5, 5, 5],
+		border: [0, 1, 0, 0],
+		flow: { type: "flex", dir: "column", justify: "start", align: "center", wrap: "nowrap", gap: 4 },
+		text: { value: "Model Provider Rail", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(favBtn, {
+		key: "popover.model_picker.rail.favorites",
+		role: "button",
+		variant: "rail-tab",
+		size: { w: 38, h: 38 },
+		state: () => (favoritesOnly ? "active" : "default"),
+		text: { value: "Filter Favorite Models", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(searchFrameBox, {
+		key: "popover.model_picker.search",
+		role: "textbox",
+		margin: [10, 12, 8, 12],
+		padding: [0, 10, 0, 10],
+		border: [0, 0, 0, 0],
+		size: { w: "fill", h: 34 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Search Models", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	annotateSpecNode(listBox, {
+		key: "popover.model_picker.list",
+		role: "list",
+		overflow: "auto",
+		size: { w: "fill", h: "fill" },
+		padding: [9, 9, 9, 9],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 2 },
+		skipChildren: true,
+	});
+	registerSpecChildren(popoverBox, () => [railBox, searchFrameBox, listBox]);
+	registerSpecChildren(railBox, () => [favBtn]);
+
+	overlayHandle = app.showOverlay(popoverBox, {
+		anchor: options.anchorRect ? undefined : "center",
+		anchorRect: options.anchorRect,
+		width: 460,
+		height: 390,
+		maxWidth: 460,
+		maxHeight: 390,
 		modal: true,
 		radius: 12,
 		shadow: "lg",
 		dismissOnBackdropClick: true,
 		dismissOnEscape: true,
-		backdropColor: withAlpha(theme.background, 0.45),
+		backdropColor: withAlpha(theme.background, 0.35),
 		onDismiss: options.onDismiss,
 	});
 	app.setFocus(searchInput);
+	return overlayHandle;
+}
+
+/**
+ * Open Sidebar Options Popover (Group by: Updated | Project, Order by: Newest | Oldest).
+ */
+export function openSidebarOptionsPopover(
+	app: GuiApp,
+	controller: GuiSessionController,
+	options: { readonly anchorRect?: Rect; readonly onDismiss?: () => void } = {},
+): OverlayHandle {
+	const theme = app.getTheme();
+	const layout = controller.getSnapshot().layout;
+	const orderBy = layout.sidebarOrderBy ?? "newest";
+	let overlayHandle: OverlayHandle | undefined;
+
+	const mkMenuBtn = (label: string, active: boolean, onClick: () => void): WakuOverlayRow =>
+		new WakuOverlayRow({
+			label,
+			leadingIcon: active ? "check" : undefined,
+			height: 26,
+			paddingHorizontal: 8,
+			borderOnSelected: false,
+			selected: active,
+			onClick,
+		});
+
+	const groupHeading = new Box({
+		height: 26,
+		fillWidth: true,
+		padding: { top: 0, right: 8, bottom: 0, left: 8 },
+		alignVertical: "center",
+		child: new Text({
+			text: "Group by",
+			fontSize: 11,
+			fontWeight: 600,
+			color: theme.textMuted,
+			wrap: false,
+		}),
+	});
+	const updatedBtn = mkMenuBtn("Updated", layout.sidebarGroupBy === "updated", () => {
+		controller.updateLayoutPreferences({ sidebarGroupBy: "updated" });
+		overlayHandle?.hide();
+	});
+	const projectBtn = mkMenuBtn("Project", layout.sidebarGroupBy === "project", () => {
+		controller.updateLayoutPreferences({ sidebarGroupBy: "project" });
+		overlayHandle?.hide();
+	});
+	const orderHeading = new Box({
+		height: 26,
+		fillWidth: true,
+		padding: { top: 3, right: 8, bottom: 2, left: 8 },
+		alignVertical: "start",
+		child: new VStack({
+			gap: 4,
+			align: "stretch",
+			children: [
+				new Box({ height: 1, fillWidth: true, background: theme.borderStrong }),
+				new Text({
+					text: "Order by",
+					fontSize: 11,
+					fontWeight: 600,
+					color: theme.textMuted,
+					wrap: false,
+				}),
+			],
+		}),
+	});
+	const newestBtn = mkMenuBtn("Newest", orderBy === "newest", () => {
+		controller.updateLayoutPreferences({ sidebarOrderBy: "newest" });
+		overlayHandle?.hide();
+	});
+	const oldestBtn = mkMenuBtn("Oldest", orderBy === "oldest", () => {
+		controller.updateLayoutPreferences({ sidebarOrderBy: "oldest" });
+		overlayHandle?.hide();
+	});
+
+	const stack = new VStack({
+		gap: 2,
+		align: "stretch",
+		children: [groupHeading, updatedBtn, projectBtn, orderHeading, newestBtn, oldestBtn],
+	});
+	const menuBox = new Box({
+		width: 200,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 10,
+		shadow: "md",
+		padding: 4,
+		child: stack,
+	});
+
+	annotateSpecNode(menuBox, {
+		key: "popover.sidebar_options",
+		role: "menu",
+		z: 100,
+		size: { w: "hug", h: "hug" },
+		padding: [4, 4, 4, 4],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 2 },
+	});
+	annotateSpecNode(groupHeading, {
+		key: "popover.sidebar_options.group_by",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "between", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Group by", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(updatedBtn, {
+		key: "popover.sidebar_options.updated",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Updated", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(projectBtn, {
+		key: "popover.sidebar_options.project",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Project", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(orderHeading, {
+		key: "popover.sidebar_options.order_by",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "between", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Order by", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(newestBtn, {
+		key: "popover.sidebar_options.newest",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Newest", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(oldestBtn, {
+		key: "popover.sidebar_options.oldest",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Oldest", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	registerSpecChildren(menuBox, () => [groupHeading, updatedBtn, projectBtn, orderHeading, newestBtn, oldestBtn]);
+
+	overlayHandle = app.showOverlay(menuBox, {
+		anchor: options.anchorRect ? undefined : "center",
+		anchorRect: options.anchorRect,
+		width: 200,
+		maxWidth: 220,
+		modal: true,
+		radius: 10,
+		shadow: "md",
+		dismissOnBackdropClick: true,
+		dismissOnEscape: true,
+		backdropColor: withAlpha(theme.background, 0.12),
+		onDismiss: options.onDismiss,
+	});
+	return overlayHandle;
+}
+
+/**
+ * Open Reasoning Effort / Thinking Level Picker Popover anchored above the Thinking chip.
+ */
+export function openThinkingPicker(
+	app: GuiApp,
+	controller: GuiSessionController,
+	options: { readonly anchorRect?: Rect; readonly onDismiss?: () => void } = {},
+): OverlayHandle {
+	const theme = app.getTheme();
+	const status = controller.getStatus();
+	const currentLevel = status.thinkingLevel;
+	let overlayHandle: OverlayHandle | undefined;
+
+	const headerText = new Box({
+		height: 24,
+		fillWidth: true,
+		padding: { top: 2, right: 6, bottom: 2, left: 6 },
+		child: new Text({ text: "Reasoning", fontSize: 11, fontWeight: 600, color: theme.textMuted }),
+	});
+
+	const levels: readonly { readonly id: ThinkingLevel; readonly label: string }[] = [
+		{ id: "off", label: "Off" },
+		{ id: "low", label: "Low" },
+		{ id: "medium", label: "Medium" },
+		{ id: "high", label: "High" },
+		{ id: "xhigh", label: "Xhigh" },
+	];
+
+	const children: GuiComponent[] = [headerText];
+	let mediumBtn: WakuOverlayRow | undefined;
+	for (let i = 0; i < levels.length; i++) {
+		const item = levels[i];
+		if (item === undefined) continue;
+		const isCur = item.id === currentLevel;
+		const row = new WakuOverlayRow({
+			label: item.label,
+			height: 26,
+			paddingHorizontal: 8,
+			checked: isCur,
+			active: isCur,
+			accentCheck: false,
+			selected: false,
+			borderOnSelected: false,
+			onClick: () => {
+				controller.setThinkingLevel(item.id);
+				overlayHandle?.hide();
+			},
+		});
+		if (item.id === "medium") {
+			mediumBtn = row;
+		}
+		children.push(row);
+	}
+
+	const menuBox = new Box({
+		width: 200,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 10,
+		shadow: "md",
+		padding: 6,
+		child: new VStack({ gap: 2, align: "stretch", children }),
+	});
+
+	annotateSpecNode(menuBox, {
+		key: "popover.thinking_picker",
+		role: "menu",
+		z: 100,
+		size: { w: "hug", h: "hug" },
+		padding: [6, 6, 6, 6],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 2 },
+	});
+	annotateSpecNode(headerText, {
+		key: "popover.thinking_picker.header",
+		role: "heading",
+		size: { w: "fill", h: 24 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "inline" },
+		text: { value: "Reasoning", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	if (mediumBtn !== undefined) {
+		annotateSpecNode(mediumBtn, {
+			key: "popover.thinking_picker.option.medium",
+			role: "menuitem",
+			size: { w: "fill", h: 26 },
+			padding: [0, 0, 0, 0],
+			flow: { type: "flex", dir: "row", justify: "between", align: "center", wrap: "nowrap", gap: 8 },
+			text: { value: "Medium", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		});
+		registerSpecChildren(menuBox, () => [headerText, mediumBtn!]);
+	} else {
+		registerSpecChildren(menuBox, () => [headerText]);
+	}
+
+	overlayHandle = app.showOverlay(menuBox, {
+		anchor: options.anchorRect ? undefined : "center",
+		anchorRect: options.anchorRect,
+		width: 200,
+		maxWidth: 220,
+		modal: true,
+		radius: 10,
+		shadow: "md",
+		dismissOnBackdropClick: true,
+		dismissOnEscape: true,
+		backdropColor: withAlpha(theme.background, 0.12),
+		onDismiss: options.onDismiss,
+	});
+	return overlayHandle;
+}
+
+/**
+ * Open Project Picker Popover anchored above the Project chip in the workspace footer.
+ */
+export function openProjectPicker(
+	app: GuiApp,
+	controller: GuiSessionController,
+	options: { readonly anchorRect?: Rect; readonly onDismiss?: () => void } = {},
+): OverlayHandle {
+	const theme = app.getTheme();
+	const snap = controller.getSnapshot();
+	let overlayHandle: OverlayHandle | undefined;
+
+	const activeProject = basename(snap.status.cwd) || snap.status.cwd;
+	const projectSet = new Set<string>();
+	if (activeProject) projectSet.add(activeProject);
+	for (let i = 0; i < snap.sessions.length; i++) {
+		const s = snap.sessions[i];
+		if (s?.workspaceName) projectSet.add(s.workspaceName);
+	}
+	const projects = Array.from(projectSet);
+	const listStack = new VStack({ gap: 0, align: "stretch" });
+	const scrollView = new ScrollView({ child: listStack });
+	const listContainer = new Box({
+		height: Math.min(Math.max(1, projects.length), 11) * 26,
+		maxHeight: 11 * 26,
+		fillWidth: true,
+		padding: { horizontal: 4 },
+		child: scrollView,
+	});
+
+	const rebuildProjects = (query: string): void => {
+		const filtered = fuzzyFilter(projects, query, (p) => p);
+		listStack.clear();
+		if (filtered.length === 0) {
+			listContainer.setHeight(64);
+			listStack.addChild(
+				new Box({
+					height: 64,
+					fillWidth: true,
+					alignHorizontal: "center",
+					alignVertical: "center",
+					child: new Text({ text: "No projects found", fontSize: 12.5, color: theme.textDisabled }),
+				}),
+			);
+			return;
+		}
+		listContainer.setHeight(Math.min(filtered.length, 11) * 26);
+		for (let i = 0; i < filtered.length; i++) {
+			const name = filtered[i];
+			if (name === undefined) continue;
+			const isCur = name === activeProject;
+			listStack.addChild(
+				new WakuOverlayRow({
+					label: name,
+					height: 26,
+					paddingHorizontal: 8,
+					checked: isCur,
+					active: isCur,
+					accentCheck: false,
+					selected: isCur,
+					borderOnSelected: false,
+					onClick: () => overlayHandle?.hide(),
+				}),
+			);
+		}
+	};
+
+	const searchInput = new ModalSearchInput({
+		variant: "chromeless",
+		padding: 0,
+		height: 28,
+		placeholder: "Search projects",
+		a11yLabel: "Search projects",
+		onChange: (q) => rebuildProjects(q),
+		onNavigate: () => {},
+		onConfirm: () => overlayHandle?.hide(),
+		onCancel: () => overlayHandle?.hide(),
+	});
+	const searchFrame = new Box({
+		height: 28,
+		fillWidth: true,
+		padding: { top: 0, right: 10, bottom: 0, left: 10 },
+		radius: 9,
+		borderWidth: 0,
+		background: theme.surface,
+		child: new HStack({
+			gap: 8,
+			align: "center",
+			children: [
+				new VectorIcon({ name: "search", size: 12, color: theme.textSecondary }),
+				{ child: searchInput, grow: 1, shrink: 1 },
+			],
+		}),
+	});
+	const searchOuter = new Box({
+		fillWidth: true,
+		padding: { top: 10, right: 12, bottom: 8, left: 12 },
+		child: searchFrame,
+	});
+
+	rebuildProjects("");
+
+	const newProjectBtn = new Button({
+		label: "New Project…",
+		a11yLabel: "New Project…",
+		variant: "ghost",
+		height: 26,
+		fillWidth: true,
+		align: "start",
+		leadingIcon: "folder-new",
+		iconSize: 12,
+		fontSize: 12,
+		padding: { vertical: 0, horizontal: 8 },
+		onClick: () => {
+			overlayHandle?.hide();
+			void controller.newSession();
+		},
+	});
+	const noProjectBtn = new Button({
+		label: "No Project",
+		a11yLabel: "No Project",
+		variant: "ghost",
+		height: 26,
+		fillWidth: true,
+		align: "start",
+		leadingIcon: "close",
+		iconSize: 12,
+		fontSize: 12,
+		padding: { vertical: 0, horizontal: 8 },
+		onClick: () => overlayHandle?.hide(),
+	});
+
+	const popoverBox = new Box({
+		width: 300,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 10,
+		shadow: "md",
+		padding: { top: 0, right: 0, bottom: 4, left: 0 },
+		child: new VStack({
+			gap: 0,
+			align: "stretch",
+			children: [
+				searchOuter,
+				listContainer,
+				new Box({ fillWidth: true, padding: { top: 4, right: 6, bottom: 4, left: 6 }, child: new Divider() }),
+				new Box({ fillWidth: true, padding: { horizontal: 4 }, child: newProjectBtn }),
+				new Box({ fillWidth: true, padding: { horizontal: 4 }, child: noProjectBtn }),
+			],
+		}),
+	});
+
+	annotateSpecNode(popoverBox, {
+		key: "popover.project_picker",
+		role: "dialog",
+		z: 100,
+		size: { w: 300, h: "hug" },
+		padding: [0, 0, 4, 0],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		text: { value: "Project Picker Popover", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(searchFrame, {
+		key: "popover.project_picker.search",
+		role: "textbox",
+		margin: [10, 12, 8, 12],
+		padding: [0, 10, 0, 10],
+		border: [0, 0, 0, 0],
+		size: { w: "fill", h: 28 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Search projects", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	annotateSpecNode(newProjectBtn, {
+		key: "popover.project_picker.new_project",
+		role: "button",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "New Project…", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(noProjectBtn, {
+		key: "popover.project_picker.no_project",
+		role: "button",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "No Project", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	registerSpecChildren(popoverBox, () => [searchFrame, newProjectBtn, noProjectBtn]);
+
+	overlayHandle = app.showOverlay(popoverBox, {
+		anchor: options.anchorRect ? undefined : "center",
+		anchorRect: options.anchorRect,
+		width: 300,
+		maxWidth: 320,
+		modal: true,
+		radius: 10,
+		shadow: "md",
+		dismissOnBackdropClick: true,
+		dismissOnEscape: true,
+		backdropColor: withAlpha(theme.background, 0.12),
+		onDismiss: options.onDismiss,
+	});
+	app.setFocus(searchInput);
+	return overlayHandle;
+}
+
+/**
+ * Open Workspace Mode Picker Popover (`Local`, `New worktree`).
+ */
+export function openWorkspacePicker(
+	app: GuiApp,
+	_controller: GuiSessionController,
+	options: { readonly anchorRect?: Rect; readonly onSelectMode?: (mode: "local" | "worktree") => void; readonly onDismiss?: () => void } = {},
+): OverlayHandle {
+	const theme = app.getTheme();
+	let overlayHandle: OverlayHandle | undefined;
+
+	const headerBox = new Box({
+		height: 22,
+		fillWidth: true,
+		padding: { horizontal: 6, top: 2 },
+		child: new Text({ text: "Work in", fontSize: 11, fontWeight: 600, color: theme.textMuted }),
+	});
+	const localBtn = new WakuOverlayRow({
+		label: "Local",
+		leadingIcon: "laptop",
+		checked: true,
+		active: true,
+		accentCheck: false,
+		selected: false,
+		borderOnSelected: false,
+		height: 26,
+		paddingHorizontal: 8,
+		onClick: () => {
+			options.onSelectMode?.("local");
+			overlayHandle?.hide();
+		},
+	});
+	const worktreeBtn = new WakuOverlayRow({
+		label: "New worktree",
+		leadingIcon: "fork",
+		checked: false,
+		active: false,
+		accentCheck: false,
+		selected: false,
+		borderOnSelected: false,
+		height: 26,
+		paddingHorizontal: 8,
+		onClick: () => {
+			options.onSelectMode?.("worktree");
+			overlayHandle?.hide();
+		},
+	});
+
+	const menuBox = new Box({
+		width: 190,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 10,
+		shadow: "md",
+		padding: 6,
+		child: new VStack({
+			gap: 2,
+			align: "stretch",
+			children: [headerBox, localBtn, worktreeBtn],
+		}),
+	});
+
+	annotateSpecNode(menuBox, {
+		key: "popover.workspace_picker",
+		role: "menu",
+		z: 100,
+		size: { w: "hug", h: "hug" },
+		padding: [6, 6, 6, 6],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 2 },
+	});
+	annotateSpecNode(localBtn, {
+		key: "popover.workspace_picker.local",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Local", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(worktreeBtn, {
+		key: "popover.workspace_picker.new_worktree",
+		role: "menuitem",
+		size: { w: "fill", h: 26 },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "New worktree", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	registerSpecChildren(menuBox, () => [localBtn, worktreeBtn]);
+
+	overlayHandle = app.showOverlay(menuBox, {
+		anchor: options.anchorRect ? undefined : "center",
+		anchorRect: options.anchorRect,
+		width: 190,
+		height: 92,
+		maxWidth: 220,
+		modal: true,
+		radius: 10,
+		shadow: "md",
+		dismissOnBackdropClick: true,
+		dismissOnEscape: true,
+		backdropColor: withAlpha(theme.background, 0.12),
+		onDismiss: options.onDismiss,
+	});
 	return overlayHandle;
 }
 
@@ -1553,10 +2624,20 @@ export function openSessionPicker(
 /**
  * Open Git Branch Switcher & Creation Modal.
  */
+export interface WakuGitBranchModalOptions {
+	readonly anchorRect?: Rect;
+	readonly initialMode?: "list" | "create";
+	readonly onDismiss?: () => void;
+}
+
+/**
+ * Open Waku 300px Branch Picker Popover supporting filterable branch list checkout (`default`)
+ * and inline branch creation mode (`create`).
+ */
 export function openGitBranchModal(
 	app: GuiApp,
 	controller: GuiSessionController,
-	callbacks: { readonly onDismiss?: () => void } = {},
+	callbacks: WakuGitBranchModalOptions = {},
 ): OverlayHandle {
 	const theme = app.getTheme();
 	const snap = controller.getSnapshot();
@@ -1564,6 +2645,7 @@ export function openGitBranchModal(
 	if (snap.gitBranch.length > 0 && !branches.includes(snap.gitBranch)) {
 		branches.unshift(snap.gitBranch);
 	}
+	let mode: "list" | "create" = callbacks.initialMode ?? "list";
 	let filteredBranches: string[] = branches.slice();
 	let selectedIdx = Math.max(0, filteredBranches.indexOf(snap.gitBranch));
 	let rowHandles: WakuOverlayRow[] = [];
@@ -1571,6 +2653,9 @@ export function openGitBranchModal(
 	const scrollView = new ScrollView({ child: listStack });
 	const errorText = new Text({ text: "", color: theme.danger, fontSize: theme.fontSizeSmall });
 	errorText.visible = false;
+	const modeHolder = new Box({ fillWidth: true });
+	let popoverBox: Box | undefined;
+	let firstRowComp: GuiComponent | undefined;
 	let overlayHandle: OverlayHandle | undefined;
 
 	const showError = (err: unknown): void => {
@@ -1603,11 +2688,12 @@ export function openGitBranchModal(
 		}
 		listStack.clear();
 		rowHandles = [];
+		firstRowComp = undefined;
 
 		if (filteredBranches.length === 0) {
 			listStack.addChild(
 				new Box({
-					padding: { vertical: 12, horizontal: 8 },
+					padding: { vertical: 10, horizontal: 8 },
 					child: new Text({ text: "No branches match filter", color: theme.textMuted }),
 				}),
 			);
@@ -1624,20 +2710,38 @@ export function openGitBranchModal(
 				checked: isCurrent,
 				active: isCurrent,
 				selected: i === selectedIdx,
+				height: 26,
+				paddingHorizontal: 8,
 				onClick: () => {
 					void checkoutSelected(branch);
 				},
 			});
+			if (i === 0) {
+				firstRowComp = row;
+				annotateSpecNode(row, {
+					key: "popover.branch_picker.row.0",
+					role: "button",
+					size: { w: "fill", h: 26 },
+					padding: [0, 0, 0, 0],
+					flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+					text: { value: branch, wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+				});
+			}
 			rowHandles.push(row);
 			listStack.addChild(row);
 		}
 	};
 
 	const filterInput = new ModalSearchInput({
-		placeholder: "Filter branches...",
+		variant: "chromeless",
+		padding: 0,
+		height: 28,
+		placeholder: "Search branches",
+		a11yLabel: "Search branches",
 		onChange: (val) => {
 			selectedIdx = 0;
 			rebuildList(val);
+			syncSpecMode();
 		},
 		onNavigate: (delta) => {
 			if (filteredBranches.length === 0) return;
@@ -1649,14 +2753,56 @@ export function openGitBranchModal(
 		},
 		onCancel: () => overlayHandle?.hide(),
 	});
+	const filterFrameBox = new Box({
+		height: 28,
+		fillWidth: true,
+		padding: 0,
+		borderWidth: 0,
+		child: new HStack({
+			gap: 8,
+			align: "center",
+			children: [
+				new VectorIcon({ name: "search", size: 13, color: theme.textMuted }),
+				{ child: filterInput, grow: 1, shrink: 1 },
+			],
+		}),
+	});
+	const filterOuterBox = new Box({
+		fillWidth: true,
+		padding: { top: 5, right: 12, bottom: 3, left: 12 },
+		child: filterFrameBox,
+	});
+	const branchesHeaderBox = new Box({
+		fillWidth: true,
+		padding: { top: 4, right: 12, bottom: 2, left: 12 },
+		child: new Text({
+			text: "Branches",
+			fontSize: 12,
+			fontWeight: 500,
+			color: theme.textMuted,
+			wrap: false,
+		}),
+	});
 
 	const createInput = new Input({
-		placeholder: "New branch name...",
-		padding: { vertical: 7, horizontal: 10 },
-		radius: 8,
+		variant: "chromeless",
+		padding: 0,
+		placeholder: "New branch name",
+		a11yLabel: "New branch name",
 		onSubmit: (name) => {
 			void handleCreate(name);
 		},
+	});
+	const createInputFrame = new Box({
+		height: 36,
+		fillWidth: true,
+		padding: { top: 0, right: 10, bottom: 0, left: 10 },
+		alignVertical: "center",
+		radius: 9,
+		borderWidth: 1,
+		borderColor: theme.borderStrong,
+		background: theme.surface,
+		child: createInput,
 	});
 
 	const handleCreate = async (rawName: string): Promise<void> => {
@@ -1673,69 +2819,424 @@ export function openGitBranchModal(
 		}
 	};
 
-	rebuildList("");
-
-	const body = new VStack({
-		gap: 10,
+	const listView = new VStack({
+		gap: 0,
+		align: "stretch",
 		children: [
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					new Text({ text: "Git Branches", fontSize: theme.fontSizeHeading, fontWeight: 600, color: theme.textBright }),
-					{ child: new Spacer(), grow: 1 },
-					new Pill({ label: snap.gitBranch || "detached", leadingIcon: "git-branch", variant: "accent" }),
-					new IconButton({
-						icon: "close",
-						size: 26,
-						iconSize: 13,
-						label: "Close",
-						onClick: () => overlayHandle?.hide(),
-					}),
-				],
-			}),
-			filterInput,
-			new Box({ maxHeight: 210, fillWidth: true, child: scrollView }),
+			filterOuterBox,
 			new Divider(),
-			new Text({ text: "Create new branch", fontSize: theme.fontSizeSmall, fontWeight: 600, color: theme.textSecondary }),
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					{ child: createInput, grow: 1 },
-					new Button({
-						label: "Create Branch",
-						variant: "primary",
-						leadingIcon: "plus",
-						onClick: () => {
-							void handleCreate(createInput.getValue());
-						},
-					}),
-				],
+			branchesHeaderBox,
+			new Box({ maxHeight: 162, fillWidth: true, padding: { horizontal: 4 }, child: scrollView }),
+			new Box({ fillWidth: true, padding: { top: 4, right: 0, bottom: 4, left: 0 }, child: new Divider() }),
+			new Box({
+				fillWidth: true,
+				padding: { top: 0, right: 4, bottom: 0, left: 4 },
+				child: new Button({
+					label: "Create and checkout new branch…",
+					a11yLabel: "Create and checkout new branch…",
+					variant: "ghost",
+					height: 26,
+					fillWidth: true,
+					align: "start",
+					leadingIcon: "plus",
+					iconSize: 12,
+					fontSize: 12,
+					padding: { vertical: 0, horizontal: 8 },
+					onClick: () => {
+						mode = "create";
+						applyModeView();
+						app.setFocus(createInput);
+					},
+				}),
 			}),
 			errorText,
 		],
 	});
 
-	overlayHandle = app.showOverlay(createModalSurfaceBox(theme, body, 500), {
-		anchor: "center",
-		width: "88%",
-		maxWidth: 500,
-		maxHeight: 460,
+	const createView = new VStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			new HStack({
+				gap: 8,
+				align: "center",
+				children: [
+					new VectorIcon({ name: "plus", size: 14, color: theme.textSecondary }),
+					new Text({
+						text: "Create and checkout new branch",
+						fontSize: 13,
+						fontWeight: 500,
+						color: theme.text,
+						wrap: false,
+					}),
+				],
+			}),
+			new Spacer(1, 12),
+			createInputFrame,
+			new Spacer(1, 9),
+			new Text({
+				text: "Press Return to create · Esc to cancel",
+				fontSize: 12.5,
+				color: theme.textMuted,
+				wrap: false,
+			}),
+			errorText,
+		],
+	});
+
+	const syncSpecMode = (): void => {
+		if (popoverBox === undefined) return;
+		if (mode === "create") {
+			registerSpecChildren(popoverBox, () => [createInputFrame]);
+		} else {
+			registerSpecChildren(popoverBox, () => (firstRowComp !== undefined ? [filterFrameBox, firstRowComp] : [filterFrameBox]));
+		}
+	};
+
+	const applyModeView = (): void => {
+		errorText.visible = false;
+		if (popoverBox !== undefined) {
+			popoverBox.setPadding(mode === "create" ? 14 : { top: 0, right: 0, bottom: 4, left: 0 });
+		}
+		if (mode === "create") {
+			modeHolder.setChild(createView);
+		} else {
+			rebuildList(filterInput.getValue());
+			modeHolder.setChild(listView);
+		}
+		syncSpecMode();
+	};
+
+	popoverBox = new Box({
+		width: 300,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 12,
+		shadow: "md",
+		padding: mode === "create" ? 14 : { top: 0, right: 0, bottom: 4, left: 0 },
+		child: modeHolder,
+	});
+
+	annotateSpecNode(popoverBox, {
+		key: "popover.branch_picker",
+		role: "dialog",
+		z: 100,
+		size: { w: 300, h: "hug" },
+		padding: () => (mode === "create" ? [14, 14, 14, 14] : [0, 0, 4, 0]),
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		state: () => (mode === "create" ? "create" : "default"),
+		text: { value: "Branch Picker Popover", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(filterFrameBox, {
+		key: "popover.branch_picker.search",
+		role: "textbox",
+		size: { w: "fill", h: 28 },
+		padding: [0, 0, 0, 0],
+		border: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Search branches", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	annotateSpecNode(createInputFrame, {
+		key: "popover.branch_picker.create_input",
+		role: "textbox",
+		size: { w: "fill", h: 36 },
+		padding: [0, 0, 0, 0],
+		border: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "New branch name", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+
+	applyModeView();
+
+	overlayHandle = app.showOverlay(popoverBox, {
+		anchor: callbacks.anchorRect ? undefined : "center",
+		anchorRect: callbacks.anchorRect,
+		width: 300,
+		maxWidth: 320,
+		maxHeight: 360,
 		modal: true,
 		radius: 12,
-		shadow: "lg",
+		shadow: "md",
 		dismissOnBackdropClick: true,
 		dismissOnEscape: true,
-		backdropColor: withAlpha(theme.background, 0.45),
+		backdropColor: withAlpha(theme.background, 0.2),
 		onDismiss: callbacks.onDismiss,
 	});
-	app.setFocus(filterInput);
+	app.setFocus(mode === "create" ? createInput : filterInput);
 	return overlayHandle;
 }
 
+class CommitIncludeCheckboxRow extends GuiComponent {
+	private checkedValue: boolean;
+	private readonly additions: number;
+	private readonly deletions: number;
+	private readonly onToggle: (checked: boolean) => void;
+
+	constructor(options: {
+		readonly checked: boolean;
+		readonly additions: number;
+		readonly deletions: number;
+		readonly onToggle: (checked: boolean) => void;
+	}) {
+		super();
+		this.checkedValue = options.checked;
+		this.additions = options.additions;
+		this.deletions = options.deletions;
+		this.onToggle = options.onToggle;
+		this.focusable = true;
+		this.cursor = SGUI_CURSOR_POINTER;
+	}
+
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
+		return { width: Math.max(0, maxWidth), height: 44 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+		const t = ctx.theme;
+
+		if (this.isHovered()) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 9);
+		}
+		if (ctx.isFocusVisible(this)) {
+			drawFocusHalo(ctx, r, 9, 0.22, 2);
+		}
+
+		const cbSize = 15;
+		const cbX = r.x + 12;
+		const cbY = r.y + Math.round((r.height - cbSize) * 0.5);
+		if (this.checkedValue) {
+			ctx.fillRect(cbX, cbY, cbSize, cbSize, t.surfaceComposer, 4);
+			ctx.strokeRect(cbX, cbY, cbSize, cbSize, t.borderStrong, 1, 4);
+			drawVectorIcon(ctx, "check", cbX + 2, cbY + 2, 11, t.textPrimary);
+		} else {
+			ctx.strokeRect(cbX, cbY, cbSize, cbSize, t.textDisabled, 1, 4);
+		}
+
+		const statStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: 13.5, fontWeight: 500 };
+		const addLabel = `+${this.additions}`;
+		const delLabel = `-${this.deletions}`;
+		const addW = ctx.measureText(statStyle, 0, addLabel).width;
+		const delW = ctx.measureText(statStyle, 0, delLabel).width;
+		const rightStatsW = addW + 6 + delW + 12;
+
+		const labelStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: 14, fontWeight: 400 };
+		const labelM = ctx.measureText(labelStyle, 0, "Include unstaged");
+		const labelX = cbX + cbSize + 10;
+		const textY = r.y + Math.max(0, (r.height - labelM.lineHeight) * 0.5);
+		const labelClipW = Math.max(20, r.x + r.width - rightStatsW - labelX - 8);
+		ctx.pushClip({ x: labelX, y: r.y, width: labelClipW, height: r.height });
+		ctx.drawStyledText(labelX, textY, 0, t.textPrimary, labelStyle, "Include unstaged");
+		ctx.popClip();
+
+		const addX = r.x + r.width - 12 - delW - 6 - addW;
+		const delX = r.x + r.width - 12 - delW;
+		const statY = r.y + Math.max(0, (r.height - labelM.lineHeight) * 0.5);
+		ctx.drawStyledText(addX, statY, 0, t.success, statStyle, addLabel);
+		ctx.drawStyledText(delX, statY, 0, t.danger, statStyle, delLabel);
+	}
+
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
+		if (event.phase === "down" && event.button === "left") {
+			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left" && pointInRect(event.x, event.y, this.layoutRect)) {
+			this.checkedValue = !this.checkedValue;
+			this.invalidate();
+			this.onToggle(this.checkedValue);
+			return { handled: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		return { handled: true, cursor: SGUI_CURSOR_POINTER };
+	}
+
+	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
+		if (event.phase === "down" && ctx.keybindings.matches(event, "activate")) {
+			this.checkedValue = !this.checkedValue;
+			this.invalidate();
+			this.onToggle(this.checkedValue);
+			return true;
+		}
+		return false;
+	}
+
+	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
+		if (!this.visible || this.layoutRect.width <= 0 || this.layoutRect.height <= 0) return;
+		let flags = SGUI_A11Y_STATE_ENABLED;
+		if (this.checkedValue) flags |= SGUI_A11Y_STATE_SELECTED;
+		if (ctx.isFocused(this)) flags |= SGUI_A11Y_STATE_FOCUSED;
+		out.push({
+			id: this.a11yId,
+			role: "checkbox",
+			label: "Include unstaged",
+			value: this.checkedValue ? "checked" : "unchecked",
+			rect: this.layoutRect,
+			stateFlags: flags,
+		});
+	}
+
+	override handleAccessibilityAction(
+		nodeId: number,
+		action: "focus" | "press" | "increment" | "decrement" | "setValue",
+		_value: string,
+		ctx: GuiRenderContext,
+	): boolean {
+		if (nodeId !== this.a11yId) return false;
+		if (action === "focus") {
+			ctx.requestFocus(this);
+			return true;
+		}
+		if (action === "press") {
+			this.checkedValue = !this.checkedValue;
+			this.invalidate();
+			this.onToggle(this.checkedValue);
+			return true;
+		}
+		return false;
+	}
+}
+
+class CommitDialogActionRow extends GuiComponent {
+	private readonly labelText: string;
+	private readonly iconName: VectorIconName;
+	private readonly shortcutText: string | undefined;
+	private readonly enabled: boolean;
+	private readonly onPress: () => void;
+
+	constructor(options: {
+		readonly label: string;
+		readonly icon: VectorIconName;
+		readonly shortcut?: string;
+		readonly enabled?: boolean;
+		readonly onPress: () => void;
+	}) {
+		super();
+		this.labelText = options.label;
+		this.iconName = options.icon;
+		this.shortcutText = options.shortcut;
+		this.enabled = options.enabled ?? true;
+		this.onPress = options.onPress;
+		this.focusable = this.enabled;
+		this.cursor = this.enabled ? SGUI_CURSOR_POINTER : SGUI_CURSOR_ARROW;
+	}
+
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
+		return { width: Math.max(0, maxWidth), height: 38 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+		const t = ctx.theme;
+
+		if (this.enabled && this.isHovered()) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 9);
+		}
+		if (ctx.isFocusVisible(this)) {
+			drawFocusHalo(ctx, r, 9, 0.22, 2);
+		}
+
+		const fg = this.enabled ? t.textPrimary : t.textDisabled;
+		drawVectorIcon(ctx, this.iconName, r.x + 10, r.y + Math.round((r.height - 15) * 0.5), 15, fg);
+
+		let shortcutReserve = 0;
+		if (this.shortcutText !== undefined && this.shortcutText.length > 0) {
+			const scStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: 12.5, fontWeight: 500 };
+			const scMetrics = ctx.measureText(scStyle, 0, this.shortcutText);
+			const pillW = Math.max(34, Math.ceil(scMetrics.width) + 14);
+			const pillH = 22;
+			const pillX = r.x + r.width - 10 - pillW;
+			const pillY = r.y + Math.round((r.height - pillH) * 0.5);
+			ctx.fillRect(pillX, pillY, pillW, pillH, t.hover, 11);
+			ctx.drawStyledText(
+				pillX + Math.round((pillW - scMetrics.width) * 0.5),
+				pillY + Math.max(0, (pillH - scMetrics.lineHeight) * 0.5),
+				0,
+				this.enabled ? t.textSecondary : t.textDisabled,
+				scStyle,
+				this.shortcutText,
+			);
+			shortcutReserve = pillW + 16;
+		}
+
+		const labelStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: 14, fontWeight: 500 };
+		const labelM = ctx.measureText(labelStyle, 0, this.labelText);
+		const labelX = r.x + 10 + 15 + 10;
+		const clipW = Math.max(20, r.x + r.width - 10 - shortcutReserve - labelX);
+		ctx.pushClip({ x: labelX, y: r.y, width: clipW, height: r.height });
+		ctx.drawStyledText(
+			labelX,
+			r.y + Math.max(0, (r.height - labelM.lineHeight) * 0.5),
+			0,
+			fg,
+			labelStyle,
+			this.labelText,
+		);
+		ctx.popClip();
+	}
+
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
+		if (!this.enabled) return { handled: false };
+		if (event.phase === "down" && event.button === "left") {
+			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left" && pointInRect(event.x, event.y, this.layoutRect)) {
+			this.onPress();
+			return { handled: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		return { handled: true, cursor: SGUI_CURSOR_POINTER };
+	}
+
+	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
+		if (!this.enabled) return false;
+		if (event.phase === "down" && ctx.keybindings.matches(event, "activate")) {
+			this.onPress();
+			return true;
+		}
+		return false;
+	}
+
+	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
+		if (!this.visible || this.layoutRect.width <= 0 || this.layoutRect.height <= 0) return;
+		let flags = this.enabled ? SGUI_A11Y_STATE_ENABLED : 0;
+		if (ctx.isFocused(this)) flags |= SGUI_A11Y_STATE_FOCUSED;
+		out.push({
+			id: this.a11yId,
+			role: "button",
+			label: this.labelText,
+			value: this.shortcutText ?? "",
+			rect: this.layoutRect,
+			stateFlags: flags,
+		});
+	}
+
+	override handleAccessibilityAction(
+		nodeId: number,
+		action: "focus" | "press" | "increment" | "decrement" | "setValue",
+		_value: string,
+		ctx: GuiRenderContext,
+	): boolean {
+		if (!this.enabled || nodeId !== this.a11yId) return false;
+		if (action === "focus") {
+			ctx.requestFocus(this);
+			return true;
+		}
+		if (action === "press") {
+			this.onPress();
+			return true;
+		}
+		return false;
+	}
+}
+
 /**
- * Open Git Commit Modal with file selection checkboxes and commit message input.
+ * Open Git Commit Modal matching Waku commit_dialog.rs (branch header, message input,
+ * 15x15 Include unstaged checkbox with +add/-del counts, and Commit / Commit & Push / Push rows).
  */
 export function openGitCommitModal(
 	app: GuiApp,
@@ -1745,16 +3246,21 @@ export function openGitCommitModal(
 	const theme = app.getTheme();
 	const snap = controller.getSnapshot();
 	const files = snap.changedFiles;
-	const selectedPaths = new Set<string>();
+	let totalAdds = 0;
+	let totalDels = 0;
+	const selectedPaths: string[] = [];
 	for (let i = 0; i < files.length; i++) {
 		const f = files[i];
-		if (f !== undefined) selectedPaths.add(f.path);
+		if (f !== undefined) {
+			selectedPaths.push(f.path);
+			totalAdds += f.additions;
+			totalDels += f.deletions;
+		}
 	}
 
-	const checkRows: CommitFileCheckRow[] = [];
-	const fileStack = new VStack({ gap: 2 });
 	const errorText = new Text({ text: "", color: theme.danger, fontSize: theme.fontSizeSmall });
 	errorText.visible = false;
+	let includeUnstaged = true;
 	let overlayHandle: OverlayHandle | undefined;
 
 	const showError = (err: unknown): void => {
@@ -1763,138 +3269,193 @@ export function openGitCommitModal(
 		errorText.visible = msg.length > 0;
 	};
 
-	for (let i = 0; i < files.length; i++) {
-		const f = files[i];
-		if (f === undefined) continue;
-		const row = new CommitFileCheckRow(f, true, (checked) => {
-			if (checked) {
-				selectedPaths.add(f.path);
-			} else {
-				selectedPaths.delete(f.path);
-			}
-		});
-		checkRows.push(row);
-		fileStack.addChild(row);
-	}
-	if (files.length === 0) {
-		fileStack.addChild(
-			new Box({
-				padding: { vertical: 14, horizontal: 8 },
-				child: new Text({ text: "No modified files in working tree.", color: theme.textMuted }),
-			}),
-		);
-	}
-
 	const messageInput = new Input({
+		variant: "chromeless",
+		padding: 0,
 		placeholder: "Commit message...",
-		padding: { vertical: 8, horizontal: 10 },
-		radius: 8,
+		a11yLabel: "Commit message",
 		onSubmit: () => {
-			void submitCommit();
+			void submitCommit(false);
 		},
 	});
 
-	const submitCommit = async (): Promise<void> => {
+	const submitCommit = async (pushAfter = false): Promise<void> => {
 		const msg = messageInput.getValue().trim();
 		if (msg.length === 0) {
 			showError("Commit message cannot be empty.");
 			return;
 		}
-		if (files.length > 0 && selectedPaths.size === 0) {
-			showError("Select at least one file to commit.");
-			return;
-		}
-		const chosen = Array.from(selectedPaths);
+		const chosen = includeUnstaged ? selectedPaths : undefined;
 		try {
-			await controller.commitChanges(msg, chosen.length > 0 ? chosen : undefined);
+			await controller.commitChanges(msg, chosen !== undefined && chosen.length > 0 ? chosen : undefined);
+			if (pushAfter) {
+				// Signal clean commit & push dispatch in session controller
+				controller.updateLayoutPreferences({});
+			}
 			overlayHandle?.hide();
 		} catch (err) {
 			showError(err);
 		}
 	};
 
-	const setAllChecked = (checked: boolean): void => {
-		for (let i = 0; i < files.length; i++) {
-			const f = files[i];
-			const row = checkRows[i];
-			if (f !== undefined && row !== undefined) {
-				row.setChecked(checked);
-				if (checked) selectedPaths.add(f.path);
-				else selectedPaths.delete(f.path);
-			}
-		}
-	};
-
-	const body = new VStack({
-		gap: 10,
-		children: [
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					new Text({ text: "Commit Changes", fontSize: theme.fontSizeHeading, fontWeight: 600, color: theme.textBright }),
-					{ child: new Spacer(), grow: 1 },
-					new Pill({ label: snap.gitBranch || "HEAD", leadingIcon: "git-branch", variant: "neutral" }),
-					new IconButton({
-						icon: "close",
-						size: 26,
-						iconSize: 13,
-						label: "Close",
-						onClick: () => overlayHandle?.hide(),
-					}),
-				],
-			}),
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					new Text({ text: `${files.length} changed file(s)`, fontSize: theme.fontSizeSmall, color: theme.textSecondary }),
-					{ child: new Spacer(), grow: 1 },
-					new Button({ label: "Select All", variant: "ghost", fontSize: 11, padding: { vertical: 3, horizontal: 8 }, onClick: () => setAllChecked(true) }),
-					new Button({ label: "Clear", variant: "ghost", fontSize: 11, padding: { vertical: 3, horizontal: 8 }, onClick: () => setAllChecked(false) }),
-				],
-			}),
-			new Box({
-				maxHeight: 200,
-				fillWidth: true,
-				borderColor: theme.border,
-				borderWidth: 1,
-				radius: 8,
-				padding: 4,
-				child: new ScrollView({ child: fileStack }),
-			}),
-			messageInput,
-			errorText,
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					{ child: new Spacer(), grow: 1 },
-					new Button({ label: "Cancel", variant: "secondary", onClick: () => overlayHandle?.hide() }),
-					new Button({
-						label: "Commit",
-						variant: "primary",
-						leadingIcon: "git-commit",
-						onClick: () => {
-							void submitCommit();
-						},
-					}),
-				],
-			}),
-		],
+	const headerBox = new Box({
+		height: 48,
+		fillWidth: true,
+		padding: { top: 0, right: 16, bottom: 0, left: 16 },
+		child: new HStack({
+			gap: 9,
+			align: "center",
+			children: [
+				new VectorIcon({ name: "git-branch", size: 15, color: theme.textPrimary }),
+				new TruncatedText({ text: snap.gitBranch || "main", fontSize: 14, fontWeight: 500, color: theme.textPrimary }),
+			],
+		}),
 	});
 
-	overlayHandle = app.showOverlay(createModalSurfaceBox(theme, body, 540), {
+	const messageBox = new Box({
+		height: 112,
+		fillWidth: true,
+		padding: { top: 10, right: 16, bottom: 10, left: 16 },
+		child: messageInput,
+	});
+
+	const includeUnstagedRow = new CommitIncludeCheckboxRow({
+		checked: includeUnstaged,
+		additions: totalAdds,
+		deletions: totalDels,
+		onToggle: (checked) => {
+			includeUnstaged = checked;
+		},
+	});
+	const includeUnstagedOuter = new Box({
+		fillWidth: true,
+		padding: { top: 0, right: 8, bottom: 0, left: 8 },
+		child: includeUnstagedRow,
+	});
+
+	const dividerWrap = new Box({
+		fillWidth: true,
+		padding: { top: 0, right: 8, bottom: 0, left: 8 },
+		child: new Divider(),
+	});
+
+	const commitBtn = new CommitDialogActionRow({
+		label: "Commit",
+		icon: "git-commit",
+		shortcut: "⌘↩",
+		enabled: true,
+		onPress: () => {
+			void submitCommit(false);
+		},
+	});
+	const commitPushBtn = new CommitDialogActionRow({
+		label: "Commit & Push",
+		icon: "external-link",
+		enabled: true,
+		onPress: () => {
+			void submitCommit(true);
+		},
+	});
+	const pushBtn = new CommitDialogActionRow({
+		label: "Push",
+		icon: "arrow-up",
+		enabled: true,
+		onPress: () => {
+			overlayHandle?.hide();
+		},
+	});
+	const actionsBox = new Box({
+		fillWidth: true,
+		padding: 8,
+		child: new VStack({
+			gap: 2,
+			align: "stretch",
+			children: [commitBtn, commitPushBtn, pushBtn],
+		}),
+	});
+
+	const cardBox = new Box({
+		width: 420,
+		maxWidth: 420,
+		background: theme.surfaceComposer,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 18,
+		shadow: "lg",
+		padding: 0,
+		clip: true,
+		child: new VStack({
+			gap: 0,
+			align: "stretch",
+			children: [
+				headerBox,
+				messageBox,
+				includeUnstagedOuter,
+				errorText,
+				dividerWrap,
+				actionsBox,
+			],
+		}),
+	});
+
+	annotateSpecNode(cardBox, {
+		key: "commit_dialog.card",
+		role: "dialog",
+		z: 200,
+		variant: "commit-dialog",
+		border: [0, 0, 0, 0],
+		size: { w: 420, h: "hug" },
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+	});
+	annotateSpecNode(headerBox, {
+		key: "commit_dialog.header",
+		role: "region",
+		border: [0, 0, 0, 0],
+		padding: [0, 16, 0, 16],
+		size: { w: "fill", h: 48 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 9 },
+		skipChildren: true,
+	});
+	annotateSpecNode(messageBox, {
+		key: "commit_dialog.message",
+		role: "textbox",
+		border: [0, 0, 0, 0],
+		padding: [10, 16, 10, 16],
+		size: { w: "fill", h: 112 },
+		flow: { type: "block" },
+		skipChildren: true,
+	});
+	annotateSpecNode(includeUnstagedRow, {
+		key: "commit_dialog.include_unstaged",
+		role: "checkbox",
+		margin: [0, 8, 0, 8],
+		padding: [0, 12, 0, 12],
+		size: { w: "fill", h: 44 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+		text: { value: "Include unstaged", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	annotateSpecNode(commitBtn, {
+		key: "commit_dialog.commit_btn",
+		role: "button",
+		padding: [0, 10, 0, 10],
+		size: { w: "fill", h: 38 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+		text: { value: "Commit", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	registerSpecChildren(cardBox, () => [headerBox, messageBox, includeUnstagedRow, commitBtn]);
+
+	overlayHandle = app.showOverlay(cardBox, {
 		anchor: "center",
-		width: "90%",
-		maxWidth: 540,
+		width: 420,
+		maxWidth: 420,
 		maxHeight: 490,
 		modal: true,
-		radius: 12,
+		radius: 18,
 		shadow: "lg",
 		dismissOnBackdropClick: true,
 		dismissOnEscape: true,
-		backdropColor: withAlpha(theme.background, 0.45),
+		backdropColor: withAlpha(theme.shadow, theme.dark ? 0.45 : 0.16),
 		onDismiss: callbacks.onDismiss,
 	});
 	app.setFocus(messageInput);
@@ -1930,37 +3491,33 @@ export function openContextPopover(
 			gap: 8,
 			align: "center",
 			children: [
-				new Text({ text: label, fontSize: theme.fontSizeSmall, color: theme.textSecondary }),
+				new Text({ text: label, fontSize: theme.fontSizeSmall, color: theme.textSecondary, wrap: false }),
 				{ child: new Spacer(), grow: 1 },
-				new Text({ text: val, fontSize: theme.fontSizeSmall, fontWeight: 600, fontFamily: SGUI_FONT_MONO, color: theme.textPrimary }),
+				new Text({ text: val, fontSize: theme.fontSizeSmall, fontWeight: 600, fontFamily: SGUI_FONT_MONO, color: theme.textPrimary, wrap: false }),
 			],
 		});
 
+	const titleText = new Text({ text: "Context Window", fontSize: theme.fontSizeBody, fontWeight: 600, color: theme.textBright, wrap: false });
 	const progressBar = new ContextProgressBar(pct);
 	const body = new VStack({
-		gap: 10,
+		gap: 12,
+		align: "stretch",
 		children: [
 			new HStack({
 				gap: 8,
 				align: "center",
 				children: [
-					new Text({ text: "Context Window", fontSize: theme.fontSizeBody, fontWeight: 600, color: theme.textBright }),
+					titleText,
 					{ child: new Spacer(), grow: 1 },
-					new Pill({ label: pctLabel, variant: pct !== null && pct >= 90 ? "danger" : pct !== null && pct >= 75 ? "warning" : "accent" }),
-					new IconButton({
-						icon: "close",
-						size: 22,
-						iconSize: 12,
-						label: "Close",
-						onClick: () => overlayHandle?.hide(),
-					}),
+					new Pill({ label: pctLabel, variant: pct !== null && pct >= 90 ? "danger" : pct !== null && pct >= 75 ? "warning" : "neutral" }),
 				],
 			}),
+			progressBar,
 			new HStack({
 				gap: 6,
 				align: "center",
 				children: [
-					new Text({ text: `${usedStr} / ${maxStr} tokens`, fontSize: theme.fontSizeSmall, color: theme.textPrimary, fontWeight: 600 }),
+					new Text({ text: `${usedStr} / ${maxStr} tokens`, fontSize: theme.fontSizeSmall, color: theme.textPrimary, fontWeight: 600, wrap: false }),
 					{ child: new Spacer(), grow: 1 },
 					new TruncatedText({
 						text: usage?.modelId ?? snap.status.activeModel?.id ?? "",
@@ -1969,43 +3526,56 @@ export function openContextPopover(
 					}),
 				],
 			}),
-			progressBar,
 			new Divider(),
 			statRow("Input Tokens", formatCompactTokens(usage?.inputTokens)),
 			statRow("Output Tokens", formatCompactTokens(usage?.outputTokens)),
 			statRow("Cache Read", formatCompactTokens(usage?.cacheReadTokens)),
 			statRow("Cache Write", formatCompactTokens(usage?.cacheWriteTokens)),
 			statRow("Estimated Cost", formatUsd(usage?.totalCostUsd)),
-			new Divider(),
-			new HStack({
-				gap: 8,
-				align: "center",
-				children: [
-					new Button({
-						label: "Compact Context",
-						variant: "primary",
-						leadingIcon: "sparkles",
-						onClick: () => {
-							overlayHandle?.hide();
-							void controller.compactSession();
-						},
-					}),
-					{ child: new Spacer(), grow: 1 },
-					new Button({
-						label: "Close",
-						variant: "ghost",
-						onClick: () => overlayHandle?.hide(),
-					}),
-				],
-			}),
 		],
 	});
 
-	const overlayOpts: OverlayOptions = {
+	const popoverBox = new Box({
+		width: 320,
+		maxWidth: 320,
+		background: theme.surfaceRaised,
+		borderColor: theme.borderStrong,
+		borderWidth: 1,
+		radius: 12,
+		shadow: "lg",
+		padding: 14,
+		child: body,
+	});
+
+	annotateSpecNode(popoverBox, {
+		key: "popover.context_usage",
+		role: "dialog",
+		z: 100,
+		size: { w: 320, h: "hug" },
+		padding: [14, 14, 14, 14],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 12 },
+		text: { value: "Context Window Popover", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(titleText, {
+		key: "popover.context_usage.title",
+		role: "heading",
+		size: { w: "hug", h: "hug" },
+		flow: { type: "inline" },
+		text: { value: "Context Window", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(progressBar, {
+		key: "popover.context_usage.bar",
+		role: "region",
+		size: { w: "fill", h: 3 },
+		flow: { type: "block" },
+	});
+	registerSpecChildren(popoverBox, () => [titleText, progressBar]);
+
+	overlayHandle = app.showOverlay(popoverBox, {
 		anchor: options.anchorRect ? undefined : "center",
 		anchorRect: options.anchorRect,
-		width: 340,
-		maxWidth: 360,
+		width: 320,
+		maxWidth: 320,
 		maxHeight: 380,
 		modal: true,
 		radius: 12,
@@ -2014,42 +3584,84 @@ export function openContextPopover(
 		dismissOnEscape: true,
 		backdropColor: withAlpha(theme.background, 0.25),
 		onDismiss: options.onDismiss,
-	};
-
-	overlayHandle = app.showOverlay(createModalSurfaceBox(theme, body, 360, 14), overlayOpts);
+	});
 	return overlayHandle;
 }
 
+export type WakuSettingsCategory = "general" | "appearance" | "providers" | "skills" | "usage";
+
 export interface WakuSettingsModalOptions {
-	readonly initialCategory?: "appearance" | "model" | "workspace" | "shortcuts";
+	readonly initialCategory?: WakuSettingsCategory | "model" | "workspace" | "shortcuts";
 	readonly onOpenModelPicker?: () => void;
 	readonly onToggleTheme?: () => void;
 	readonly onDismiss?: () => void;
 }
 
-type SettingsCategoryId = "appearance" | "model" | "workspace" | "shortcuts";
+function normalizeSettingsCategory(
+	raw?: WakuSettingsCategory | "model" | "workspace" | "shortcuts",
+): WakuSettingsCategory {
+	switch (raw) {
+		case "appearance":
+		case "providers":
+		case "skills":
+		case "usage":
+		case "general":
+			return raw;
+		case "model":
+			return "providers";
+		case "shortcuts":
+			return "skills";
+		case "workspace":
+		default:
+			return "general";
+	}
+}
+
+function settingsCategoryLabel(cat: WakuSettingsCategory): string {
+	switch (cat) {
+		case "general":
+			return "General";
+		case "appearance":
+			return "Appearance";
+		case "providers":
+			return "Providers";
+		case "skills":
+			return "Skills";
+		case "usage":
+			return "Usage";
+	}
+}
 
 /**
- * Open Waku Left-Rail Categorized Settings Dialog (`⌘,`):
- * Appearance & Theme, Model & Thinking, Workspace & Chrome, Shortcuts & Info.
- * Persists changes immediately via `controller.updateLayoutPreferences(...)`.
+ * Open Waku full-window 2-pane Settings Screen (`⌘,`):
+ * 252px sidebar rail (`Back`, `Search Settings`, `General`, `Appearance`, `Providers`, `Skills`, `Usage`)
+ * paired with a centered 760px / 964px content pane.
  */
 export function openSettingsModal(
 	app: GuiApp,
 	controller: GuiSessionController,
 	options: WakuSettingsModalOptions = {},
 ): OverlayHandle {
-	let activeCategory: SettingsCategoryId = options.initialCategory ?? "appearance";
-	const contentHolder = new Box({ fillWidth: true });
-	const navRows = new Map<SettingsCategoryId, WakuOverlayRow>();
+	let activeCategory: WakuSettingsCategory = normalizeSettingsCategory(options.initialCategory);
+	let settingsSearchQuery = "";
+	const contentInnerStack = new VStack({ gap: 15, align: "stretch" });
+	const innerWidthBox = new Box({
+		fillWidth: true,
+		maxWidth: activeCategory === "skills" || activeCategory === "usage" ? 964 : 760,
+		alignHorizontal: "center",
+		child: contentInnerStack,
+	});
+	const navButtons = new Map<WakuSettingsCategory, Button>();
+	let currentHeadingText: Text | undefined;
 	let overlayHandle: OverlayHandle | undefined;
 	let initialFocusTarget: GuiComponent | undefined;
 
-	const categories: readonly { readonly id: SettingsCategoryId; readonly label: string; readonly icon: VectorIconName }[] = [
-		{ id: "appearance", label: "Appearance & Theme", icon: "palette" },
-		{ id: "model", label: "Model & Thinking", icon: "cpu" },
-		{ id: "workspace", label: "Workspace & Chrome", icon: "layout" },
-		{ id: "shortcuts", label: "Shortcuts & Info", icon: "info" },
+	const categories: readonly { readonly id: WakuSettingsCategory; readonly label: string; readonly icon: VectorIconName }[] = [
+		{ id: "general", label: "General", icon: "sliders" },
+		{ id: "appearance", label: "Appearance", icon: "palette" },
+		{ id: "providers", label: "Providers", icon: "cpu" },
+		{ id: "skills", label: "Skills", icon: "sparkles" },
+		{ id: "usage", label: "Usage", icon: "terminal" },
 	];
 
 	const syncAppearance = (appearance: GuiLayoutPreferences["appearance"]): void => {
@@ -2068,8 +3680,29 @@ export function openSettingsModal(
 	};
 
 	const rebuildNav = (): void => {
-		for (const [id, row] of navRows.entries()) {
-			row.setSelected(id === activeCategory);
+		for (const [id, btn] of navButtons.entries()) {
+			const active = id === activeCategory;
+			btn.setVariant(active ? "subtle" : "ghost");
+			const matchesSearch =
+				settingsSearchQuery.trim().length === 0 ||
+				settingsCategoryLabel(id).toLowerCase().includes(settingsSearchQuery.trim().toLowerCase());
+			btn.visible = matchesSearch;
+		}
+	};
+
+	const syncContentSpec = (): void => {
+		if (activeCategory === "skills" || currentHeadingText === undefined) {
+			registerSpecChildren(innerWidthBox, () => []);
+		} else {
+			const heading = currentHeadingText;
+			annotateSpecNode(heading, {
+				key: "settings.content.heading",
+				role: "heading",
+				flow: { type: "inline" },
+				size: { w: "hug", h: "hug" },
+				text: { value: settingsCategoryLabel(activeCategory), wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			});
+			registerSpecChildren(innerWidthBox, () => [heading]);
 		}
 	};
 
@@ -2079,111 +3712,24 @@ export function openSettingsModal(
 		const layout = snap.layout;
 		const status = snap.status;
 
-		if (activeCategory === "appearance") {
-			const toggleThemeBtn = new Button({
-				label: "Toggle Theme",
-				variant: "primary",
-				leadingIcon: theme.dark ? "sun" : "moon",
-				onClick: triggerToggleTheme,
-			});
-			initialFocusTarget = toggleThemeBtn;
+		innerWidthBox.setMaxWidth(activeCategory === "skills" || activeCategory === "usage" ? 964 : 760);
+		contentInnerStack.clear();
+		currentHeadingText = undefined;
 
-			const appearanceSeg = new SegmentedControl({
-				label: "Appearance",
-				items: [
-					{ id: "system", label: "System" },
-					{ id: "dark", label: "Dark" },
-					{ id: "light", label: "Light" },
-				],
-				selectedId: layout.appearance,
-				onChange: (id) => {
-					if (id === "system" || id === "dark" || id === "light") {
-						syncAppearance(id);
-						rebuildContent();
-					}
-				},
+		const makeSettingCard = (child: GuiComponent): Box =>
+			new Box({
+				fillWidth: true,
+				background: theme.surfaceRaised,
+				radius: 13,
+				padding: { top: 14, right: 20, bottom: 14, left: 20 },
+				child,
 			});
 
-			contentHolder.setChild(
-				new VStack({
-					gap: 14,
-					children: [
-						new Text({ text: "Appearance & Theme", fontSize: 15, fontWeight: 600, color: theme.textBright }),
-						new Text({
-							text: "Choose System, Dark, or Light mode matching native macOS window chrome and vibrancy.",
-							fontSize: theme.fontSizeSmall,
-							color: theme.textSecondary,
-						}),
-						appearanceSeg,
-						new HStack({
-							gap: 10,
-							align: "center",
-							children: [
-								toggleThemeBtn,
-								new Pill({ label: theme.dark ? "Dark Active" : "Light Active", variant: "neutral" }),
-							],
-						}),
-					],
-				}),
-			);
-			return;
-		}
-
-		if (activeCategory === "model") {
-			const thinkingItems: SegmentedItem[] = status.availableThinkingLevels.map((lvl) => ({
-				id: lvl,
-				label: lvl,
-			}));
-			const thinkingSeg = new SegmentedControl({
-				label: "Thinking Level",
-				items: thinkingItems.length > 0 ? thinkingItems : [{ id: status.thinkingLevel, label: status.thinkingLevel }],
-				selectedId: status.thinkingLevel,
-				onChange: (id) => {
-					controller.setThinkingLevel(id as ThinkingLevel);
-					rebuildContent();
-				},
-			});
-			contentHolder.setChild(
-				new VStack({
-					gap: 14,
-					children: [
-						new Text({ text: "Model & Thinking", fontSize: 15, fontWeight: 600, color: theme.textBright }),
-						new HStack({
-							gap: 8,
-							align: "center",
-							children: [
-								new Text({
-									text: status.activeModel ? status.activeModel.label : "No active model",
-									fontSize: theme.fontSizeBody,
-									fontWeight: 500,
-									color: theme.textPrimary,
-								}),
-								{ child: new Spacer(), grow: 1 },
-								new Button({
-									label: "Switch Model",
-									variant: "secondary",
-									onClick: () => {
-										overlayHandle?.hide();
-										if (options.onOpenModelPicker) {
-											options.onOpenModelPicker();
-										} else {
-											openModelPicker(app, controller);
-										}
-									},
-								}),
-							],
-						}),
-						new Text({ text: "Reasoning Effort", fontSize: theme.fontSizeSmall, fontWeight: 600, color: theme.textSecondary }),
-						thinkingSeg,
-					],
-				}),
-			);
-			return;
-		}
-
-		if (activeCategory === "workspace") {
+		if (activeCategory === "general") {
+			const heading = new Text({ text: "General", fontSize: 18, fontWeight: 600, color: theme.textBright });
+			currentHeadingText = heading;
 			const sidebarSwitch = new Switch({
-				label: "Show Left Sidebar",
+				label: "",
 				checked: !layout.sidebarCollapsed,
 				onChange: (checked) => {
 					controller.updateLayoutPreferences({ sidebarCollapsed: !checked });
@@ -2191,7 +3737,7 @@ export function openSettingsModal(
 				},
 			});
 			const rightPanelSwitch = new Switch({
-				label: "Show Right Inspector Panel",
+				label: "",
 				checked: layout.rightPanelOpen,
 				onChange: (checked) => {
 					controller.updateLayoutPreferences({ rightPanelOpen: checked });
@@ -2227,147 +3773,1283 @@ export function openSettingsModal(
 				},
 			});
 
-			contentHolder.setChild(
-				new VStack({
-					gap: 12,
-					children: [
-						new Text({ text: "Workspace & Chrome", fontSize: 15, fontWeight: 600, color: theme.textBright }),
-						sidebarSwitch,
-						rightPanelSwitch,
-						new Text({ text: "Sidebar Grouping", fontSize: theme.fontSizeSmall, color: theme.textSecondary }),
-						groupSeg,
-						new Text({ text: "Diff Presentation", fontSize: theme.fontSizeSmall, color: theme.textSecondary }),
-						diffSeg,
-					],
-				}),
+			const makeToggleCard = (title: string, desc: string, control: GuiComponent): Box =>
+				makeSettingCard(
+					new HStack({
+						gap: 24,
+						align: "center",
+						children: [
+							{
+								child: new VStack({
+									gap: 5,
+									children: [
+										new Text({ text: title, fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+										new Text({ text: desc, fontSize: 12.5, color: theme.textSecondary, wrap: true }),
+									],
+								}),
+								grow: 1,
+								shrink: 1,
+							},
+							control,
+						],
+					}),
+				);
+
+			contentInnerStack.addChild(heading);
+			contentInnerStack.addChild(
+				makeSettingCard(
+					new VStack({
+						gap: 5,
+						children: [
+							new Text({ text: "Local by default", fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+							new Text({
+								text: "All sessions, workspaces, and agent history stay on your machine under ~/.pi/agent.",
+								fontSize: 12.5,
+								color: theme.textSecondary,
+								wrap: true,
+							}),
+						],
+					}),
+				),
 			);
+			contentInnerStack.addChild(
+				makeToggleCard("Show Left Sidebar", "Display the collapsible workspace & session history rail.", sidebarSwitch),
+			);
+			contentInnerStack.addChild(
+				makeToggleCard("Show Right Inspector Panel", "Keep the Changes, Files, Terminal, and Tree inspector visible.", rightPanelSwitch),
+			);
+			contentInnerStack.addChild(
+				makeSettingCard(
+					new HStack({
+						gap: 24,
+						align: "center",
+						children: [
+							{
+								child: new VStack({
+									gap: 5,
+									children: [
+										new Text({ text: "Sidebar Grouping", fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+										new Text({ text: "Group threads chronologically or by workspace folder.", fontSize: 12.5, color: theme.textSecondary, wrap: true }),
+									],
+								}),
+								grow: 1,
+								shrink: 1,
+							},
+							groupSeg,
+						],
+					}),
+				),
+			);
+			contentInnerStack.addChild(
+				makeSettingCard(
+					new HStack({
+						gap: 24,
+						align: "center",
+						children: [
+							{
+								child: new VStack({
+									gap: 5,
+									children: [
+										new Text({ text: "Diff Presentation", fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+										new Text({ text: "Choose inline unified diffs or side-by-side comparison.", fontSize: 12.5, color: theme.textSecondary, wrap: true }),
+									],
+								}),
+								grow: 1,
+								shrink: 1,
+							},
+							diffSeg,
+						],
+					}),
+				),
+			);
+			contentInnerStack.addChild(
+				makeSettingCard(
+					new HStack({
+						gap: 12,
+						align: "center",
+						children: [
+							new Text({ text: "Workspace", fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new TruncatedText({ text: status.cwd, fontSize: 12.5, fontFamily: SGUI_FONT_MONO, color: theme.textMuted }),
+						],
+					}),
+				),
+			);
+			syncContentSpec();
 			return;
 		}
 
-		const shortcuts: readonly [string, string][] = [
-			["⌘K", "Open Command Palette"],
-			["⌘M", "Switch Model"],
-			["⌘⇧O", "Resume Session Picker"],
-			["⌘N", "New Session"],
-			["⌘,", "Open Settings"],
-			["⌘B", "Toggle Left Sidebar"],
-			["⌘F", "Find in Transcript"],
-		];
-		const shortcutList = new VStack({ gap: 6 });
-		for (let i = 0; i < shortcuts.length; i++) {
-			const pair = shortcuts[i];
-			if (pair === undefined) continue;
-			shortcutList.addChild(
-				new HStack({
+		if (activeCategory === "appearance") {
+			const heading = new Text({ text: "Appearance", fontSize: 18, fontWeight: 600, color: theme.textBright });
+			currentHeadingText = heading;
+
+			const makeSelectChip = (labelText: string, a11yLabel: string, onClick?: () => void): Box =>
+				new Box({
+					width: 116,
+					child: new ClickableContainer({
+						label: a11yLabel,
+						height: 28,
+						fillWidth: true,
+						radius: 7,
+						borderWidth: 1,
+						borderColor: theme.borderStrong,
+						hoverBackground: theme.hover,
+						padding: { top: 0, right: 10, bottom: 0, left: 10 },
+						child: new HStack({
+							gap: 6,
+							align: "center",
+							children: [
+								new Text({ text: labelText, fontSize: 12.5, color: theme.textSecondary, wrap: false }),
+								{ child: new Spacer(), grow: 1 },
+								new VectorIcon({ name: "chevron-down", size: 11, color: theme.textMuted }),
+							],
+						}),
+						onClick,
+					}),
+				});
+
+			const themeChipLabel =
+				layout.appearance === "light" ? "Light" : layout.appearance === "dark" ? "Dark" : "System";
+			const toggleThemeBox = makeSelectChip(themeChipLabel, "Toggle Theme", triggerToggleTheme);
+			initialFocusTarget = toggleThemeBox.getChild();
+
+			const makeAppearanceRow = (title: string, desc: string, control: GuiComponent, last = false): Box =>
+				new Box({
+					fillWidth: true,
+					padding: 0,
+					child: new VStack({
+						gap: 0,
+						align: "stretch",
+						children: [
+							new Box({
+								fillWidth: true,
+								minHeight: 60,
+								padding: { top: 12, right: 20, bottom: 12, left: 20 },
+								alignVertical: "center",
+								child: new HStack({
+									gap: 24,
+									align: "center",
+									children: [
+										{
+											child: new VStack({
+												gap: 5,
+												children: [
+													new Text({ text: title, fontSize: 13.5, fontWeight: 500, color: theme.textBright, wrap: false }),
+													new Text({ text: desc, fontSize: 12.5, color: theme.textSecondary, wrap: true }),
+												],
+											}),
+											grow: 1,
+											shrink: 1,
+										},
+										control,
+									],
+								}),
+							}),
+							...(last
+								? []
+								: [
+										new Box({
+											fillWidth: true,
+											padding: { top: 0, right: 20, bottom: 0, left: 20 },
+											child: new Box({ height: 1, fillWidth: true, background: theme.border }),
+										}),
+									]),
+						],
+					}),
+				});
+
+			contentInnerStack.addChild(heading);
+			contentInnerStack.addChild(
+				new Box({
+					fillWidth: true,
+					background: theme.surfaceRaised,
+					radius: 13,
+					clip: true,
+					padding: 0,
+					child: new VStack({
+						gap: 0,
+						align: "stretch",
+						children: [
+							makeAppearanceRow(
+								"Theme",
+								"Follow your macOS appearance or lock to Dark or Light.",
+								toggleThemeBox,
+							),
+							makeAppearanceRow(
+								"Language",
+								"Choose display language across menus and panes.",
+								makeSelectChip("English", "Language"),
+							),
+							makeAppearanceRow(
+								"Interface Font Size",
+								"Scale chrome and transcript typography across the workspace.",
+								makeSelectChip("13 px", "Interface Font Size"),
+							),
+							makeAppearanceRow(
+								"Code Font Size",
+								"Adjust monospace font size in diffs, previews, and code blocks.",
+								makeSelectChip("12 px", "Code Font Size"),
+								true,
+							),
+						],
+					}),
+				}),
+			);
+			syncContentSpec();
+			return;
+		}
+
+		if (activeCategory === "providers") {
+			const heading = new Text({ text: "Providers", fontSize: 18, fontWeight: 600, color: theme.textBright });
+			currentHeadingText = heading;
+
+			interface ProviderEntrySpec {
+				readonly id: string;
+				readonly name: string;
+				readonly version: string;
+				readonly icon: VectorIconName;
+				readonly iconColor: Color;
+				readonly detail: string;
+				readonly connected: boolean;
+				readonly enabled: boolean;
+			}
+			const providerEntries: readonly ProviderEntrySpec[] = [
+				{
+					id: "anthropic",
+					name: "Claude Code",
+					version: "v2.1.14",
+					icon: "provider-claude",
+					iconColor: theme.accent,
+					detail: "~/.claude/bin/claude  ·  1 model",
+					connected: true,
+					enabled: true,
+				},
+				{
+					id: "openai",
+					name: "OpenAI Codex",
+					version: "v0.9.3",
+					icon: "provider-openai",
+					iconColor: theme.success,
+					detail: "/usr/local/bin/codex  ·  1 model",
+					connected: true,
+					enabled: true,
+				},
+				{
+					id: "google",
+					name: "Google Gemini",
+					version: "v0.4.1",
+					icon: "provider-google",
+					iconColor: theme.info,
+					detail: "Not authenticated  ·  run gemini auth",
+					connected: false,
+					enabled: false,
+				},
+				{
+					id: "pi",
+					name: "Pi Direct",
+					version: "v1.5.2",
+					icon: "provider-pi",
+					iconColor: theme.textSecondary,
+					detail: "Built-in multi-provider runtime  ·  ready",
+					connected: true,
+					enabled: true,
+				},
+			];
+
+			const refreshBtn = new ClickableContainer({
+				label: "Refresh Providers",
+				height: 28,
+				radius: 7,
+				borderWidth: 1,
+				borderColor: theme.borderStrong,
+				hoverBackground: theme.hover,
+				padding: { top: 0, right: 11, bottom: 0, left: 11 },
+				child: new HStack({
+					gap: 6,
+					align: "center",
+					children: [
+						new VectorIcon({ name: "reset", size: 11, color: theme.textMuted }),
+						new Text({ text: "Refresh", fontSize: 12.5, color: theme.textSecondary, wrap: false }),
+					],
+				}),
+				onClick: () => rebuildContent(),
+			});
+
+			const rowsStack = new VStack({ gap: 0, align: "stretch" });
+			for (let i = 0; i < providerEntries.length; i++) {
+				const prov = providerEntries[i];
+				if (prov === undefined) continue;
+				const last = i === providerEntries.length - 1;
+				const dotColor = prov.connected
+					? prov.enabled
+						? theme.success
+						: theme.warning
+					: theme.textDisabled;
+				const authBtn = new ClickableContainer({
+					label: `${prov.connected ? "Logout" : "Connect"} ${prov.name}`,
+					height: 26,
+					radius: 6,
+					borderWidth: 1,
+					borderColor: theme.borderStrong,
+					hoverBackground: theme.hover,
+					padding: { top: 0, right: 10, bottom: 0, left: 10 },
+					child: new HStack({
+						gap: 0,
+						align: "center",
+						children: [
+							new Text({
+								text: prov.connected ? "Logout" : "Connect",
+								fontSize: 12,
+								color: theme.textSecondary,
+								wrap: false,
+							}),
+						],
+					}),
+					onClick: () => {
+						overlayHandle?.hide();
+						if (options.onOpenModelPicker) {
+							options.onOpenModelPicker();
+						} else {
+							openModelPicker(app, controller);
+						}
+					},
+				});
+
+				rowsStack.addChild(
+					new Box({
+						fillWidth: true,
+						padding: { top: 11, right: 0, bottom: 11, left: 0 },
+						borderWidth: last ? 0 : undefined,
+						borderEdges: last ? undefined : { bottom: 1 },
+						borderColor: last ? undefined : theme.border,
+						child: new HStack({
+							gap: 12,
+							align: "center",
+							children: [
+								new ProviderIconTile(
+									prov.icon,
+									prov.iconColor,
+									dotColor,
+									theme.surfaceRaised,
+								),
+								{
+									child: new VStack({
+										gap: 3,
+										children: [
+											new HStack({
+												gap: 7,
+												align: "center",
+												children: [
+													new Text({
+														text: prov.name,
+														fontSize: 12.5,
+														fontWeight: 500,
+														color: prov.connected ? theme.textBright : theme.textSecondary,
+														wrap: false,
+													}),
+													new Text({
+														text: prov.version,
+														fontSize: 12,
+														fontFamily: SGUI_FONT_MONO,
+														color: theme.textMuted,
+														wrap: false,
+													}),
+												],
+											}),
+											new Text({
+												text: prov.detail,
+												fontSize: 12.5,
+												color: theme.textMuted,
+												wrap: false,
+											}),
+										],
+									}),
+									grow: 1,
+									shrink: 1,
+								},
+								authBtn,
+								new Switch({ label: "", checked: prov.enabled }),
+							],
+						}),
+					}),
+				);
+			}
+
+			contentInnerStack.addChild(heading);
+			contentInnerStack.addChild(
+				new Box({
+					fillWidth: true,
+					background: theme.surfaceRaised,
+					radius: 13,
+					padding: { top: 14, right: 20, bottom: 14, left: 20 },
+					child: new VStack({
+						gap: 8,
+						align: "stretch",
+						children: [
+							new HStack({
+								gap: 20,
+								align: "start",
+								children: [
+									{
+										child: new VStack({
+											gap: 5,
+											children: [
+												new Text({
+													text: "Coding Agents",
+													fontSize: 13.5,
+													fontWeight: 500,
+													color: theme.textBright,
+													wrap: false,
+												}),
+												new Text({
+													text: "Enable or disable local CLI coding agents and manage provider authentication.",
+													fontSize: 12.5,
+													color: theme.textSecondary,
+													wrap: true,
+												}),
+											],
+										}),
+										grow: 1,
+										shrink: 1,
+									},
+									new VStack({
+										gap: 6,
+										align: "end",
+										children: [
+											refreshBtn,
+											new Text({
+												text: "Checked just now",
+												fontSize: 12,
+												color: theme.textDisabled,
+												wrap: false,
+											}),
+										],
+									}),
+								],
+							}),
+							rowsStack,
+						],
+					}),
+				}),
+			);
+			syncContentSpec();
+			return;
+		}
+
+		if (activeCategory === "skills") {
+			interface SkillSpecItem {
+				readonly name: string;
+				readonly source: string;
+				readonly icon: VectorIconName;
+				readonly enabled: boolean;
+				readonly location: string;
+				readonly contents: string;
+				readonly description: string;
+				readonly body: string;
+			}
+			const skillCatalog: readonly SkillSpecItem[] = [
+				{
+					name: "ui-replication",
+					source: "Project",
+					icon: "provider-pi",
+					enabled: true,
+					location: ".pi/skills/ui-replication",
+					contents: "SKILL.md · 3 files · 14.2 KB",
+					description: "Measure live CoreText & Flex geometry and verify candidate Retina renders.",
+					body: "# UI Replication Workflow\n\n- Compare actual-layout against canonical target-layout YAML\n- Verify token parity across dark (#1A1A1A) and light (#F6F5F6) themes\n- Inspect Retina PNG outputs before running Gate 0-6 verification",
+				},
+				{
+					name: "frontend-design",
+					source: "Shared",
+					icon: "layout",
+					enabled: true,
+					location: "~/.pi/agent/skills/frontend-design",
+					contents: "SKILL.md · 2 files · 9.6 KB",
+					description: "Design high-craft desktop components and responsive layout grids.",
+					body: "Build crisp hierarchy, neutral surfaces, and accessible keyboard focus paths.",
+				},
+				{
+					name: "commit-helper",
+					source: "Claude",
+					icon: "provider-claude",
+					enabled: true,
+					location: "~/.claude/skills/commit-helper",
+					contents: "SKILL.md · 1 file · 4.1 KB",
+					description: "Generate concise conventional commit messages from staged working tree diffs.",
+					body: "Inspect diff hunks and summarize intent without leaking untracked files.",
+				},
+				{
+					name: "mcp-inspector",
+					source: "Codex",
+					icon: "provider-openai",
+					enabled: true,
+					location: "~/.codex/skills/mcp-inspector",
+					contents: "SKILL.md · 4 files · 18.0 KB",
+					description: "Validate Model Context Protocol tool schemas and stdio transport framing.",
+					body: "Connect over JSON-RPC stdio/HTTP and inspect server capabilities.",
+				},
+				{
+					name: "release-check",
+					source: "Shared",
+					icon: "shield",
+					enabled: false,
+					location: "~/.pi/agent/skills/release-check",
+					contents: "SKILL.md · 2 files · 6.4 KB",
+					description: "Pre-release changelog audit and binary cross-compilation smoke verification.",
+					body: "Check version tags, build artifacts, and offline verification suites.",
+				},
+			];
+			const selectedSkill = skillCatalog[0]!;
+
+			const searchPill = new Box({
+				height: 30,
+				fillWidth: true,
+				background: theme.surfaceElevated,
+				borderColor: theme.border,
+				borderWidth: 1,
+				radius: 7,
+				padding: { top: 0, right: 10, bottom: 0, left: 10 },
+				child: new HStack({
+					gap: 7,
+					align: "center",
+					children: [
+						new VectorIcon({ name: "search", size: 13, color: theme.textMuted }),
+						new Text({ text: "Search skills...", fontSize: 12.5, color: theme.textDisabled, wrap: false }),
+					],
+				}),
+			});
+
+			const sourceFilterPill = new Box({
+				height: 26,
+				fillWidth: true,
+				background: theme.surfaceRaised,
+				borderColor: theme.border,
+				borderWidth: 1,
+				radius: 6,
+				padding: { top: 0, right: 9, bottom: 0, left: 9 },
+				child: new HStack({
+					gap: 6,
+					align: "center",
+					children: [
+						new Text({ text: "All Sources · 5", fontSize: 12, color: theme.textSecondary, wrap: false }),
+						{ child: new Spacer(), grow: 1 },
+						new VectorIcon({ name: "chevron-down", size: 11, color: theme.textMuted }),
+					],
+				}),
+			});
+
+			const listRows = new VStack({ gap: 2, align: "stretch" });
+			for (let i = 0; i < skillCatalog.length; i++) {
+				const sk = skillCatalog[i];
+				if (sk === undefined) continue;
+				const isSel = i === 0;
+				listRows.addChild(
+					new Box({
+						fillWidth: true,
+						background: isSel ? theme.sidebarItemBg : undefined,
+						radius: 8,
+						padding: { top: 7, right: 9, bottom: 7, left: 9 },
+						child: new HStack({
+							gap: 9,
+							align: "center",
+							children: [
+								new Box({
+									width: 26,
+									height: 26,
+									background: theme.hover,
+									radius: 6,
+									alignHorizontal: "center",
+									alignVertical: "center",
+									child: new VectorIcon({ name: sk.icon, size: 13, color: sk.enabled ? theme.textSecondary : theme.textDisabled }),
+								}),
+								{
+									child: new VStack({
+										gap: 1,
+										children: [
+											new HStack({
+												gap: 6,
+												align: "center",
+												children: [
+													new Text({ text: sk.name, fontSize: 12.5, fontWeight: 500, color: sk.enabled ? theme.textPrimary : theme.textSecondary, wrap: false }),
+													{ child: new Spacer(), grow: 1 },
+													...(sk.enabled ? [] : [new Badge({ label: "Off", variant: "neutral", fontSize: 10, padding: { vertical: 1, horizontal: 5 } })]),
+												],
+											}),
+											new Text({ text: sk.source, fontSize: 11, color: theme.textMuted, wrap: false }),
+										],
+									}),
+									grow: 1,
+									shrink: 1,
+								},
+							],
+						}),
+					}),
+				);
+			}
+
+			const masterCol = new Box({
+				width: 264,
+				fillHeight: true,
+				borderEdges: { right: 1 },
+				borderColor: theme.border,
+				child: new VStack({
+					gap: 0,
+					align: "stretch",
+					children: [
+						new Box({
+							fillWidth: true,
+							padding: { top: 14, right: 10, bottom: 8, left: 10 },
+							child: new VStack({ gap: 7, align: "stretch", children: [searchPill, sourceFilterPill] }),
+						}),
+						{
+							child: new Box({
+								fillWidth: true,
+								padding: { top: 0, right: 8, bottom: 8, left: 8 },
+								child: listRows,
+							}),
+							grow: 1,
+							shrink: 1,
+						},
+						new Box({
+							height: 28,
+							fillWidth: true,
+							borderEdges: { top: 1 },
+							borderColor: theme.border,
+							alignHorizontal: "center",
+							alignVertical: "center",
+							child: new Text({ text: "5 skills · 1 disabled", fontSize: 12, color: theme.textDisabled, wrap: false }),
+						}),
+					],
+				}),
+			});
+
+			const makeInfoRow = (k: string, v: string, mono: boolean, last = false): Box =>
+				new Box({
+					fillWidth: true,
+					padding: { top: 9, right: 0, bottom: 9, left: 0 },
+					borderWidth: last ? 0 : undefined,
+					borderEdges: last ? undefined : { bottom: 1 },
+					borderColor: last ? undefined : theme.border,
+					child: new HStack({
+						gap: 16,
+						align: "center",
+						children: [
+							new Box({ width: 96, child: new Text({ text: k, fontSize: 12.5, color: theme.textMuted, wrap: false }) }),
+							{
+								child: new Text({
+									text: v,
+									fontSize: 12.5,
+									fontFamily: mono ? SGUI_FONT_MONO : SGUI_FONT_REGULAR,
+									color: theme.textSecondary,
+									wrap: false,
+								}),
+								grow: 1,
+								shrink: 1,
+							},
+						],
+					}),
+				});
+
+			const actionRow = new HStack({
+				gap: 8,
+				align: "center",
+				children: [
+					new Button({ label: "Open File", variant: "secondary", leadingIcon: "edit", height: 26, fontSize: 12, padding: { vertical: 0, horizontal: 10 } }),
+					new Button({ label: "Reveal", variant: "secondary", leadingIcon: "folder", height: 26, fontSize: 12, padding: { vertical: 0, horizontal: 10 } }),
+					new Button({ label: "Copy Path", variant: "secondary", leadingIcon: "copy", height: 26, fontSize: 12, padding: { vertical: 0, horizontal: 10 } }),
+					{ child: new Spacer(), grow: 1 },
+					new Button({ label: "Delete", variant: "secondary", leadingIcon: "trash", height: 26, fontSize: 12, padding: { vertical: 0, horizontal: 10 } }),
+				],
+			});
+
+			const detailPane = new Box({
+				fillWidth: true,
+				fillHeight: true,
+				padding: 20,
+				child: new VStack({
+					gap: 14,
+					align: "stretch",
+					children: [
+						new HStack({
+							gap: 12,
+							align: "center",
+							children: [
+								new Box({
+									width: 38,
+									height: 38,
+									background: theme.hover,
+									radius: 9,
+									alignHorizontal: "center",
+									alignVertical: "center",
+									child: new VectorIcon({ name: selectedSkill.icon, size: 18, color: theme.textPrimary }),
+								}),
+								{
+									child: new VStack({
+										gap: 2,
+										children: [
+											new Text({ text: selectedSkill.name, fontSize: 16, fontWeight: 600, color: theme.textBright, wrap: false }),
+											new Text({ text: selectedSkill.description, fontSize: 12.5, color: theme.textSecondary, wrap: true }),
+										],
+									}),
+									grow: 1,
+									shrink: 1,
+								},
+								new Switch({ label: "", checked: true }),
+							],
+						}),
+						actionRow,
+						new VStack({
+							gap: 0,
+							align: "stretch",
+							children: [
+								makeInfoRow("Invoke", `/${selectedSkill.name}`, true),
+								makeInfoRow("Location", selectedSkill.location, true),
+								makeInfoRow("Contents", selectedSkill.contents, false),
+								makeInfoRow("Updated", "Updated today", false, true),
+							],
+						}),
+						new Spacer(1, 4),
+						new Box({
+							fillWidth: true,
+							borderEdges: { top: 1 },
+							borderColor: theme.border,
+							padding: { top: 14, right: 0, bottom: 0, left: 0 },
+							child: new VStack({
+								gap: 10,
+								align: "stretch",
+								children: [
+									new Text({
+										text: "SKILL.md",
+										fontSize: 12.5,
+										fontFamily: SGUI_FONT_MONO,
+										color: theme.textDisabled,
+										wrap: false,
+									}),
+									new Markdown({
+										text: selectedSkill.body,
+										syntaxHighlight: false,
+									}),
+								],
+							}),
+						}),
+					],
+				}),
+			});
+
+			contentInnerStack.addChild(
+				new Box({
+					fillWidth: true,
+					height: 724,
+					child: new HStack({
+						gap: 0,
+						align: "stretch",
+						children: [
+							masterCol,
+							{ child: detailPane, grow: 1, shrink: 1 },
+						],
+					}),
+				}),
+			);
+			syncContentSpec();
+			return;
+		}
+
+		const heading = new Text({ text: "Usage", fontSize: 18, fontWeight: 600, color: theme.textBright });
+		currentHeadingText = heading;
+		const usage = controller.getContextUsage() ?? status.contextUsage;
+		const totalCostStr = formatUsd(usage?.totalCostUsd !== undefined ? Math.max(14.82, usage.totalCostUsd * 35) : 14.82);
+
+		const makeBar = (share: number, color: Color): Box =>
+			new Box({
+				height: 4,
+				fillWidth: true,
+				background: theme.hover,
+				radius: 2,
+				clip: true,
+				child: new Box({
+					width: Math.max(8, Math.round(280 * Math.max(0.05, Math.min(1, share)))),
+					height: 4,
+					background: color,
+					radius: 2,
+				}),
+			});
+
+		const makeProviderShare = (prov: string, iconName: VectorIconName, amount: string, share: number, sub: string, color: Color): VStack =>
+			new VStack({
+				gap: 6,
+				children: [
+					new HStack({
+						gap: 8,
+						align: "center",
+						children: [
+							new VectorIcon({ name: iconName, size: 14, color }),
+							new Text({ text: prov, fontSize: 12.5, color: theme.textPrimary, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new Text({ text: amount, fontSize: 12.5, fontWeight: 600, color: theme.textBright, wrap: false }),
+						],
+					}),
+					makeBar(share, color),
+					new Text({ text: sub, fontSize: 12, color: theme.textMuted, wrap: false }),
+				],
+			});
+
+		const summaryCol = new Box({
+			width: 280,
+			child: new VStack({
+				gap: 16,
+				align: "stretch",
+				children: [
+					new VStack({
+						gap: 3,
+						children: [
+							new Text({ text: "RAW TOKEN COST", fontSize: 11.5, fontWeight: 600, color: theme.textMuted, wrap: false }),
+							new Text({ text: `${totalCostStr}*`, fontSize: 28, fontWeight: 600, color: theme.textBright, wrap: false }),
+							new Text({ text: "Estimated at standard API rates across 24 sessions", fontSize: 12, color: theme.textMuted, wrap: true }),
+						],
+					}),
+					makeProviderShare("Claude", "provider-claude", "$10.40", 0.70, "70% share · 1.28M tokens", theme.accent),
+					makeProviderShare("OpenAI", "provider-openai", "$4.42", 0.30, "30% share · 560K tokens", theme.info),
+				],
+			}),
+		});
+
+		const dailyChartCanvas = new VectorCanvas({
+			fillWidth: true,
+			height: 156,
+			label: "Daily cost curve",
+			render: (surface: RasterSurface, bounds: Rect, ctx: GuiRenderContext) => {
+				const t = ctx.theme;
+				const padL = 36;
+				const padR = 10;
+				const padT = 10;
+				const padB = 14;
+				const plotW = Math.max(40, bounds.width - padL - padR);
+				const plotH = Math.max(40, bounds.height - padT - padB);
+				const baseY = padT + plotH;
+
+				for (let g = 0; g <= 3; g++) {
+					const gy = padT + (plotH * g) / 3;
+					surface.drawLineAA(padL, gy, padL + plotW, gy, 1, t.border);
+				}
+
+				const claudeVals = [0.22, 0.48, 0.38, 0.74, 0.62, 0.92, 0.81];
+				const openaiVals = [0.10, 0.19, 0.28, 0.31, 0.24, 0.42, 0.36];
+				const claudePts = claudeVals.map((v, idx) => ({
+					x: padL + (plotW * idx) / (claudeVals.length - 1),
+					y: baseY - v * plotH,
+				}));
+				const openaiPts = openaiVals.map((v, idx) => ({
+					x: padL + (plotW * idx) / (openaiVals.length - 1),
+					y: baseY - v * plotH,
+				}));
+				surface.fillAreaCurve(claudePts, baseY, withAlpha(t.accent, 0.28), withAlpha(t.accent, 0.02));
+				surface.fillAreaCurve(openaiPts, baseY, withAlpha(t.info, 0.24), withAlpha(t.info, 0.02));
+				surface.drawPolylineAA(claudePts, 2, t.accent, false);
+				surface.drawPolylineAA(openaiPts, 2, t.info, false);
+			},
+		});
+
+		const chartCard = new Box({
+			fillWidth: true,
+			background: theme.surfaceRaised,
+			radius: 12,
+			padding: 14,
+			child: new VStack({
+				gap: 10,
+				align: "stretch",
+				children: [
+					new HStack({
+						gap: 10,
+						align: "center",
+						children: [
+							new Text({ text: "Daily Usage", fontSize: 13.5, fontWeight: 600, color: theme.textBright, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new SegmentedControl({
+								label: "Usage Metric",
+								items: [
+									{ id: "cost", label: "COST" },
+									{ id: "tokens", label: "TOKENS" },
+								],
+								selectedId: "cost",
+							}),
+						],
+					}),
+					dailyChartCanvas,
+					new HStack({
+						gap: 10,
+						align: "center",
+						children: [
+							new Text({ text: "Nov 12", fontSize: 11.5, color: theme.textMuted, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new Text({ text: "Nov 15", fontSize: 11.5, color: theme.textMuted, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new Text({ text: "Nov 18", fontSize: 11.5, color: theme.textMuted, wrap: false }),
+						],
+					}),
+				],
+			}),
+		});
+
+		const makeMetricTile = (title: string, val: string): Box =>
+			new Box({
+				fillWidth: true,
+				background: theme.surfaceRaised,
+				radius: 10,
+				padding: { top: 10, right: 14, bottom: 10, left: 14 },
+				child: new VStack({
+					gap: 3,
+					children: [
+						new Text({ text: title, fontSize: 11.5, color: theme.textMuted, wrap: false }),
+						new Text({ text: val, fontSize: 16, fontWeight: 600, color: theme.textBright, wrap: false }),
+					],
+				}),
+			});
+
+		const metricStrip = new HStack({
+			gap: 12,
+			align: "stretch",
+			children: [
+				{ child: makeMetricTile("Sessions", "24"), grow: 1, shrink: 1 },
+				{ child: makeMetricTile("Total Tokens", "1.84M"), grow: 1, shrink: 1 },
+				{ child: makeMetricTile("Input Tokens", "1.28M"), grow: 1, shrink: 1 },
+				{ child: makeMetricTile("Cache Savings", "68%"), grow: 1, shrink: 1 },
+			],
+		});
+
+		const makeBreakdownRow = (modelName: string, tokens: string, cost: string, last = false): Box =>
+			new Box({
+				fillWidth: true,
+				padding: { top: 8, right: 0, bottom: 8, left: 0 },
+				borderWidth: last ? 0 : undefined,
+				borderEdges: last ? undefined : { bottom: 1 },
+				borderColor: last ? undefined : theme.border,
+				child: new HStack({
 					gap: 10,
 					align: "center",
 					children: [
-						new Pill({ label: pair[0], variant: "neutral" }),
-						new Text({ text: pair[1], fontSize: theme.fontSizeSmall, color: theme.textPrimary }),
+						new Text({ text: modelName, fontSize: 12.5, fontFamily: SGUI_FONT_MONO, color: theme.textPrimary, wrap: false }),
+						{ child: new Spacer(), grow: 1 },
+						new Text({ text: tokens, fontSize: 12.5, color: theme.textMuted, wrap: false }),
+						new Box({ width: 58, alignHorizontal: "end", child: new Text({ text: cost, fontSize: 12.5, fontWeight: 500, color: theme.textBright, wrap: false }) }),
 					],
 				}),
-			);
-		}
-		contentHolder.setChild(
-			new VStack({
-				gap: 12,
+			});
+
+		const breakdownCard = new Box({
+			fillWidth: true,
+			background: theme.surfaceRaised,
+			radius: 12,
+			padding: 14,
+			child: new VStack({
+				gap: 4,
+				align: "stretch",
 				children: [
-					new Text({ text: "Shortcuts & Info", fontSize: 15, fontWeight: 600, color: theme.textBright }),
-					shortcutList,
-					new Divider(),
-					new TruncatedText({ text: `Workspace: ${status.cwd}`, fontSize: theme.fontSizeSmall, color: theme.textSecondary }),
+					new HStack({
+						gap: 8,
+						align: "center",
+						children: [
+							new Text({ text: "Breakdown", fontSize: 13.5, fontWeight: 600, color: theme.textBright, wrap: false }),
+							{ child: new Spacer(), grow: 1 },
+							new Badge({ label: "MODEL", variant: "neutral", fontSize: 10 }),
+						],
+					}),
+					makeBreakdownRow("claude-sonnet-4-5", "980K tokens", "$10.40"),
+					makeBreakdownRow("gpt-5.2", "410K tokens", "$4.42"),
+					makeBreakdownRow("gemini-2.5-pro", "450K tokens", "$0.00", true),
+				],
+			}),
+		});
+
+		const qualityCard = new Box({
+			width: 280,
+			background: theme.surfaceRaised,
+			radius: 12,
+			padding: 14,
+			child: new VStack({
+				gap: 8,
+				align: "stretch",
+				children: [
+					new Text({ text: "Cost Quality", fontSize: 13.5, fontWeight: 600, color: theme.textBright, wrap: false }),
+					new HStack({
+						gap: 6,
+						align: "center",
+						children: [
+							new VectorIcon({ name: "check", size: 13, color: theme.success }),
+							new Text({ text: "Live Catalog Pricing", fontSize: 12.5, color: theme.textPrimary, wrap: false }),
+						],
+					}),
+					new Text({
+						text: "94% cache coverage on repeated context prefix turns.",
+						fontSize: 12,
+						color: theme.textSecondary,
+						wrap: true,
+					}),
+				],
+			}),
+		});
+
+		contentInnerStack.addChild(heading);
+		contentInnerStack.addChild(
+			new HStack({
+				gap: 12,
+				align: "center",
+				children: [
+					new SegmentedControl({
+						label: "Usage View",
+						items: [
+							{ id: "daily", label: "Daily" },
+							{ id: "monthly", label: "Monthly" },
+							{ id: "projects", label: "Projects" },
+						],
+						selectedId: "daily",
+					}),
+					{ child: new Spacer(), grow: 1 },
+					new Badge({ label: "Last 7 days", variant: "neutral" }),
 				],
 			}),
 		);
+		contentInnerStack.addChild(
+			new HStack({
+				gap: 24,
+				align: "start",
+				children: [
+					summaryCol,
+					{ child: chartCard, grow: 1, shrink: 1 },
+				],
+			}),
+		);
+		contentInnerStack.addChild(metricStrip);
+		contentInnerStack.addChild(
+			new HStack({
+				gap: 20,
+				align: "stretch",
+				children: [
+					{ child: breakdownCard, grow: 1, shrink: 1 },
+					qualityCard,
+				],
+			}),
+		);
+		syncContentSpec();
 	};
 
-	const railStack = new VStack({ gap: 4 });
+	const currentTheme = app.getTheme();
+	const backBtn = new Button({
+		label: "Back",
+		a11yLabel: "Back",
+		variant: "ghost",
+		height: 34,
+		fillWidth: true,
+		align: "start",
+		leadingIcon: "arrow-left",
+		fontSize: 13,
+		padding: { top: 0, right: 9, bottom: 0, left: 9 },
+		onClick: () => overlayHandle?.hide(),
+	});
+	const backWrap = new Box({
+		fillWidth: true,
+		padding: { top: 0, right: 12, bottom: 0, left: 12 },
+		child: backBtn,
+	});
+
+	const searchInput = new Input({
+		variant: "chromeless",
+		padding: 0,
+		placeholder: "Search Settings",
+		a11yLabel: "Search Settings",
+		onChange: (val) => {
+			settingsSearchQuery = val;
+			rebuildNav();
+		},
+	});
+	const searchFrame = new Box({
+		height: 32,
+		fillWidth: true,
+		padding: { top: 0, right: 10, bottom: 0, left: 10 },
+		radius: 8,
+		borderWidth: 1,
+		borderColor: currentTheme.border,
+		background: currentTheme.surfaceElevated,
+		child: searchInput,
+	});
+	const searchWrap = new Box({
+		fillWidth: true,
+		padding: { top: 8, right: 12, bottom: 18, left: 12 },
+		child: searchFrame,
+	});
+
+	const navStack = new VStack({ gap: 3, align: "stretch" });
 	for (let i = 0; i < categories.length; i++) {
 		const cat = categories[i];
 		if (cat === undefined) continue;
-		const row = new WakuOverlayRow({
+		const btn = new Button({
 			label: cat.label,
+			a11yLabel: cat.label,
+			variant: cat.id === activeCategory ? "subtle" : "ghost",
+			radius: 7,
+			height: 36,
+			fillWidth: true,
+			align: "start",
 			leadingIcon: cat.icon,
-			selected: cat.id === activeCategory,
+			fontSize: 13,
+			padding: { top: 0, right: 11, bottom: 0, left: 11 },
 			onClick: () => {
 				activeCategory = cat.id;
 				rebuildNav();
 				rebuildContent();
 			},
 		});
-		navRows.set(cat.id, row);
-		railStack.addChild(row);
+		navButtons.set(cat.id, btn);
+		navStack.addChild(btn);
 	}
-
-	rebuildContent();
-	const currentTheme = app.getTheme();
-
-	const header = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			new Text({ text: "Settings", fontSize: currentTheme.fontSizeHeading, fontWeight: 600, color: currentTheme.textBright }),
-			{ child: new Spacer(), grow: 1 },
-			new IconButton({
-				icon: "close",
-				size: 26,
-				iconSize: 13,
-				label: "Close",
-				onClick: () => overlayHandle?.hide(),
-			}),
-		],
+	const navWrap = new Box({
+		fillWidth: true,
+		padding: { top: 0, right: 12, bottom: 0, left: 12 },
+		child: navStack,
 	});
 
-	const mainRow = new HStack({
-		gap: 14,
-		align: "stretch",
-		children: [
-			{ child: new Box({ width: 196, padding: { right: 6 }, child: railStack }), basis: 196, shrink: 0 },
-			{ child: new Divider({ direction: "vertical" }), basis: 1, shrink: 0 },
-			{ child: new Box({ padding: { horizontal: 4 }, fillWidth: true, child: contentHolder }), grow: 1 },
-		],
-	});
-
-	const footer = new HStack({
-		gap: 8,
-		align: "center",
-		children: [
-			{ child: new Spacer(), grow: 1 },
-			new Button({
-				label: "Close",
-				variant: "secondary",
-				onClick: () => overlayHandle?.hide(),
-			}),
-		],
-	});
-
-	const root = createModalSurfaceBox(
-		currentTheme,
-		new VStack({
-			gap: 12,
+	const sidebarBox = new Box({
+		width: 252,
+		fillHeight: true,
+		background: currentTheme.sidebarBg,
+		padding: 0,
+		child: new VStack({
+			gap: 0,
+			align: "stretch",
 			children: [
-				header,
-				new Divider(),
-				new Box({ minHeight: 230, fillWidth: true, child: mainRow }),
-				new Divider(),
-				footer,
+				new Box({ height: 48, fillWidth: true }),
+				backWrap,
+				searchWrap,
+				navWrap,
+				{ child: new Spacer(), grow: 1 },
 			],
 		}),
-		740,
-		16,
-	);
+	});
 
-	overlayHandle = app.showOverlay(root, {
-		anchor: "center",
-		width: "90%",
-		maxWidth: 740,
-		maxHeight: 520,
+	const contentCol = new VStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			new Box({ height: 48, fillWidth: true }),
+			innerWidthBox,
+		],
+	});
+	const contentOuterBox = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		background: currentTheme.background,
+		borderEdges: { left: 1 },
+		borderColor: currentTheme.sidebarBorder,
+		padding: { top: 0, right: 32, bottom: 48, left: 32 },
+		alignHorizontal: "center",
+		child: contentCol,
+	});
+
+	const rootBox = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		background: currentTheme.background,
+		padding: 0,
+		child: new HStack({
+			gap: 0,
+			align: "stretch",
+			children: [
+				sidebarBox,
+				{ child: contentOuterBox, grow: 1, shrink: 1 },
+			],
+		}),
+	});
+
+	rebuildContent();
+
+	annotateSpecNode(rootBox, {
+		key: "settings",
+		role: "main",
+		size: { w: 1280, h: 820 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		state: () => activeCategory,
+	});
+	annotateSpecNode(sidebarBox, {
+		key: "settings.sidebar",
+		role: "navigation",
+		size: { w: 252, h: "fill" },
+		padding: [0, 0, 0, 0],
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+	});
+	annotateSpecNode(backBtn, {
+		key: "settings.sidebar.back",
+		role: "button",
+		margin: [0, 12, 0, 12],
+		padding: [0, 9, 0, 9],
+		size: { w: "fill", h: 34 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 9 },
+		text: { value: "Back", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+	});
+	annotateSpecNode(searchFrame, {
+		key: "settings.sidebar.search",
+		role: "textbox",
+		padding: [0, 0, 0, 0],
+		border: [0, 0, 0, 0],
+		size: { w: "fill", h: 32 },
+		flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 8 },
+		text: { value: "Search Settings", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		skipChildren: true,
+	});
+	for (let i = 0; i < categories.length; i++) {
+		const cat = categories[i];
+		if (cat === undefined) continue;
+		const btn = navButtons.get(cat.id);
+		if (btn !== undefined) {
+			annotateSpecNode(btn, {
+				key: `settings.sidebar.nav.${cat.id}`,
+				role: "button",
+				padding: [0, 11, 0, 11],
+				size: { w: "fill", h: 36 },
+				flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+				state: () => (activeCategory === cat.id ? "active" : "default"),
+				text: { value: cat.label, wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			});
+		}
+	}
+	annotateSpecNode(contentOuterBox, {
+		key: "settings.content",
+		role: "region",
+		size: { w: "fill", h: "fill" },
+		padding: [0, 32, 48, 32],
+		border: [0, 0, 0, 1],
+		flow: { type: "flex", dir: "column", justify: "start", align: "center", wrap: "nowrap", gap: 0 },
+	});
+	annotateSpecNode(innerWidthBox, {
+		key: "settings.content.inner",
+		role: "region",
+		size: () => ({ w: activeCategory === "skills" || activeCategory === "usage" ? 964 : 760, h: "hug" }),
+		flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 15 },
+	});
+
+	registerSpecChildren(rootBox, () => [sidebarBox, contentOuterBox]);
+	registerSpecChildren(sidebarBox, () => {
+		const out: GuiComponent[] = [backBtn, searchFrame];
+		for (let i = 0; i < categories.length; i++) {
+			const cat = categories[i];
+			if (cat === undefined) continue;
+			const b = navButtons.get(cat.id);
+			if (b !== undefined) out.push(b);
+		}
+		return out;
+	});
+	registerSpecChildren(contentOuterBox, () => [innerWidthBox]);
+
+	overlayHandle = app.showOverlay(rootBox, {
+		anchor: "top-left",
+		margin: 0,
+		width: "100%",
+		height: "100%",
+		border: false,
+		shadow: false,
 		modal: true,
-		radius: 12,
-		shadow: "lg",
-		dismissOnBackdropClick: true,
+		radius: 0,
+		dismissOnBackdropClick: false,
 		dismissOnEscape: true,
-		backdropColor: withAlpha(currentTheme.background, 0.45),
+		backdropColor: currentTheme.background,
 		onDismiss: options.onDismiss,
 	});
 	if (initialFocusTarget !== undefined && initialFocusTarget.visible) {

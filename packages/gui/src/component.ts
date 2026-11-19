@@ -119,6 +119,9 @@ export abstract class GuiHost {
 	abstract invalidate(component?: GuiComponent): void;
 	abstract requestFocus(component: GuiComponent | undefined): void;
 	abstract isFocused(component: GuiComponent): boolean;
+	isFocusVisible(_component: GuiComponent): boolean {
+		return false;
+	}
 	abstract isHovered(component: GuiComponent): boolean;
 	abstract getClipboardText(): string;
 	abstract setClipboardText(text: string): void;
@@ -166,6 +169,10 @@ export class GuiRenderContext {
 
 	isFocused(component: GuiComponent): boolean {
 		return this.host.isFocused(component);
+	}
+
+	isFocusVisible(component: GuiComponent): boolean {
+		return this.host.isFocusVisible(component);
 	}
 
 	isHovered(component: GuiComponent): boolean {
@@ -427,6 +434,10 @@ export abstract class GuiComponent {
 
 	isFocused(): boolean {
 		return this.host?.isFocused(this) ?? false;
+	}
+
+	isFocusVisible(): boolean {
+		return this.host?.isFocusVisible(this) ?? false;
 	}
 
 	isHovered(): boolean {

@@ -22,6 +22,7 @@ import {
 	type GuiPointerEvent,
 	type GuiPointerResult,
 	type GuiRenderContext,
+	type GuiScrollEvent,
 	type GuiTheme,
 	HStack,
 	IconButton,
@@ -35,6 +36,7 @@ import {
 	Spacer,
 	SplitResizeHandle,
 	Text,
+	type TextStyle,
 	tokenColorForKind,
 	tokenizeCodeLines,
 	TruncatedText,
@@ -48,6 +50,7 @@ import {
 	SGUI_FONT_REGULAR,
 } from "@pi-ts/gui";
 import { openGitBranchModal, openGitCommitModal } from "./overlays.ts";
+import { annotateSpecNode, registerSpecChildren } from "./ui-spec-meta.ts";
 import type {
 	GuiChangedFile,
 	GuiDiffLine,
@@ -58,9 +61,11 @@ import type {
 	GuiWorkspaceFilePreview,
 } from "./types.ts";
 
-export const RIGHT_PANEL_DEFAULT_WIDTH = 380;
-export const RIGHT_PANEL_MIN_WIDTH = 260;
-export const RIGHT_PANEL_MAX_WIDTH = 640;
+export const RIGHT_PANEL_DEFAULT_WIDTH = 460;
+export const RIGHT_PANEL_MIN_WIDTH = 280;
+export const RIGHT_PANEL_MAX_WIDTH = 1000;
+
+export type RightPanelTab = "changes" | "files" | "terminal" | "tree";
 
 const DIFF_ADD_GREEN_TEXT = parseColor("#86C798");
 const DIFF_DEL_RED_TEXT = parseColor("#EB8074");
@@ -214,7 +219,7 @@ class ChangedFileListRow extends GuiComponent {
 		} else if (this.isHovered()) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 6);
 		}
-		if (this.isFocused()) {
+		if (this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, 6, 0.2, 2);
 		}
 
@@ -480,7 +485,7 @@ class WorkspaceTreeRow extends GuiComponent {
 		} else if (this.isHovered()) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 6);
 		}
-		if (this.isFocused()) {
+		if (this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, 6, 0.2, 2);
 		}
 
@@ -572,7 +577,7 @@ class WorkspaceTreeRow extends GuiComponent {
 	}
 }
 
-/** Syntax-highlighted code viewer with line numbers using tokenizeCodeLines & tokenColorForKind. */
+/** Syntax-highlighted code viewer with line numbers and clean token soft-wrapping inside right padding. */
 class SyntaxPreviewView extends GuiComponent {
 	private preview: GuiWorkspaceFilePreview | undefined;
 	private tokenizedLines: readonly (readonly CodeToken[])[] = [];
@@ -596,14 +601,87 @@ class SyntaxPreviewView extends GuiComponent {
 		return Math.max(18, Math.ceil(ctx.measureText(style, 0, "M").lineHeight) + 4);
 	}
 
+	private buildWrappedRows(
+		ctx: GuiRenderContext,
+		codeAvailW: number,
+	): readonly { readonly lineNo: string; readonly segments: readonly { readonly text: string; readonly color: Color; readonly xOffset: number }[] }[] {
+		const t = ctx.theme;
+		const style = { fontFamily: SGUI_FONT_MONO, fontSize: t.fontSizeCode, fontWeight: 400 };
+		const rows: { lineNo: string; segments: { text: string; color: Color; xOffset: number }[] }[] = [];
+		const maxCodeW = Math.max(32, codeAvailW);
+
+		for (let i = 0; i < this.tokenizedLines.length; i++) {
+			const lineTokens = this.tokenizedLines[i];
+			if (lineTokens === undefined) continue;
+			let segs: { text: string; color: Color; xOffset: number }[] = [];
+			let xOffset = 0;
+			let isFirstRowOfLine = true;
+
+			for (let ti = 0; ti < lineTokens.length; ti++) {
+				const tok = lineTokens[ti];
+				if (tok === undefined || tok.text.length === 0) continue;
+				const color = tokenColorForKind(tok.kind, t);
+				const tokWidth = ctx.measureText(style, 0, tok.text).width;
+				if (xOffset > 0 && xOffset + tokWidth > maxCodeW) {
+					rows.push({ lineNo: isFirstRowOfLine ? `${i + 1}` : "", segments: segs });
+					isFirstRowOfLine = false;
+					segs = [];
+					xOffset = 0;
+					if (/^\s+$/.test(tok.text)) {
+						continue;
+					}
+				}
+				if (xOffset === 0 && tokWidth > maxCodeW) {
+					// Character-wrap a single long identifier/string token that exceeds code column width
+					let rem = tok.text;
+					while (rem.length > 0) {
+						let take = rem.length;
+						if (ctx.measureText(style, 0, rem).width > maxCodeW) {
+							let lo = 1;
+							let hi = rem.length;
+							while (lo < hi) {
+								const mid = Math.ceil((lo + hi) * 0.5);
+								if (ctx.measureText(style, 0, rem.slice(0, mid)).width <= maxCodeW) {
+									lo = mid;
+								} else {
+									hi = mid - 1;
+								}
+							}
+							take = Math.max(1, lo);
+						}
+						const part = rem.slice(0, take);
+						const partW = ctx.measureText(style, 0, part).width;
+						segs.push({ text: part, color, xOffset });
+						xOffset += partW;
+						rem = rem.slice(take);
+						if (rem.length > 0) {
+							rows.push({ lineNo: isFirstRowOfLine ? `${i + 1}` : "", segments: segs });
+							isFirstRowOfLine = false;
+							segs = [];
+							xOffset = 0;
+						}
+					}
+					continue;
+				}
+				segs.push({ text: tok.text, color, xOffset });
+				xOffset += tokWidth;
+			}
+			rows.push({ lineNo: isFirstRowOfLine ? `${i + 1}` : "", segments: segs });
+		}
+		return rows;
+	}
+
 	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const rowH = this.lineHeightFor(ctx);
 		if (this.preview === undefined || this.preview.isBinary || this.preview.error !== undefined) {
 			return { width: Math.max(0, maxWidth), height: rowH * 3 };
 		}
+		const gutterW = 42;
+		const codeAvailW = Math.max(32, maxWidth - (gutterW + 8 + 24));
+		const wrapped = this.buildWrappedRows(ctx, codeAvailW);
 		return {
 			width: Math.max(0, maxWidth),
-			height: Math.max(rowH * 2, this.tokenizedLines.length * rowH + 10),
+			height: Math.max(rowH * 2, wrapped.length * rowH + 10),
 		};
 	}
 
@@ -627,27 +705,27 @@ class SyntaxPreviewView extends GuiComponent {
 			return;
 		}
 
-		ctx.pushClip(r);
-		const rowH = this.lineHeightFor(ctx);
+		const rightPad = 24;
 		const gutterW = 42;
+		const codeStartX = r.x + gutterW + 8;
+		const codeAvailW = Math.max(32, r.width - (gutterW + 8 + rightPad));
+		const wrapped = this.buildWrappedRows(ctx, codeAvailW);
+
+		ctx.pushClip({ x: r.x, y: r.y, width: Math.max(0, r.width - rightPad), height: r.height });
+		const rowH = this.lineHeightFor(ctx);
 		ctx.fillRect(r.x, r.y, gutterW, r.height, withAlpha(t.surfaceMuted, 0.35));
 
 		let y = r.y + 4;
-		for (let i = 0; i < this.tokenizedLines.length; i++) {
-			const lineTokens = this.tokenizedLines[i];
-			if (lineTokens === undefined) continue;
-			const lineNo = `${i + 1}`;
-			ctx.drawStyledText(r.x + 6, y + 2, gutterW - 10, t.textMuted, style, lineNo.padStart(4, " "));
-
-			let xCursor = r.x + gutterW + 8;
-			const maxX = r.x + r.width - 8;
-			for (let ti = 0; ti < lineTokens.length && xCursor < maxX; ti++) {
-				const tok = lineTokens[ti];
-				if (tok === undefined || tok.text.length === 0) continue;
-				const color = tokenColorForKind(tok.kind, t);
-				const tokWidth = ctx.measureText(style, 0, tok.text).width;
-				ctx.drawStyledText(xCursor, y + 2, Math.max(4, maxX - xCursor), color, style, tok.text);
-				xCursor += tokWidth;
+		for (let i = 0; i < wrapped.length; i++) {
+			const row = wrapped[i];
+			if (row === undefined) continue;
+			if (row.lineNo.length > 0) {
+				ctx.drawStyledText(r.x + 6, y + 2, 0, t.textMuted, style, row.lineNo.padStart(4, " "));
+			}
+			for (let si = 0; si < row.segments.length; si++) {
+				const seg = row.segments[si];
+				if (seg === undefined) continue;
+				ctx.drawStyledText(codeStartX + seg.xOffset, y + 2, 0, seg.color, style, seg.text);
 			}
 			y += rowH;
 		}
@@ -700,7 +778,7 @@ class SessionTreeEntryRow extends GuiComponent {
 		} else if (this.isHovered()) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 7);
 		}
-		if (this.isFocused()) {
+		if (this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, 7, 0.2, 2);
 		}
 
@@ -778,7 +856,265 @@ class SessionTreeEntryRow extends GuiComponent {
 	}
 }
 
-/** Resizable Right Panel frame with left SplitResizeHandle and surfaceRaised background. */
+/** Closable right-panel tab pill matching Waku v0.1.20 tab strip styling (28px height, 112px minWidth, padding 0/8). */
+class RightPanelTabButton extends GuiComponent {
+	private readonly tab: RightPanelTab;
+	private readonly label: string;
+	private active = false;
+	private closeHovered = false;
+	private closable = true;
+	private minTabWidth = 112;
+	private compact = false;
+	private readonly onSelect: () => void;
+	private readonly onCloseTab: () => void;
+	private closeRect: Rect = { x: 0, y: 0, width: 0, height: 0 };
+
+	constructor(tab: RightPanelTab, label: string, onSelect: () => void, onCloseTab: () => void) {
+		super();
+		this.tab = tab;
+		this.label = label;
+		this.onSelect = onSelect;
+		this.onCloseTab = onCloseTab;
+		this.focusable = true;
+		this.cursor = SGUI_CURSOR_POINTER;
+	}
+
+	setMinTabWidth(width: number): void {
+		if (this.minTabWidth !== width) {
+			this.minTabWidth = width;
+			this.invalidate();
+		}
+	}
+
+	setCompact(compact: boolean): void {
+		if (this.compact !== compact) {
+			this.compact = compact;
+			this.invalidate();
+		}
+	}
+
+	setActive(active: boolean): void {
+		if (this.active !== active) {
+			this.active = active;
+			this.invalidate();
+		}
+	}
+
+	setClosable(closable: boolean): void {
+		if (this.closable !== closable) {
+			this.closable = closable;
+			this.invalidate();
+		}
+	}
+
+	private tabMetrics(): {
+		readonly padX: number;
+		readonly iconSz: number;
+		readonly iconGap: number;
+		readonly closeGap: number;
+		readonly closeSlotW: number;
+	} {
+		return {
+			padX: this.compact ? 6 : 8,
+			iconSz: this.compact ? 12 : 13,
+			iconGap: this.compact ? 4 : 6,
+			closeGap: this.compact ? 4 : 6,
+			closeSlotW: this.closable ? (this.compact ? 14 : 18) : 0,
+		};
+	}
+
+	private labelStyle(): TextStyle {
+		return {
+			fontFamily: SGUI_FONT_REGULAR,
+			fontSize: 12,
+			fontWeight: this.active ? 600 : 500,
+		};
+	}
+
+	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
+		const m = ctx.measureText(this.labelStyle(), 0, this.label);
+		const { padX, iconSz, iconGap, closeGap, closeSlotW } = this.tabMetrics();
+		const w = Math.max(
+			this.minTabWidth,
+			padX + iconSz + iconGap + Math.ceil(m.width) + 1 + closeGap + closeSlotW + padX,
+		);
+		return { width: Math.min(maxWidth, w), height: 28 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+
+		if (this.active) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.surfaceRaised, 6);
+			ctx.strokeRect(r.x, r.y, r.width, r.height, ctx.theme.border, 1, 6);
+		} else if (this.isHovered()) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.hover, 6);
+		}
+
+		const { padX, iconSz, iconGap, closeGap, closeSlotW } = this.tabMetrics();
+
+		const iconName =
+			this.tab === "changes"
+				? "git-commit"
+				: this.tab === "files"
+					? "file-code"
+					: this.tab === "terminal"
+						? "terminal"
+						: "git-branch";
+		const iconColor = this.active ? ctx.theme.textPrimary : ctx.theme.textMuted;
+		drawVectorIcon(ctx, iconName, r.x + padX, r.y + (r.height - iconSz) / 2, iconSz, iconColor);
+
+		const textX = r.x + padX + iconSz + iconGap;
+		const maxTextW = Math.max(16, r.width - (padX + iconSz + iconGap + closeGap + closeSlotW + padX));
+		const textStyle = this.labelStyle();
+		const metrics = ctx.measureText(textStyle, 0, this.label);
+		ctx.pushClip({ x: textX, y: r.y, width: maxTextW, height: r.height });
+		ctx.drawStyledText(
+			textX,
+			r.y + Math.max(0, (r.height - metrics.lineHeight) * 0.5),
+			0,
+			this.active ? ctx.theme.textPrimary : ctx.theme.textMuted,
+			textStyle,
+			this.label,
+		);
+		ctx.popClip();
+
+		if (this.closable) {
+			const cx = r.x + r.width - padX - (this.compact ? 14 : 16);
+			const cy = r.y + (r.height - 14) / 2;
+			this.closeRect = { x: cx, y: cy, width: 14, height: 14 };
+			if (this.closeHovered) {
+				ctx.fillRect(cx, cy, 14, 14, ctx.theme.hover, 4);
+			}
+			drawVectorIcon(ctx, "close", cx + 2, cy + 2, 10, this.closeHovered ? ctx.theme.textPrimary : ctx.theme.textMuted);
+		} else {
+			this.closeRect = { x: 0, y: 0, width: 0, height: 0 };
+		}
+
+		if (ctx.isFocusVisible(this)) {
+			drawFocusHalo(ctx, r, 6);
+		}
+	}
+
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
+		const overClose = this.closable && pointInRect(event.x, event.y, this.closeRect);
+		if (this.closeHovered !== overClose) {
+			this.closeHovered = overClose;
+			this.invalidate();
+		}
+		if (event.phase === "down" && event.button === "left") {
+			return { handled: true, focus: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left" && pointInRect(event.x, event.y, this.layoutRect)) {
+			if (overClose) {
+				this.onCloseTab();
+			} else {
+				this.onSelect();
+			}
+			return { handled: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		return { handled: true, cursor: SGUI_CURSOR_POINTER };
+	}
+
+	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
+		if (event.phase === "down" && ctx.keybindings.matches(event, "activate")) {
+			this.onSelect();
+			return true;
+		}
+		return false;
+	}
+
+	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
+		if (!this.visible || this.layoutRect.width <= 0 || this.layoutRect.height <= 0) return;
+		let flags = SGUI_A11Y_STATE_ENABLED;
+		if (this.active) flags |= SGUI_A11Y_STATE_SELECTED;
+		if (ctx.isFocused(this)) flags |= SGUI_A11Y_STATE_FOCUSED;
+		out.push({
+			id: this.a11yId,
+			role: "button",
+			label: this.label,
+			value: this.active ? "active" : "inactive",
+			rect: this.layoutRect,
+			stateFlags: flags,
+		});
+	}
+
+	override handleAccessibilityAction(
+		nodeId: number,
+		action: "focus" | "press" | "increment" | "decrement" | "setValue",
+		_value: string,
+		ctx: GuiRenderContext,
+	): boolean {
+		if (nodeId !== this.a11yId) return false;
+		if (action === "focus") {
+			ctx.requestFocus(this);
+			return true;
+		}
+		if (action === "press") {
+			this.onSelect();
+			return true;
+		}
+		return false;
+	}
+}
+
+/** Integrated read-only shell/command output surface rendered on the Terminal right-panel tab. */
+class TerminalPaneView extends GuiComponent {
+	private snapshot: GuiSessionSnapshot;
+
+	constructor(snapshot: GuiSessionSnapshot) {
+		super();
+		this.snapshot = snapshot;
+	}
+
+	setSnapshot(snapshot: GuiSessionSnapshot): void {
+		this.snapshot = snapshot;
+		this.invalidate();
+	}
+
+	measure(_ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
+		return { width: maxWidth, height: maxHeight ?? 320 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+
+		ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.surfaceTerminal);
+		ctx.pushClip(r);
+		const padX = 14;
+		let y = r.y + 14;
+		const availW = Math.max(40, r.width - padX * 2);
+		const monoStyle = { fontFamily: SGUI_FONT_MONO, fontSize: 12 };
+		const mutedMono = { fontFamily: SGUI_FONT_MONO, fontSize: 11.5 };
+		const branch = this.snapshot.gitBranch || this.snapshot.status.gitBranch || "main";
+		const project = basename(this.snapshot.status.cwd) || this.snapshot.status.cwd || "workspace";
+
+		ctx.drawStyledText(r.x + padX, y, availW, ctx.theme.textMuted, mutedMono, `${project} (${branch})`);
+		y += 20;
+		ctx.drawStyledText(r.x + padX, y, availW, ctx.theme.textPrimary, monoStyle, "$ pi --status");
+		y += 18;
+		const modelLabel = this.snapshot.status.activeModel?.id ?? "claude-sonnet";
+		const changeCount = this.snapshot.changedFiles.length;
+		const tokens = this.snapshot.status.contextUsage?.usedTokens ?? 0;
+		ctx.drawStyledText(
+			r.x + padX,
+			y,
+			availW,
+			ctx.theme.textMuted,
+			mutedMono,
+			`model=${modelLabel}  changes=${changeCount}  tokens=${tokens}`,
+		);
+		y += 24;
+		ctx.drawStyledText(r.x + padX, y, availW, ctx.theme.accent, monoStyle, "% _");
+		ctx.popClip();
+	}
+}
+
+/** Resizable Right Panel frame with left SplitResizeHandle and border hairline. */
 class RightPanelContainer extends GuiComponent {
 	private readonly content: GuiComponent;
 	private readonly resizeHandle: SplitResizeHandle;
@@ -799,6 +1135,10 @@ class RightPanelContainer extends GuiComponent {
 		this.resizeHandle.attachHost(host);
 	}
 
+	getChildren(): readonly GuiComponent[] {
+		return [this.content];
+	}
+
 	getWidth(): number {
 		return this.widthValue;
 	}
@@ -813,7 +1153,7 @@ class RightPanelContainer extends GuiComponent {
 
 	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
 		const w = Math.min(maxWidth, this.widthValue);
-		const childSize = this.content.measure(ctx, Math.max(0, w - 1), maxHeight);
+		const childSize = this.content.measure(ctx, w, maxHeight);
 		return { width: w, height: maxHeight ?? childSize.height };
 	}
 
@@ -822,7 +1162,7 @@ class RightPanelContainer extends GuiComponent {
 		const handleSize = this.resizeHandle.measure(ctx, 8, rect.height);
 		const hw = Math.max(4, handleSize.width);
 		this.resizeHandle.layout(ctx, { x: rect.x, y: rect.y, width: hw, height: rect.height });
-		this.content.layout(ctx, { x: rect.x + 1, y: rect.y, width: Math.max(0, rect.width - 1), height: rect.height });
+		this.content.layout(ctx, rect);
 	}
 
 	override hitTest(x: number, y: number): GuiComponent | undefined {
@@ -832,10 +1172,7 @@ class RightPanelContainer extends GuiComponent {
 		return this.content.hitTest(x, y) ?? this;
 	}
 
-	override handleScroll(
-		event: { x: number; y: number; deltaX: number; deltaY: number; modifiers: { shift: boolean; ctrl: boolean; alt: boolean; super: boolean } },
-		ctx: GuiRenderContext,
-	): boolean {
+	override handleScroll(event: GuiScrollEvent, ctx: GuiRenderContext): boolean {
 		return this.content.handleScroll(event, ctx);
 	}
 
@@ -844,8 +1181,9 @@ class RightPanelContainer extends GuiComponent {
 		const r = this.layoutRect;
 		if (r.width <= 0 || r.height <= 0) return;
 
-		ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.surfaceRaised);
+		ctx.fillRect(r.x, r.y, r.width, r.height, ctx.theme.background);
 		this.content.render(ctx);
+		ctx.fillRect(r.x, r.y, 1, r.height, ctx.theme.sidebarBorder);
 		this.resizeHandle.render(ctx);
 	}
 
@@ -896,16 +1234,36 @@ export interface WakuRightPanelHandle {
 	readonly root: GuiComponent;
 	getWidth(): number;
 	setWidth(width: number): void;
-	setActiveTab(tab: "changes" | "files" | "tree"): void;
-	getActiveTab(): "changes" | "files" | "tree";
+	setActiveTab(tab: RightPanelTab): void;
+	getActiveTab(): RightPanelTab;
+	setOpenTabs(tabs: RightPanelTab[]): void;
+	getOpenTabs(): readonly RightPanelTab[];
+	setSpecMode(mode: "standalone" | "workspace"): void;
+	setFilePreview(preview: GuiWorkspaceFilePreview): void;
+	expandDir(relativePath: string): void;
 	selectFile(path: string): void;
 	update(snapshot: GuiSessionSnapshot): void;
 	applyTheme(theme: GuiTheme): void;
 	dispose(): void;
 }
 
+const ALL_RIGHT_PANEL_TABS: readonly RightPanelTab[] = ["changes", "files", "terminal", "tree"];
+
+function rightPanelTabLabel(tab: RightPanelTab): string {
+	switch (tab) {
+		case "changes":
+			return "Changes";
+		case "files":
+			return "Files";
+		case "terminal":
+			return "Terminal";
+		case "tree":
+			return "Tree";
+	}
+}
+
 /**
- * Create Waku's collapsible 3-tab right panel (Changes | Files | Tree).
+ * Create Waku's collapsible Right Panel (Changes | Files | Terminal | Tree).
  */
 export function createWakuRightPanel(
 	app: GuiApp,
@@ -914,7 +1272,9 @@ export function createWakuRightPanel(
 ): WakuRightPanelHandle {
 	let currentTheme = app.getTheme();
 	let latestSnapshot = controller.getSnapshot();
-	let activeTab: "changes" | "files" | "tree" = latestSnapshot.layout.rightPanelTab;
+	let activeTab: RightPanelTab = latestSnapshot.layout.rightPanelTab;
+	let openTabs: RightPanelTab[] = ["changes", "files", "terminal", "tree"];
+	let specMode: "standalone" | "workspace" = "standalone";
 	let selectedDiffPath: string | undefined;
 	let selectedWorkspacePath: string | undefined;
 	let currentPreview: GuiWorkspaceFilePreview | undefined;
@@ -932,29 +1292,71 @@ export function createWakuRightPanel(
 	});
 	changedCountBadge.visible = false;
 
-	const tabControl = new SegmentedControl({
-		label: "Right Panel Tabs",
-		items: [
-			{ id: "changes", label: "Changes" },
-			{ id: "files", label: "Files" },
-			{ id: "tree", label: "Tree" },
-		],
-		selectedId: activeTab,
-		onChange: (id) => {
-			if (id === "changes" || id === "files" || id === "tree") {
-				activeTab = id;
-				const nextLayout = controller.updateLayoutPreferences({ rightPanelTab: id });
-				latestSnapshot = { ...controller.getSnapshot(), layout: nextLayout };
-				rebuildTabBody();
+	const tabListRow = new HStack({
+		gap: 4,
+		align: "center",
+	});
+	const tabsBox = new Box({
+		height: 28,
+		fillWidth: true,
+		padding: 0,
+		child: tabListRow,
+	});
+	const tabButtons = new Map<RightPanelTab, RightPanelTabButton>();
+
+	const selectTab = (tab: RightPanelTab): void => {
+		if (!openTabs.includes(tab)) {
+			openTabs = [...openTabs, tab];
+		}
+		activeTab = tab;
+		const nextLayout = controller.updateLayoutPreferences({ rightPanelTab: tab });
+		latestSnapshot = { ...controller.getSnapshot(), layout: nextLayout };
+		rebuildTabStrip();
+		rebuildTabBody();
+	};
+
+	const closeTab = (tab: RightPanelTab): void => {
+		if (openTabs.length <= 1) {
+			if (callbacks.onClose) {
+				callbacks.onClose();
+			} else {
+				controller.updateLayoutPreferences({ rightPanelOpen: false });
 			}
+			return;
+		}
+		openTabs = openTabs.filter((t) => t !== tab);
+		if (activeTab === tab) {
+			activeTab = openTabs[0] ?? "changes";
+			controller.updateLayoutPreferences({ rightPanelTab: activeTab });
+		}
+		rebuildTabStrip();
+		rebuildTabBody();
+	};
+
+	const addSurfaceBtn = new IconButton({
+		icon: "plus",
+		size: 26,
+		iconSize: 13,
+		label: "Add Right Panel Surface",
+		onClick: () => {
+			for (let i = 0; i < ALL_RIGHT_PANEL_TABS.length; i++) {
+				const candidate = ALL_RIGHT_PANEL_TABS[i];
+				if (candidate !== undefined && !openTabs.includes(candidate)) {
+					selectTab(candidate);
+					return;
+				}
+			}
+			const currentIdx = ALL_RIGHT_PANEL_TABS.indexOf(activeTab);
+			const nextTab = ALL_RIGHT_PANEL_TABS[(currentIdx + 1) % ALL_RIGHT_PANEL_TABS.length] ?? "changes";
+			selectTab(nextTab);
 		},
 	});
 
 	const closeBtn = new IconButton({
-		icon: "close",
+		icon: "panel-right",
 		size: 26,
 		iconSize: 13,
-		label: "Close Right Panel",
+		label: "Toggle Right Panel",
 		onClick: () => {
 			if (callbacks.onClose) {
 				callbacks.onClose();
@@ -964,22 +1366,23 @@ export function createWakuRightPanel(
 		},
 	});
 
-	const topBar = new Box({
-		height: 44,
-		fillWidth: true,
-		padding: { horizontal: 10, vertical: 8 },
-		child: new HStack({
-			gap: 6,
-			align: "center",
-			children: [
-				tabControl,
-				changedCountBadge,
-				{ child: new Spacer(), grow: 1 },
-				closeBtn,
-			],
-		}),
+	const topBarRow = new HStack({
+		gap: 6,
+		align: "center",
+		justify: "space-between",
+		children: [
+			{ child: tabsBox, grow: 1, shrink: 1 },
+			new Spacer(6, 1),
+			addSurfaceBtn,
+			closeBtn,
+		],
 	});
-	const topDivider = new Divider({ direction: "horizontal" });
+	const topBar = new Box({
+		height: 48,
+		fillWidth: true,
+		padding: { top: 0, right: 14, bottom: 0, left: 10 },
+		child: topBarRow,
+	});
 
 	// --- Changes Tab controls ---
 	const branchBtn = new Button({
@@ -1009,11 +1412,14 @@ export function createWakuRightPanel(
 		},
 	});
 	const commitBtn = new Button({
-		label: "Commit...",
+		label: "Commit",
+		a11yLabel: "Commit",
 		leadingIcon: "git-commit",
 		variant: "secondary",
 		fontSize: 11,
-		padding: { vertical: 4, horizontal: 8 },
+		minWidth: 84,
+		height: 26,
+		padding: { vertical: 0, horizontal: 10 },
 		onClick: () => {
 			if (callbacks.onOpenCommitModal) callbacks.onOpenCommitModal();
 			else openGitCommitModal(app, controller);
@@ -1024,30 +1430,47 @@ export function createWakuRightPanel(
 	const diffScroll = new ScrollView({ child: diffBodyView });
 	const changesContainer = new VStack({
 		gap: 8,
-		padding: { horizontal: 10, vertical: 8 },
+		padding: 0,
 		children: [
-			new HStack({
-				gap: 6,
-				align: "center",
-				children: [
-					branchBtn,
-					{ child: new Spacer(), grow: 1 },
-					diffModeSeg,
-					commitBtn,
-				],
+			new Box({
+				fillWidth: true,
+				padding: { top: 8, right: 16, bottom: 0, left: 10 },
+				child: new HStack({
+					gap: 6,
+					align: "center",
+					children: [
+						branchBtn,
+						{ child: new Spacer(), grow: 1 },
+						diffModeSeg,
+						commitBtn,
+					],
+				}),
 			}),
 			new Box({
 				maxHeight: 150,
 				fillWidth: true,
+				padding: { horizontal: 10 },
 				child: new ScrollView({ child: changedFileListStack }),
 			}),
-			new Divider({ direction: "horizontal" }),
-			{ child: diffScroll, grow: 1, shrink: 1 },
+			new Box({
+				fillWidth: true,
+				padding: { horizontal: 10 },
+				child: new Divider({ direction: "horizontal" }),
+			}),
+			{ child: new Box({ fillWidth: true, fillHeight: true, padding: { horizontal: 10, bottom: 8 }, child: diffScroll }), grow: 1, shrink: 1 },
 		],
 	});
 
 	// --- Files Tab controls ---
-	const fileTreeStack = new VStack({ gap: 1 });
+	const fileTreeStack = new VStack({ gap: 2 });
+	const fileTreeBox = new Box({
+		width: 184,
+		fillHeight: true,
+		padding: 0,
+		borderEdges: { right: 1 },
+		borderColor: currentTheme.border,
+		child: new ScrollView({ child: fileTreeStack }),
+	});
 	const previewHeaderLabel = new TruncatedText({
 		text: "No file selected",
 		fontSize: currentTheme.fontSizeSmall,
@@ -1058,16 +1481,10 @@ export function createWakuRightPanel(
 	previewLangBadge.visible = false;
 	const syntaxPreview = new SyntaxPreviewView();
 	const previewScroll = new ScrollView({ child: syntaxPreview });
-	const filesContainer = new VStack({
+	const previewPane = new VStack({
 		gap: 6,
 		padding: { horizontal: 10, vertical: 8 },
 		children: [
-			new Box({
-				maxHeight: 220,
-				fillWidth: true,
-				child: new ScrollView({ child: fileTreeStack }),
-			}),
-			new Divider({ direction: "horizontal" }),
 			new HStack({
 				gap: 6,
 				align: "center",
@@ -1078,6 +1495,23 @@ export function createWakuRightPanel(
 			}),
 			{ child: previewScroll, grow: 1, shrink: 1 },
 		],
+	});
+	const filesContainer = new HStack({
+		gap: 0,
+		align: "stretch",
+		children: [
+			fileTreeBox,
+			{ child: previewPane, grow: 1, shrink: 1 },
+		],
+	});
+
+	// --- Terminal Tab controls ---
+	const terminalPaneView = new TerminalPaneView(latestSnapshot);
+	const terminalSurface = new Box({
+		fillWidth: true,
+		fillHeight: true,
+		background: currentTheme.surfaceTerminal,
+		child: terminalPaneView,
 	});
 
 	// --- Tree Tab controls ---
@@ -1090,16 +1524,186 @@ export function createWakuRightPanel(
 		borderWidth: 1,
 		radius: 8,
 	});
-	const treeContainer = new VStack({
-		gap: 8,
+	const treeScrollBox = new Box({
+		fillWidth: true,
+		fillHeight: true,
 		padding: { horizontal: 10, vertical: 8 },
-		children: [
-			{ child: new ScrollView({ child: treeStack }), grow: 1, shrink: 1 },
-			treeActionBanner,
-		],
+		child: new VStack({
+			gap: 8,
+			children: [
+				{ child: new ScrollView({ child: treeStack }), grow: 1, shrink: 1 },
+				treeActionBanner,
+			],
+		}),
 	});
+	const treeContainer = treeScrollBox;
 
-	const tabBodyHolder = new Box({ fillWidth: true, child: changesContainer });
+	const tabBodyHolder = new Box({ fillWidth: true, fillHeight: true, child: changesContainer });
+
+	const syncSpecAnnotations = (): void => {
+		if (frameContainer === undefined) return;
+		if (specMode === "workspace") {
+			annotateSpecNode(frameContainer, {
+				key: "workspace.right_panel",
+				role: "region",
+				size: { w: frameContainer.getWidth(), h: "fill" },
+				flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+			});
+			annotateSpecNode(topBar, {
+				key: "workspace.right_panel.header",
+				role: "region",
+				flow: { type: "flex", dir: "row", justify: "between", align: "center", wrap: "nowrap", gap: 6 },
+				size: { w: "fill", h: 48 },
+				padding: [0, 14, 0, 10],
+			});
+			annotateSpecNode(closeBtn, {
+				key: "workspace.right_panel.toggle",
+				role: "button",
+				variant: "icon-button",
+				size: { w: 26, h: 26 },
+				text: { value: "Toggle Right Panel", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			});
+			registerSpecChildren(frameContainer, () => [topBar]);
+			registerSpecChildren(topBar, () => [closeBtn]);
+			return;
+		}
+
+		annotateSpecNode(frameContainer, {
+			key: "right_panel",
+			role: "region",
+			state: () => activeTab,
+			size: { w: frameContainer.getWidth(), h: "fill" },
+			flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		});
+		annotateSpecNode(topBar, {
+			key: "right_panel.header",
+			role: "region",
+			flow: { type: "flex", dir: "row", justify: "between", align: "center", wrap: "nowrap", gap: 6 },
+			size: { w: "fill", h: 48 },
+			padding: [0, 14, 0, 10],
+		});
+		annotateSpecNode(tabsBox, {
+			key: "right_panel.tabs",
+			role: "tablist",
+			flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 4 },
+			size: { w: "fill", h: 28 },
+		});
+		for (let i = 0; i < openTabs.length; i++) {
+			const tab = openTabs[i];
+			if (tab === undefined) continue;
+			const btn = tabButtons.get(tab);
+			if (btn !== undefined) {
+				annotateSpecNode(btn, {
+					key: `right_panel.tab.${tab}`,
+					role: "tab",
+					state: () => (activeTab === tab ? "active" : "default"),
+					flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 6 },
+					padding: [0, 8, 0, 8],
+					size: { w: "hug", h: 28 },
+					text: { value: rightPanelTabLabel(tab), wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+				});
+			}
+		}
+		annotateSpecNode(addSurfaceBtn, {
+			key: "right_panel.add_surface",
+			role: "button",
+			size: { w: 26, h: 26 },
+			text: { value: "Add Right Panel Surface", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		});
+		annotateSpecNode(closeBtn, {
+			key: "right_panel.toggle",
+			role: "button",
+			size: { w: 26, h: 26 },
+			text: { value: "Toggle Right Panel", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		});
+		annotateSpecNode(tabBodyHolder, {
+			key: "right_panel.body",
+			role: "region",
+			size: { w: "fill", h: "fill" },
+			flow: () =>
+				activeTab === "files"
+					? { type: "flex", dir: "row", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 }
+					: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+		});
+		annotateSpecNode(commitBtn, {
+			key: "right_panel.changes.commit_btn",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "center", align: "center", wrap: "nowrap", gap: 6 },
+			size: { w: "hug", h: 26 },
+			padding: [0, 0, 0, 0],
+			text: { value: "Commit", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+		});
+		annotateSpecNode(fileTreeBox, {
+			key: "right_panel.files.tree",
+			role: "list",
+			overflow: "auto",
+			flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 2 },
+			border: [0, 0, 0, 0],
+			size: { w: 184, h: "fill" },
+		});
+		annotateSpecNode(terminalSurface, {
+			key: "right_panel.terminal.surface",
+			role: "region",
+			variant: () => (currentTheme.dark ? "terminal-dark" : "terminal-light"),
+			flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 4 },
+			size: { w: "fill", h: "fill" },
+		});
+		annotateSpecNode(treeScrollBox, {
+			key: "right_panel.tree.body",
+			role: "list",
+			overflow: "auto",
+			flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 4 },
+			size: { w: "fill", h: "fill" },
+		});
+
+		registerSpecChildren(frameContainer, () => [topBar, tabBodyHolder]);
+		registerSpecChildren(topBar, () => [tabsBox, addSurfaceBtn, closeBtn]);
+		registerSpecChildren(tabsBox, () => {
+			const children: GuiComponent[] = [];
+			for (let i = 0; i < openTabs.length; i++) {
+				const t = openTabs[i];
+				if (t === undefined) continue;
+				const b = tabButtons.get(t);
+				if (b !== undefined) children.push(b);
+			}
+			return children;
+		});
+		registerSpecChildren(tabBodyHolder, () => {
+			if (activeTab === "changes") return [commitBtn];
+			if (activeTab === "files") return [fileTreeBox];
+			if (activeTab === "terminal") return [terminalSurface];
+			return [treeScrollBox];
+		});
+		registerSpecChildren(fileTreeBox, () => []);
+		registerSpecChildren(terminalSurface, () => []);
+		registerSpecChildren(treeScrollBox, () => []);
+	};
+
+	const rebuildTabStrip = (): void => {
+		tabListRow.clear();
+		const isCompact = openTabs.length > 3;
+		const compactMinWidth = isCompact ? 0 : 112;
+		for (let i = 0; i < openTabs.length; i++) {
+			const tab = openTabs[i];
+			if (tab === undefined) continue;
+			let btn = tabButtons.get(tab);
+			if (btn === undefined) {
+				btn = new RightPanelTabButton(
+					tab,
+					rightPanelTabLabel(tab),
+					() => selectTab(tab),
+					() => closeTab(tab),
+				);
+				tabButtons.set(tab, btn);
+			}
+			btn.setCompact(isCompact);
+			btn.setMinTabWidth(compactMinWidth);
+			btn.setActive(tab === activeTab);
+			btn.setClosable(true);
+			tabListRow.addChild(btn);
+		}
+		syncSpecAnnotations();
+	};
 
 	const loadFilePreview = async (entry: GuiWorkspaceFileEntry): Promise<void> => {
 		const token = ++previewRequestToken;
@@ -1288,7 +1892,7 @@ export function createWakuRightPanel(
 				0,
 				new Button({
 					label: "Navigate",
-					variant: "primary",
+					variant: "inverse",
 					fontSize: 11,
 					padding: { vertical: 4, horizontal: 8 },
 					onClick: () => {
@@ -1361,7 +1965,9 @@ export function createWakuRightPanel(
 	};
 
 	const rebuildTabBody = (): void => {
-		tabControl.setSelectedId(activeTab);
+		for (const [tab, btn] of tabButtons.entries()) {
+			btn.setActive(tab === activeTab);
+		}
 		if (activeTab === "changes") {
 			tabBodyHolder.setChild(changesContainer);
 			rebuildChangesTab();
@@ -1369,10 +1975,15 @@ export function createWakuRightPanel(
 			tabBodyHolder.setChild(filesContainer);
 			rebuildFilesTree();
 			syntaxPreview.setPreview(currentPreview);
+		} else if (activeTab === "terminal") {
+			terminalPaneView.setSnapshot(latestSnapshot);
+			terminalSurface.setBackground(currentTheme.surfaceTerminal);
+			tabBodyHolder.setChild(terminalSurface);
 		} else {
 			tabBodyHolder.setChild(treeContainer);
 			rebuildTreeTab();
 		}
+		syncSpecAnnotations();
 	};
 
 	const mainColumn = new VStack({
@@ -1380,7 +1991,6 @@ export function createWakuRightPanel(
 		align: "stretch",
 		children: [
 			topBar,
-			topDivider,
 			{ child: tabBodyHolder, grow: 1, shrink: 1 },
 		],
 	});
@@ -1416,6 +2026,9 @@ export function createWakuRightPanel(
 	const update = (snapshot: GuiSessionSnapshot): void => {
 		latestSnapshot = snapshot;
 		activeTab = snapshot.layout.rightPanelTab;
+		if (!openTabs.includes(activeTab)) {
+			openTabs = [...openTabs, activeTab];
+		}
 		if (frameContainer !== undefined) {
 			frameContainer.visible = snapshot.layout.rightPanelOpen;
 			frameContainer.setWidth(snapshot.layout.rightPanelWidth || RIGHT_PANEL_DEFAULT_WIDTH);
@@ -1423,6 +2036,7 @@ export function createWakuRightPanel(
 		const count = snapshot.changedFiles.length;
 		changedCountBadge.visible = count > 0;
 		changedCountBadge.setLabel(`${count}`);
+		rebuildTabStrip();
 		rebuildTabBody();
 	};
 
@@ -1431,16 +2045,48 @@ export function createWakuRightPanel(
 	return {
 		root: frameContainer,
 		getWidth: () => frameContainer.getWidth(),
-		setWidth: (width: number) => frameContainer.setWidth(width),
-		setActiveTab: (tab: "changes" | "files" | "tree") => {
-			activeTab = tab;
-			controller.updateLayoutPreferences({ rightPanelTab: tab });
-			rebuildTabBody();
+		setWidth: (width: number) => {
+			frameContainer.setWidth(width);
+			syncSpecAnnotations();
+		},
+		setActiveTab: (tab: RightPanelTab) => {
+			selectTab(tab);
 		},
 		getActiveTab: () => activeTab,
+		setOpenTabs: (tabs: RightPanelTab[]) => {
+			openTabs = tabs.length > 0 ? [...tabs] : [activeTab];
+			if (!openTabs.includes(activeTab)) {
+				activeTab = openTabs[0] ?? "changes";
+			}
+			rebuildTabStrip();
+			rebuildTabBody();
+		},
+		getOpenTabs: () => [...openTabs],
+		setSpecMode: (mode: "standalone" | "workspace") => {
+			specMode = mode;
+			syncSpecAnnotations();
+		},
+		setFilePreview: (preview: GuiWorkspaceFilePreview) => {
+			selectedWorkspacePath = preview.relativePath;
+			currentPreview = preview;
+			const metaSuffix = preview.truncated ? ` · ${preview.lineCount}+ lines (truncated)` : ` · ${preview.lineCount} lines`;
+			previewHeaderLabel.setText(`${preview.relativePath}${metaSuffix}`);
+			const lang = inferLanguageFromPath(preview.relativePath, preview.language);
+			previewLangBadge.setLabel(preview.isBinary ? "binary" : lang);
+			previewLangBadge.visible = true;
+			syntaxPreview.setPreview(preview);
+			rebuildFilesTree();
+		},
+		expandDir: (relativePath: string) => {
+			dirExpandedState.set(relativePath, true);
+			rebuildFilesTree();
+		},
 		selectFile: (path: string) => {
 			selectedDiffPath = path;
 			activeTab = "changes";
+			if (!openTabs.includes("changes")) {
+				openTabs = ["changes", ...openTabs];
+			}
 			if (!latestSnapshot.layout.rightPanelOpen) {
 				controller.updateLayoutPreferences({ rightPanelOpen: true, rightPanelTab: "changes" });
 			} else if (latestSnapshot.layout.rightPanelTab !== "changes") {
@@ -1449,15 +2095,18 @@ export function createWakuRightPanel(
 			if (frameContainer !== undefined) {
 				frameContainer.visible = true;
 			}
+			rebuildTabStrip();
 			rebuildTabBody();
 		},
 		update,
 		applyTheme: (theme: GuiTheme) => {
 			currentTheme = theme;
-			topDivider.setColor(theme.border);
+			fileTreeBox.setBorderEdges({ right: 1 }, theme.border);
+			terminalSurface.setBackground(theme.surfaceTerminal);
 			treeActionBanner.setBackground(theme.surfaceElevated);
 			treeActionBanner.setBorder(theme.border, 1, 8);
 			frameContainer.onThemeChange(theme);
+			rebuildTabStrip();
 			rebuildTabBody();
 		},
 		dispose: () => {

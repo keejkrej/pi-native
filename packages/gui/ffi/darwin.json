@@ -64,9 +64,15 @@
 			"returns": "void"
 		},
 		{ "name": "sguiSetAppMenu", "symbol": "sgui_set_app_menu", "params": ["bytes"], "returns": "i32" },
-		{ "name": "sguiSetA11yTree", "symbol": "sgui_set_a11y_tree", "params": ["u32", "bytes"], "returns": "i32" }
+		{ "name": "sguiSetA11yTree", "symbol": "sgui_set_a11y_tree", "params": ["u32", "bytes"], "returns": "i32" },
+		{
+			"name": "sguiRenderPng",
+			"symbol": "sgui_render_png",
+			"params": ["f64", "f64", "f64", "bytes", "string"],
+			"returns": "i32"
+		}
 	],
 	"libraries": ["../native/darwin/build/libsgui.a"],
 	"system_libraries": [],
-	"frameworks": ["AppKit", "CoreGraphics", "CoreText", "Foundation", "QuartzCore"]
+	"frameworks": ["AppKit", "CoreFoundation", "CoreGraphics", "CoreText", "Foundation", "ImageIO", "QuartzCore"]
 }

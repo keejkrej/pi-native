@@ -2,7 +2,9 @@
  * Direct scriptc FFI ambient bindings matching packages/gui/ffi/*.json and the native backend factory.
  */
 
+import { resolveTextStyle, type TextMetrics, type TextStyle } from "./backend.ts";
 import { NativeBackend, NativeDriver } from "./native-backend.ts";
+import { SGUI_TEXT_METRICS_SIZE } from "./protocol.ts";
 
 declare function sguiInit(): number;
 declare function sguiShutdown(): void;
@@ -45,6 +47,68 @@ declare function sguiSetCursor(windowId: number, cursorKind: number): void;
 declare function sguiSetImeRect(windowId: number, x: number, y: number, width: number, height: number): void;
 declare function sguiSetAppMenu(spec: Uint8Array): number;
 declare function sguiSetA11yTree(windowId: number, nodes: Uint8Array): number;
+declare function sguiRenderPng(
+	width: number,
+	height: number,
+	scale: number,
+	drawList: Uint8Array,
+	outPath: string,
+): number;
+
+export function renderDrawListToPng(
+	width: number,
+	height: number,
+	scale: number,
+	drawList: Uint8Array,
+	outPath: string,
+): boolean {
+	if (width <= 0 || height <= 0 || scale <= 0 || drawList.byteLength === 0 || outPath.length === 0) {
+		return false;
+	}
+	try {
+		return sguiRenderPng(width, height, scale, drawList, outPath) === 0;
+	} catch {
+		return false;
+	}
+}
+
+const nativeMeasureBuf = new Uint8Array(SGUI_TEXT_METRICS_SIZE);
+const nativeMeasureView = new DataView(nativeMeasureBuf.buffer);
+
+/**
+ * Measure text using the native CoreText/Pango driver (`sgui_measure_text`) when
+ * compiled with FFI, returning `undefined` on non-FFI/Node runtimes.
+ */
+export function measureTextWithNative(
+	style: TextStyle,
+	maxWidth: number,
+	text: string,
+): TextMetrics | undefined {
+	try {
+		const resolved = resolveTextStyle(style);
+		const rc = sguiMeasureText(
+			resolved.fontFamily,
+			resolved.fontSize,
+			resolved.fontWeight,
+			resolved.fontFlags,
+			maxWidth,
+			text,
+			nativeMeasureBuf,
+		);
+		if (rc !== 0) {
+			return undefined;
+		}
+		return {
+			width: nativeMeasureView.getFloat64(0, true),
+			height: nativeMeasureView.getFloat64(8, true),
+			lineHeight: nativeMeasureView.getFloat64(16, true),
+			baseline: nativeMeasureView.getFloat64(24, true),
+			lineCount: nativeMeasureView.getUint32(32, true),
+		};
+	} catch {
+		return undefined;
+	}
+}
 
 export class FfiNativeDriver extends NativeDriver {
 	init(): number {

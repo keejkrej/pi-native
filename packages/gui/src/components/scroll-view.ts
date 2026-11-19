@@ -37,6 +37,7 @@ export interface ScrollViewOptions {
 	readonly primary?: boolean;
 	readonly overscroll?: "contain" | "chain";
 	readonly showScrollbar?: boolean;
+	readonly overlayScrollbar?: boolean;
 	readonly scrollbarWidth?: number;
 	readonly padding?: PaddingInput;
 	readonly background?: Color;
@@ -50,6 +51,7 @@ export class ScrollView extends GuiComponent {
 	readonly primary: boolean;
 	private overscroll: "contain" | "chain";
 	private showScrollbar: boolean;
+	private overlayScrollbar: boolean;
 	private scrollbarWidth: number;
 	private padding: Edges;
 	private background: Color | undefined;
@@ -76,6 +78,7 @@ export class ScrollView extends GuiComponent {
 		this.primary = options.primary ?? false;
 		this.overscroll = options.overscroll ?? "contain";
 		this.showScrollbar = options.showScrollbar ?? true;
+		this.overlayScrollbar = options.overlayScrollbar ?? false;
 		this.scrollbarWidth = options.scrollbarWidth ?? 6;
 		this.padding = normalizeEdges(options.padding);
 		this.background = options.background;
@@ -174,7 +177,8 @@ export class ScrollView extends GuiComponent {
 
 	private viewportRect(): Rect {
 		const r = this.layoutRect;
-		const reserve = this.showScrollbar && this.maxScrollYValue > 0 ? this.scrollbarWidth + 4 : 0;
+		const reserve =
+			this.showScrollbar && !this.overlayScrollbar && this.maxScrollYValue > 0 ? this.scrollbarWidth + 4 : 0;
 		return {
 			x: r.x + this.padding.left,
 			y: r.y + this.padding.top,
@@ -236,7 +240,7 @@ export class ScrollView extends GuiComponent {
 	}
 
 	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
-		const reserve = this.showScrollbar ? this.scrollbarWidth + 4 : 0;
+		const reserve = this.showScrollbar && !this.overlayScrollbar ? this.scrollbarWidth + 4 : 0;
 		const innerMaxW = Math.max(0, maxWidth - this.padding.left - this.padding.right - reserve);
 		let childSize: Size = { width: 0, height: 0 };
 		if (this.child?.visible) {
@@ -253,7 +257,10 @@ export class ScrollView extends GuiComponent {
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
 		const innerWNoBar = Math.max(0, rect.width - this.padding.left - this.padding.right);
-		const innerWWithBar = Math.max(0, innerWNoBar - (this.showScrollbar ? this.scrollbarWidth + 4 : 0));
+		const innerWWithBar = Math.max(
+			0,
+			innerWNoBar - (this.showScrollbar && !this.overlayScrollbar ? this.scrollbarWidth + 4 : 0),
+		);
 		const innerH = Math.max(0, rect.height - this.padding.top - this.padding.bottom);
 		this.viewportHeightValue = innerH;
 
@@ -265,7 +272,7 @@ export class ScrollView extends GuiComponent {
 		}
 
 		let measured = this.child.measure(ctx, innerWNoBar, undefined);
-		const needsScrollbar = this.showScrollbar && measured.height > innerH;
+		const needsScrollbar = this.showScrollbar && !this.overlayScrollbar && measured.height > innerH;
 		const childW = needsScrollbar ? innerWWithBar : innerWNoBar;
 		if (needsScrollbar && childW !== innerWNoBar) {
 			measured = this.child.measure(ctx, childW, undefined);

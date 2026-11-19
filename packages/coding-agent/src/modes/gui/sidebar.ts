@@ -7,9 +7,7 @@
 import { basename } from "node:path";
 import {
 	Box,
-	Button,
 	type Color,
-	Divider,
 	drawFocusHalo,
 	drawVectorIcon,
 	fuzzyMatch,
@@ -23,19 +21,19 @@ import {
 	type GuiRenderContext,
 	type GuiScrollEvent,
 	type GuiTheme,
+	HeadlessBackend,
 	HStack,
 	IconButton,
 	Input,
-	parseColor,
 	pointInRect,
 	type Rect,
 	rgbaColor,
 	ScrollView,
-	SegmentedControl,
 	type Size,
 	Spacer,
 	SplitResizeHandle,
 	Text,
+	type VectorIconName,
 	VStack,
 	WindowDragArea,
 	SGUI_A11Y_STATE_ENABLED,
@@ -48,20 +46,135 @@ import {
 	formatRelativeTimeShort,
 	lookupSessionCustomName,
 	openSettingsModal,
-	resolveAppearanceTheme,
+	openSidebarOptionsPopover,
 } from "./overlays.ts";
 import { TRAFFIC_LIGHT_CLEARANCE } from "./window-chrome.ts";
-import type { GuiLayoutPreferences, GuiSessionController, GuiSessionListItem, GuiSessionSnapshot } from "./types.ts";
+import type { GuiSessionController, GuiSessionListItem, GuiSessionSnapshot } from "./types.ts";
+import { annotateSpecNode, registerSpecChildren } from "./ui-spec-meta.ts";
 
-export const SIDEBAR_DEFAULT_WIDTH = 260;
+export const SIDEBAR_DEFAULT_WIDTH = 252;
 export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_CARD_HEIGHT = 51;
 export const SIDEBAR_CARD_RADIUS = 8;
 
-const SELECTED_CARD_DARK = parseColor("#2D2D2E");
-const SELECTED_CARD_LIGHT = parseColor("#E4E3E5");
-const STREAMING_DOT_CORAL = parseColor("#E2795B");
+const STREAMING_DOT_CORAL = rgbaColor(226, 121, 91, 1);
+
+function isBlankUntitledSession(item: GuiSessionListItem): boolean {
+	const t = item.title.trim();
+	return item.messageCount === 0 && (t.length === 0 || t === "New Session" || t === "New task");
+}
+
+/** Sidebar 32px action row (New Task / Search). */
+class SidebarActionRow extends GuiComponent {
+	private readonly iconName: VectorIconName;
+	private labelText: string;
+	private activeValue = false;
+	private pressed = false;
+	private readonly onClickFn: () => void;
+
+	constructor(icon: VectorIconName, label: string, onClick: () => void) {
+		super();
+		this.iconName = icon;
+		this.labelText = label;
+		this.onClickFn = onClick;
+		this.focusable = true;
+		this.cursor = SGUI_CURSOR_POINTER;
+	}
+
+	setActive(active: boolean): void {
+		if (this.activeValue === active) return;
+		this.activeValue = active;
+		this.invalidate();
+	}
+
+	measure(_ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
+		return { width: Math.max(0, maxWidth), height: 32 };
+	}
+
+	render(ctx: GuiRenderContext): void {
+		if (!this.visible) return;
+		const r = this.layoutRect;
+		if (r.width <= 0 || r.height <= 0) return;
+		const t = ctx.theme;
+		if (this.activeValue || this.pressed) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, t.sidebarItemBg, 6);
+		} else if (this.isHovered()) {
+			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, 6);
+		}
+		if (this.isFocusVisible()) {
+			drawFocusHalo(ctx, r, 6, 0.2, 2);
+		}
+		const fg = this.activeValue || this.isHovered() ? t.textPrimary : t.textSecondary;
+		drawVectorIcon(ctx, this.iconName, r.x + 6, r.y + 9, 14, fg);
+		const style = { fontFamily: SGUI_FONT_REGULAR, fontSize: t.fontSizeBody, fontWeight: 400 };
+		const tm = ctx.measureText(style, 0, this.labelText);
+		ctx.drawStyledText(
+			r.x + 30,
+			r.y + Math.max(0, (r.height - tm.lineHeight) * 0.5),
+			Math.max(12, r.width - 36),
+			fg,
+			style,
+			this.labelText,
+		);
+	}
+
+	override handlePointer(event: GuiPointerEvent, _ctx: GuiRenderContext): GuiPointerResult {
+		if (event.phase === "down" && event.button === "left") {
+			this.pressed = true;
+			this.invalidate();
+			return { handled: true, capture: this, focus: this, cursor: SGUI_CURSOR_POINTER };
+		}
+		if (event.phase === "up" && event.button === "left") {
+			const hit = this.pressed && pointInRect(event.x, event.y, this.layoutRect);
+			this.pressed = false;
+			this.invalidate();
+			if (hit) this.onClickFn();
+			return { handled: true, releaseCapture: true, cursor: SGUI_CURSOR_POINTER };
+		}
+		return { handled: true, cursor: SGUI_CURSOR_POINTER };
+	}
+
+	override handleKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean {
+		if (event.phase === "down" && ctx.keybindings.matches(event, "activate")) {
+			this.onClickFn();
+			return true;
+		}
+		return false;
+	}
+
+	override collectAccessibilityNodes(out: GuiA11yNode[], ctx: GuiRenderContext): void {
+		if (!this.visible || this.layoutRect.width <= 0 || this.layoutRect.height <= 0) return;
+		let flags = SGUI_A11Y_STATE_ENABLED;
+		if (ctx.isFocused(this)) flags |= SGUI_A11Y_STATE_FOCUSED;
+		if (this.activeValue) flags |= SGUI_A11Y_STATE_SELECTED;
+		out.push({
+			id: this.a11yId,
+			role: "button",
+			label: this.labelText,
+			rect: this.layoutRect,
+			stateFlags: flags,
+		});
+	}
+
+	override handleAccessibilityAction(
+		nodeId: number,
+		action: "focus" | "press" | "increment" | "decrement" | "setValue",
+		_value: string,
+		ctx: GuiRenderContext,
+	): boolean {
+		if (nodeId !== this.a11yId) return false;
+		if (action === "focus") {
+			ctx.requestFocus(this);
+			return true;
+		}
+		if (action === "press") {
+			this.onClickFn();
+			return true;
+		}
+		return false;
+	}
+}
 
 /** Inline rename input inside a session card supporting Enter commit and Escape cancel. */
 class InlineRenameInput extends Input {
@@ -359,13 +472,12 @@ class SidebarSessionCard extends GuiComponent {
 		const t = ctx.theme;
 		const showActions = this.shouldShowActions();
 		if (this.isSelected) {
-			const selectedBg = t.dark ? SELECTED_CARD_DARK : SELECTED_CARD_LIGHT;
-			ctx.fillRect(r.x, r.y, r.width, r.height, selectedBg, SIDEBAR_CARD_RADIUS);
+			ctx.fillRect(r.x, r.y, r.width, r.height, t.sidebarItemBg, SIDEBAR_CARD_RADIUS);
 		} else if (this.isHovered()) {
 			ctx.fillRect(r.x, r.y, r.width, r.height, t.hover, SIDEBAR_CARD_RADIUS);
 		}
 
-		if (this.isFocused()) {
+		if (this.isFocusVisible()) {
 			drawFocusHalo(ctx, r, SIDEBAR_CARD_RADIUS, 0.2, 2);
 		}
 
@@ -385,7 +497,7 @@ class SidebarSessionCard extends GuiComponent {
 		if (this.renameInput !== undefined) {
 			this.renameInput.render(ctx);
 		} else {
-			const rightReserved = showActions ? this.actionButtons.length * 20 + 10 : timeW + 14;
+			const rightReserved = showActions ? this.actionButtons.length * 20 + 10 : 10;
 			const availTitleW = Math.max(20, r.x + r.width - rightReserved - titleX);
 			const titleStyle = {
 				fontFamily: SGUI_FONT_REGULAR,
@@ -405,35 +517,40 @@ class SidebarSessionCard extends GuiComponent {
 				for (let i = 0; i < this.actionButtons.length; i++) {
 					this.actionButtons[i]?.render(ctx);
 				}
-			} else {
-				ctx.drawStyledText(
-					r.x + r.width - 10 - timeW,
-					topRowY + 1,
-					timeW + 2,
-					t.textMuted,
-					timeStyle,
-					timeLabel,
-				);
 			}
 		}
 
-		// Bottom subtitle row: workspace + message count (+ pin icon when pinned & not showing action icons)
+		// Bottom subtitle row: [folder] <project> on left + relative age (and pin) on right
 		const subY = r.y + 29;
 		const subStyle = { fontFamily: SGUI_FONT_REGULAR, fontSize: t.fontSizeSmall, fontWeight: 400 };
 		const wsName = this.item.workspaceName || basename(this.item.cwd) || this.item.cwd;
-		const metaText = `${wsName} · ${this.item.messageCount}m`;
-		const pinSpace = this.isPinned && !showActions ? 18 : 0;
+		const folderIconSize = 12;
+		const folderIconX = r.x + 10;
+		const projectTextX = folderIconX + folderIconSize + 5;
+		const pinSpace = this.isPinned && !showActions ? 16 : 0;
+		const rightEdgeW = timeW + 10 + pinSpace;
+		const availWsW = Math.max(20, r.x + r.width - rightEdgeW - 8 - projectTextX);
+
+		drawVectorIcon(ctx, "folder", folderIconX, subY + 1, folderIconSize, t.textMuted);
 		ctx.drawStyledText(
-			r.x + 10,
+			projectTextX,
 			subY,
-			Math.max(20, r.width - 20 - pinSpace),
+			availWsW,
 			t.textSecondary,
 			subStyle,
-			metaText,
+			wsName,
+		);
+		ctx.drawStyledText(
+			r.x + r.width - 10 - timeW,
+			subY,
+			timeW + 2,
+			t.textMuted,
+			timeStyle,
+			timeLabel,
 		);
 
 		if (this.isPinned && !showActions) {
-			drawVectorIcon(ctx, "pin", r.x + r.width - 20, subY + 1, 11, t.accent);
+			drawVectorIcon(ctx, "pin", r.x + r.width - 10 - timeW - 15, subY + 1, 11, t.accent);
 		}
 	}
 
@@ -556,6 +673,7 @@ class SidebarPaneContainer extends GuiComponent {
 		this.vibrancy = vibrancy;
 		this.content.setParent(this);
 		this.resizeHandle.setParent(this);
+		registerSpecChildren(this, () => [this.content]);
 	}
 
 	override attachHost(host: GuiHost | undefined): void {
@@ -584,15 +702,14 @@ class SidebarPaneContainer extends GuiComponent {
 
 	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
 		const w = Math.min(maxWidth, this.widthValue);
-		const childSize = this.content.measure(ctx, Math.max(0, w - 1), maxHeight);
+		const childSize = this.content.measure(ctx, w, maxHeight);
 		return { width: w, height: maxHeight ?? childSize.height };
 	}
 
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
-		const contentW = Math.max(0, rect.width - 1);
-		this.content.layout(ctx, { x: rect.x, y: rect.y, width: contentW, height: rect.height });
-		const handleSize = this.resizeHandle.measure(ctx, 8, rect.height);
+		this.content.layout(ctx, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+		const handleSize = this.resizeHandle.measure(ctx, 6, rect.height);
 		const hw = Math.max(4, handleSize.width);
 		this.resizeHandle.layout(ctx, {
 			x: rect.x + rect.width - hw,
@@ -618,7 +735,8 @@ class SidebarPaneContainer extends GuiComponent {
 		const r = this.layoutRect;
 		if (r.width <= 0 || r.height <= 0) return;
 
-		const bg = this.vibrancy ? rgbaColor(0, 0, 0, 0) : ctx.theme.sidebarBg;
+		const headless = ctx.backend instanceof HeadlessBackend;
+		const bg = this.vibrancy && !headless ? rgbaColor(0, 0, 0, 0) : ctx.theme.sidebarBg;
 		ctx.fillRect(r.x, r.y, r.width, r.height, bg);
 
 		this.content.render(ctx);
@@ -678,7 +796,10 @@ export interface WakuSidebarCallbacks {
 	readonly vibrancyEnabled?: boolean;
 	readonly onNewSession?: () => void;
 	readonly onToggleSidebar?: () => void;
+	readonly onGoBack?: () => void;
+	readonly onGoForward?: () => void;
 	readonly onOpenSettings?: () => void;
+	readonly onOpenSidebarOptions?: (anchorRect: Rect) => void;
 	readonly onToggleTheme?: () => void;
 	readonly onResize?: (width: number) => void;
 	readonly onResizeEnd?: (width: number) => void;
@@ -689,15 +810,22 @@ export interface WakuSidebarHandle {
 	getWidth(): number;
 	setWidth(width: number): void;
 	setVibrancyEnabled(enabled: boolean): void;
+	getSurfaceStyle(): {
+		readonly background: Color;
+		readonly borderWidth: number;
+		readonly borderColor: Color;
+		readonly width: number;
+	};
+	getOptionsButtonRect(): Rect;
 	update(snapshot: GuiSessionSnapshot): void;
 	applyTheme(theme: GuiTheme): void;
 	dispose(): void;
 }
 
 /**
- * Create Waku's left session sidebar with native vibrancy support, traffic-light clearance,
- * Updated/Project grouping, collapsible sections, 51px session cards, empty state,
- * Appearance toggle, and Settings button.
+ * Create Waku's left session sidebar matching v0.1.20 layout:
+ * 48px traffic-light header (Toggle Sidebar / Previous / Next), New Task & Search rows,
+ * group header with Sidebar options button, 51px session cards, and borderless 40px Settings footer.
  */
 export function createWakuSidebar(
 	app: GuiApp,
@@ -712,69 +840,137 @@ export function createWakuSidebar(
 	let searchQuery = "";
 	let renamingSessionId: string | undefined;
 
-	const searchToggleBtn = new IconButton({
-		icon: "search",
-		size: 26,
-		iconSize: 13,
-		label: "Search Sessions",
-		onClick: () => {
-			searchOpen = !searchOpen;
-			searchBox.visible = searchOpen;
-			searchToggleBtn.setActive(searchOpen);
-			if (!searchOpen && searchQuery.length > 0) {
-				searchQuery = "";
-				searchInput.setValue("");
-			}
-			rebuildSessionList();
-			if (searchOpen) {
-				app.setFocus(searchInput);
-			}
+	const toggleSidebarBtn = annotateSpecNode(
+		new IconButton({
+			icon: "panel-left",
+			size: 26,
+			iconSize: 14,
+			label: "Toggle Sidebar",
+			onClick: () => {
+				if (callbacks.onToggleSidebar) {
+					callbacks.onToggleSidebar();
+				} else {
+					const cur = controller.getSnapshot().layout.sidebarCollapsed;
+					controller.updateLayoutPreferences({ sidebarCollapsed: !cur });
+				}
+			},
+		}),
+		{
+			key: "workspace.sidebar.toggle",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Toggle Sidebar", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/panel-left.svg", alt: "Toggle Sidebar", w: 14, h: 14 },
 		},
+	);
+
+	const navBackBtn = annotateSpecNode(
+		new IconButton({
+			icon: "arrow-left",
+			size: 26,
+			iconSize: 14,
+			label: "Previous Session",
+			disabled: !controller.canGoBack(),
+			onClick: () => {
+				if (callbacks.onGoBack) {
+					callbacks.onGoBack();
+				} else {
+					void controller.goBack();
+				}
+			},
+		}),
+		{
+			key: "workspace.sidebar.nav_back",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Previous Session", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/arrow-left.svg", alt: "Previous Session", w: 14, h: 14 },
+		},
+	);
+
+	const navForwardBtn = annotateSpecNode(
+		new IconButton({
+			icon: "arrow-right",
+			size: 26,
+			iconSize: 14,
+			label: "Next Session",
+			disabled: !controller.canGoForward(),
+			onClick: () => {
+				if (callbacks.onGoForward) {
+					callbacks.onGoForward();
+				} else {
+					void controller.goForward();
+				}
+			},
+		}),
+		{
+			key: "workspace.sidebar.nav_forward",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Next Session", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/arrow-right.svg", alt: "Next Session", w: 14, h: 14 },
+		},
+	);
+
+	const navCluster = new HStack({
+		gap: 2,
+		align: "center",
+		children: [navBackBtn, navForwardBtn],
 	});
 
-	const newSessionBtn = new IconButton({
-		icon: "compose",
-		size: 26,
-		iconSize: 14,
-		label: "New Session",
-		onClick: () => {
+	const headerRow = new HStack({
+		gap: 6,
+		align: "center",
+		children: [toggleSidebarBtn, navCluster],
+	});
+
+	const topRow = annotateSpecNode(
+		new WindowDragArea({
+			height: 48,
+			child: new Box({
+				height: 48,
+				fillWidth: true,
+				padding: { left: TRAFFIC_LIGHT_CLEARANCE },
+				child: headerRow,
+			}),
+		}),
+		{
+			key: "workspace.sidebar.header",
+			role: "region",
+			flowComponent: headerRow,
+			padding: [0, 0, 0, TRAFFIC_LIGHT_CLEARANCE],
+			size: { w: "fill", h: 48 },
+		},
+	);
+
+	const newTaskBtn = annotateSpecNode(
+		new SidebarActionRow("compose", "New Task", () => {
 			if (callbacks.onNewSession) {
 				callbacks.onNewSession();
 			} else {
 				void controller.newSession();
 			}
-		},
-	});
-
-	const toggleSidebarBtn = new IconButton({
-		icon: "panel-left",
-		size: 26,
-		iconSize: 14,
-		label: "Toggle Sidebar",
-		onClick: () => {
-			if (callbacks.onToggleSidebar) {
-				callbacks.onToggleSidebar();
-			} else {
-				const cur = controller.getSnapshot().layout.sidebarCollapsed;
-				controller.updateLayoutPreferences({ sidebarCollapsed: !cur });
-			}
-		},
-	});
-
-	const topRow = new WindowDragArea({
-		height: 48,
-		child: new HStack({
-			gap: 4,
-			align: "center",
-			padding: { horizontal: 10 },
-			children: [
-				new Spacer(TRAFFIC_LIGHT_CLEARANCE, 1),
-				{ child: new Spacer(), grow: 1 },
-				searchToggleBtn,
-				newSessionBtn,
-				toggleSidebarBtn,
-			],
 		}),
+		{
+			key: "workspace.sidebar.new_task",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+			padding: [0, 4, 0, 4],
+			margin: [0, 10, 0, 10],
+			size: { w: "fill", h: 32 },
+			variant: "sidebar-action",
+			text: { value: "New Task", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/compose.svg", alt: "New Task", w: 14, h: 14 },
+		},
+	);
+
+	const newTaskWrap = new Box({
+		padding: { horizontal: 10 },
+		fillWidth: true,
+		child: newTaskBtn,
 	});
 
 	const searchInput = new Input({
@@ -787,120 +983,176 @@ export function createWakuSidebar(
 		},
 	});
 	const searchBox = new Box({
-		padding: { horizontal: 10, bottom: 6 },
+		padding: { left: 10, right: 10, bottom: 8 },
 		fillWidth: true,
 		child: searchInput,
 	});
 	searchBox.visible = false;
 
-	const groupSegmented = new SegmentedControl({
-		label: "Group Sessions",
-		items: [
-			{ id: "updated", label: "Updated" },
-			{ id: "project", label: "Project" },
-		],
-		selectedId: latestSnapshot.layout.sidebarGroupBy,
-		onChange: (id) => {
-			if (id === "updated" || id === "project") {
-				const nextLayout = controller.updateLayoutPreferences({ sidebarGroupBy: id });
-				latestSnapshot = { ...controller.getSnapshot(), layout: nextLayout };
-				rebuildSessionList();
+	const searchBtn = annotateSpecNode(
+		new SidebarActionRow("search", "Search", () => {
+			searchOpen = !searchOpen;
+			searchBox.visible = searchOpen;
+			searchBtn.setActive(searchOpen);
+			if (!searchOpen && searchQuery.length > 0) {
+				searchQuery = "";
+				searchInput.setValue("");
 			}
+			rebuildSessionList();
+			if (searchOpen) {
+				app.setFocus(searchInput);
+			}
+		}),
+		{
+			key: "workspace.sidebar.search",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "start", align: "center", wrap: "nowrap", gap: 10 },
+			padding: [0, 4, 0, 4],
+			margin: [0, 10, 10, 10],
+			size: { w: "fill", h: 32 },
+			variant: "sidebar-action",
+			text: { value: "Search", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/search.svg", alt: "Search", w: 14, h: 14 },
 		},
-	});
+	);
 
-	const groupBar = new Box({
-		padding: { horizontal: 10, bottom: 8 },
+	const searchWrap = new Box({
+		padding: { left: 10, right: 10, bottom: 10 },
 		fillWidth: true,
-		child: groupSegmented,
+		child: searchBtn,
 	});
 
-	const listStack = new VStack({ gap: 2, padding: { horizontal: 8, bottom: 10 } });
-	const scrollArea = new ScrollView({ child: listStack });
-
-	const appearanceSeg = new SegmentedControl({
-		label: "Appearance",
-		items: [
-			{ id: "system", label: "System" },
-			{ id: "dark", label: "Dark" },
-			{ id: "light", label: "Light" },
-		],
-		selectedId: latestSnapshot.layout.appearance,
-		onChange: (id) => {
-			if (id === "system" || id === "dark" || id === "light") {
-				const nextLayout = controller.updateLayoutPreferences({ appearance: id });
-				latestSnapshot = { ...controller.getSnapshot(), layout: nextLayout };
-				app.setTheme(resolveAppearanceTheme(id, app));
-			}
-		},
-	});
-
-	const toggleThemeBtn = new IconButton({
-		icon: currentTheme.dark ? "sun" : "moon",
-		size: 26,
-		iconSize: 13,
-		label: "Toggle Theme",
-		onClick: () => {
-			if (callbacks.onToggleTheme) {
-				callbacks.onToggleTheme();
-			} else {
-				const next: GuiLayoutPreferences["appearance"] = app.getTheme().dark ? "light" : "dark";
-				controller.updateLayoutPreferences({ appearance: next });
-				app.setTheme(resolveAppearanceTheme(next, app));
-			}
-		},
-	});
-
-	const settingsBtn = new Button({
-		label: "Settings",
-		variant: "ghost",
-		leadingIcon: "sliders",
-		fontSize: 12,
-		padding: { vertical: 4, horizontal: 8 },
-		onClick: () => {
-			if (callbacks.onOpenSettings) {
-				callbacks.onOpenSettings();
-			} else {
-				openSettingsModal(app, controller);
-			}
-		},
-	});
-
-	const footerShortcutHint = new Text({
-		text: "⌘,",
+	const groupHeaderTitle = new Text({
+		text: "Today",
 		fontSize: currentTheme.fontSizeSmall,
-		color: currentTheme.textMuted,
+		fontWeight: 500,
+		color: currentTheme.textSecondary,
+		wrap: false,
 	});
 
-	const footerDivider = new Divider({ direction: "horizontal" });
-	const footer = new VStack({
-		gap: 8,
-		padding: { horizontal: 10, vertical: 10 },
+	const sidebarOptionsBtn = annotateSpecNode(
+		new IconButton({
+			icon: "list-filter",
+			size: 20,
+			iconSize: 13,
+			label: "Sidebar options",
+			onClick: () => {
+				if (callbacks.onOpenSidebarOptions) {
+					callbacks.onOpenSidebarOptions(sidebarOptionsBtn.layoutRect);
+				} else {
+					openSidebarOptionsPopover(app, controller, { anchorRect: sidebarOptionsBtn.layoutRect });
+				}
+			},
+		}),
+		{
+			key: "workspace.sidebar.options",
+			role: "button",
+			size: { w: 20, h: 20 },
+			variant: "icon-button",
+			text: { value: "Sidebar options", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/list-filter.svg", alt: "Sidebar options", w: 14, h: 14 },
+		},
+	);
+
+	const groupHeaderRow = new HStack({
+		gap: 4,
+		align: "center",
+		justify: "space-between",
 		children: [
-			appearanceSeg,
+			groupHeaderTitle,
 			new HStack({
-				gap: 6,
+				gap: 0,
 				align: "center",
-				children: [
-					toggleThemeBtn,
-					{ child: new Spacer(), grow: 1 },
-					settingsBtn,
-					footerShortcutHint,
-				],
+				children: [sidebarOptionsBtn, new Spacer(14, 1)],
 			}),
 		],
 	});
+
+	const groupHeaderBox = annotateSpecNode(
+		new Box({
+			height: 28,
+			fillWidth: true,
+			padding: { horizontal: 8 },
+			child: groupHeaderRow,
+		}),
+		{
+			key: "workspace.sidebar.group_header",
+			role: "region",
+			flowComponent: groupHeaderRow,
+			margin: [0, 10, 2, 10],
+			size: { w: "fill", h: 28 },
+			variant: "sidebar-group-header",
+			text: () => ({ value: groupHeaderTitle.getText(), wrap: "nowrap", lines: 1, overflow: "ellipsis" }),
+		},
+	);
+
+	const groupHeaderWrap = new Box({
+		padding: { left: 10, right: 10, bottom: 2 },
+		fillWidth: true,
+		child: groupHeaderBox,
+	});
+
+	const listStack = new VStack({ gap: 1, padding: { horizontal: 10, bottom: 8 } });
+	const scrollArea = new ScrollView({ child: listStack });
+
+	const settingsBtn = annotateSpecNode(
+		new IconButton({
+			icon: "settings",
+			size: 26,
+			iconSize: 14,
+			label: "Open Settings",
+			onClick: () => {
+				if (callbacks.onOpenSettings) {
+					callbacks.onOpenSettings();
+				} else {
+					openSettingsModal(app, controller);
+				}
+			},
+		}),
+		{
+			key: "workspace.sidebar.settings",
+			role: "button",
+			size: { w: 26, h: 26 },
+			variant: "icon-button",
+			text: { value: "Open Settings", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/settings.svg", alt: "Open Settings", w: 14, h: 14 },
+		},
+	);
+
+	const footerRow = new HStack({
+		gap: 0,
+		align: "center",
+		justify: "start",
+		children: [settingsBtn],
+	});
+
+	const footerBox = annotateSpecNode(
+		new Box({
+			height: 40,
+			fillWidth: true,
+			padding: { horizontal: 10 },
+			child: footerRow,
+		}),
+		{
+			key: "workspace.sidebar.footer",
+			role: "region",
+			flowComponent: footerRow,
+			size: { w: "fill", h: 40 },
+			variant: "borderless-footer",
+		},
+	);
 
 	const paneLayout = new VStack({
 		gap: 0,
 		align: "stretch",
 		children: [
 			topRow,
+			newTaskWrap,
+			searchWrap,
 			searchBox,
-			groupBar,
+			groupHeaderWrap,
 			{ child: scrollArea, grow: 1, shrink: 1 },
-			footerDivider,
-			footer,
+			footerBox,
 		],
 	});
 
@@ -911,7 +1163,7 @@ export function createWakuSidebar(
 		maxWidth: SIDEBAR_MAX_WIDTH,
 		initialWidth: clampSidebarWidth(latestSnapshot.layout.sidebarWidth),
 		direction: 1,
-		dividerColor: currentTheme.sidebarBorder,
+		dividerColor: rgbaColor(0, 0, 0, 0),
 		hoverColor: currentTheme.accent,
 		activeColor: currentTheme.accent,
 		a11yLabel: "Resize sidebar",
@@ -933,6 +1185,21 @@ export function createWakuSidebar(
 		latestSnapshot.layout.sidebarWidth || SIDEBAR_DEFAULT_WIDTH,
 		vibrancyActive,
 	);
+
+	const applySidebarSpecAnnotation = (theme: GuiTheme): void => {
+		if (frameContainer === undefined) return;
+		annotateSpecNode(frameContainer, {
+			key: "workspace.sidebar",
+			role: "navigation",
+			flowComponent: paneLayout,
+			padding: [0, 0, 0, 0],
+			margin: [0, 0, 0, 0],
+			border: [0, 0, 0, 0],
+			size: { w: clampSidebarWidth(frameContainer.getWidth()), h: "fill" },
+			variant: theme.dark ? "sidebar-dark" : "sidebar-light",
+		});
+	};
+	applySidebarSpecAnnotation(currentTheme);
 
 	const resolveTitle = (item: GuiSessionListItem, snapshot: GuiSessionSnapshot): string => {
 		const custom = lookupSessionCustomName(snapshot.layout.sessionCustomNames, item.id);
@@ -1019,6 +1286,7 @@ export function createWakuSidebar(
 		for (let i = 0; i < snapshot.sessions.length; i++) {
 			const s = snapshot.sessions[i];
 			if (s === undefined) continue;
+			if (isBlankUntitledSession(s)) continue;
 			if (q.length === 0) {
 				matching.push(s);
 			} else {
@@ -1029,40 +1297,12 @@ export function createWakuSidebar(
 			}
 		}
 
+		const oldestFirst = snapshot.layout.sidebarOrderBy === "oldest";
+		const compareItems = (a: GuiSessionListItem, b: GuiSessionListItem): number =>
+			oldestFirst ? a.updatedAt - b.updatedAt : b.updatedAt - a.updatedAt;
+
 		if (matching.length === 0) {
-			listStack.addChild(
-				new Box({
-					padding: { vertical: 24, horizontal: 10 },
-					child: new VStack({
-						gap: 8,
-						align: "center",
-						children: [
-							new Text({
-								text: q.length > 0 ? "No matching sessions" : "No sessions yet",
-								color: theme.textSecondary,
-								fontWeight: 500,
-								align: "center",
-							}),
-							new Text({
-								text: q.length > 0 ? "Try another search query." : "Start a conversation to save your session history.",
-								color: theme.textMuted,
-								fontSize: theme.fontSizeSmall,
-								align: "center",
-							}),
-							new Button({
-								label: "Start New Session",
-								variant: "secondary",
-								leadingIcon: "compose",
-								fontSize: 12,
-								onClick: () => {
-									if (callbacks.onNewSession) callbacks.onNewSession();
-									else void controller.newSession();
-								},
-							}),
-						],
-					}),
-				}),
-			);
+			groupHeaderTitle.setText(snapshot.layout.sidebarGroupBy === "project" ? "Workspace" : "Today");
 			return;
 		}
 
@@ -1078,37 +1318,68 @@ export function createWakuSidebar(
 			}
 		}
 
-		const renderSection = (sectionKey: string, title: string, items: readonly GuiSessionListItem[]): void => {
+		let annotatedFirstCard = false;
+		const addCard = (item: GuiSessionListItem, projectIndented: boolean): void => {
+			const card = buildSessionCard(item, snapshot, pinnedSet);
+			const activeId = snapshot.status.sessionId;
+			const isSelected = item.isActive === true || (activeId !== undefined && item.id === activeId);
+			const target: GuiComponent = projectIndented
+				? new Box({ padding: { left: 18 }, fillWidth: true, child: card })
+				: card;
+			if (!annotatedFirstCard) {
+				annotatedFirstCard = true;
+				annotateSpecNode(card, {
+					key: "workspace.sidebar.session.0",
+					role: "button",
+					flow: { type: "flex", dir: "column", justify: "center", align: "stretch", wrap: "nowrap", gap: 4 },
+					padding: [7, 8, 7, 8],
+					margin: [0, 10, 1, 10],
+					size: { w: "fill", h: SIDEBAR_CARD_HEIGHT },
+					state: () => (isSelected ? "active" : "default"),
+					text: null,
+					skipChildren: true,
+				});
+			}
+			listStack.addChild(target);
+		};
+
+		const renderSection = (
+			sectionKey: string,
+			title: string,
+			items: readonly GuiSessionListItem[],
+			omitHeaderIfPrimary: boolean,
+			projectIndented: boolean,
+		): void => {
 			if (items.length === 0) return;
 			const isCollapsed = collapsedSections.has(sectionKey);
-			listStack.addChild(
-				new SidebarSectionHeader(title, items.length, isCollapsed, () => {
-					if (collapsedSections.has(sectionKey)) {
-						collapsedSections.delete(sectionKey);
-					} else {
-						collapsedSections.add(sectionKey);
-					}
-					rebuildSessionList();
-				}),
-			);
+			if (!omitHeaderIfPrimary) {
+				listStack.addChild(
+					new SidebarSectionHeader(title, items.length, isCollapsed, () => {
+						if (collapsedSections.has(sectionKey)) {
+							collapsedSections.delete(sectionKey);
+						} else {
+							collapsedSections.add(sectionKey);
+						}
+						rebuildSessionList();
+					}),
+				);
+			}
 			if (isCollapsed) return;
 			for (let i = 0; i < items.length; i++) {
 				const item = items[i];
 				if (item === undefined) continue;
-				listStack.addChild(buildSessionCard(item, snapshot, pinnedSet));
+				addCard(item, projectIndented);
 			}
 		};
 
-		pinnedItems.sort((a, b) => b.updatedAt - a.updatedAt);
-		regularItems.sort((a, b) => b.updatedAt - a.updatedAt);
-
-		renderSection("pinned", "Pinned", pinnedItems);
+		pinnedItems.sort(compareItems);
+		regularItems.sort(compareItems);
 
 		if (snapshot.layout.sidebarGroupBy === "project") {
 			const projectOrder: string[] = [];
 			const byProject = new Map<string, GuiSessionListItem[]>();
-			for (let i = 0; i < regularItems.length; i++) {
-				const item = regularItems[i];
+			for (let i = 0; i < matching.length; i++) {
+				const item = matching[i];
 				if (item === undefined) continue;
 				const projectName = item.workspaceName || basename(item.cwd) || item.cwd || "Workspace";
 				let group = byProject.get(projectName);
@@ -1119,10 +1390,13 @@ export function createWakuSidebar(
 				}
 				group.push(item);
 			}
+			groupHeaderTitle.setText(projectOrder[0] ?? "Workspace");
 			for (let i = 0; i < projectOrder.length; i++) {
 				const name = projectOrder[i];
 				if (name === undefined) continue;
-				renderSection(`project:${name}`, name, byProject.get(name) ?? []);
+				const items = byProject.get(name) ?? [];
+				items.sort(compareItems);
+				renderSection(`project:${name}`, name, items, i === 0, true);
 			}
 		} else {
 			const nowMs = Date.now();
@@ -1148,10 +1422,22 @@ export function createWakuSidebar(
 						break;
 				}
 			}
-			renderSection("date:Today", "Today", todayItems);
-			renderSection("date:Yesterday", "Yesterday", yesterdayItems);
-			renderSection("date:This Week", "This Week", weekItems);
-			renderSection("date:Older", "Older", olderItems);
+			const primaryLabel =
+				pinnedItems.length > 0
+					? "Pinned"
+					: todayItems.length > 0
+						? "Today"
+						: yesterdayItems.length > 0
+							? "Yesterday"
+							: weekItems.length > 0
+								? "This Week"
+								: "Older";
+			groupHeaderTitle.setText(primaryLabel);
+			renderSection("pinned", "Pinned", pinnedItems, primaryLabel === "Pinned", false);
+			renderSection("date:Today", "Today", todayItems, primaryLabel === "Today", false);
+			renderSection("date:Yesterday", "Yesterday", yesterdayItems, primaryLabel === "Yesterday", false);
+			renderSection("date:This Week", "This Week", weekItems, primaryLabel === "This Week", false);
+			renderSection("date:Older", "Older", olderItems, primaryLabel === "Older", false);
 		}
 	};
 
@@ -1161,9 +1447,10 @@ export function createWakuSidebar(
 		if (frameContainer !== undefined) {
 			frameContainer.visible = !collapsed;
 			frameContainer.setWidth(snapshot.layout.sidebarWidth || SIDEBAR_DEFAULT_WIDTH);
+			applySidebarSpecAnnotation(currentTheme);
 		}
-		groupSegmented.setSelectedId(snapshot.layout.sidebarGroupBy);
-		appearanceSeg.setSelectedId(snapshot.layout.appearance);
+		navBackBtn.setDisabled(!(snapshot.status.canGoBack ?? controller.canGoBack()));
+		navForwardBtn.setDisabled(!(snapshot.status.canGoForward ?? controller.canGoForward()));
 		rebuildSessionList();
 	};
 
@@ -1172,17 +1459,26 @@ export function createWakuSidebar(
 	return {
 		root: frameContainer,
 		getWidth: () => frameContainer.getWidth(),
-		setWidth: (width: number) => frameContainer.setWidth(width),
+		setWidth: (width: number) => {
+			frameContainer.setWidth(width);
+			applySidebarSpecAnnotation(currentTheme);
+		},
 		setVibrancyEnabled: (enabled: boolean) => {
 			vibrancyActive = enabled;
 			frameContainer.setVibrancy(enabled);
 		},
+		getSurfaceStyle: () => ({
+			background: currentTheme.sidebarBg,
+			borderWidth: 0,
+			borderColor: rgbaColor(0, 0, 0, 0),
+			width: frameContainer.getWidth(),
+		}),
+		getOptionsButtonRect: () => sidebarOptionsBtn.layoutRect,
 		update,
 		applyTheme: (theme: GuiTheme) => {
 			currentTheme = theme;
-			toggleThemeBtn.setIcon(theme.dark ? "sun" : "moon");
-			footerShortcutHint.setColor(theme.textMuted);
-			footerDivider.setColor(theme.sidebarBorder);
+			groupHeaderTitle.setColor(theme.textSecondary);
+			applySidebarSpecAnnotation(theme);
 			frameContainer.onThemeChange(theme);
 			rebuildSessionList();
 		},

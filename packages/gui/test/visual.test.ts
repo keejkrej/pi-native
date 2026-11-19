@@ -49,6 +49,8 @@ const ALL_VECTOR_ICONS: readonly VectorIconName[] = [
 	"layout",
 	"list",
 	"activity",
+	"star",
+	"star-filled",
 	"rocket",
 	"compass",
 	"crosshair",
@@ -57,6 +59,9 @@ const ALL_VECTOR_ICONS: readonly VectorIconName[] = [
 	"sparkles",
 	"terminal",
 	"folder",
+	"folder-new",
+	"corner-down-right",
+	"ellipsis",
 	"send",
 	"stop",
 	"menu",
@@ -393,10 +398,12 @@ describe("Modernized widget craft: Button, Switch, Slider, SegmentedControl, Scr
 			),
 		);
 
-		// Switch track 36x20 + pure white #ffffff 16x16 knob even when textOnAccent is dark ink
+		// Switch track 36x20 + Waku inverseBg track and 14x14 inverseFg knob
 		const pureWhite = packRgba(rgbColor(255, 255, 255));
-		assert.ok(cmds.some((c) => c.kind === "fillRect" && c.w === 36 && c.h === 20));
-		assert.ok(cmds.some((c) => c.kind === "fillRect" && c.w === 16 && c.h === 16 && c.rgba === pureWhite));
+		const inverseBgRgba = packRgba(darkInkTheme.inverseBg);
+		const inverseFgRgba = packRgba(darkInkTheme.inverseFg);
+		assert.ok(cmds.some((c) => c.kind === "fillRect" && c.w === 36 && c.h === 20 && c.rgba === inverseBgRgba));
+		assert.ok(cmds.some((c) => c.kind === "fillRect" && c.w === 14 && c.h === 14 && c.rgba === inverseFgRgba));
 
 		// Slider 4px track (radius 2) + 16x16 white thumb
 		assert.ok(cmds.some((c) => c.kind === "fillRect" && c.h === 4 && c.radius === 2));

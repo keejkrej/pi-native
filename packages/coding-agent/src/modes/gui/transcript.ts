@@ -1,9 +1,7 @@
 import { basename } from "node:path";
 import {
 	type A11yActionKind,
-	Badge,
 	Box,
-	Button,
 	type Color,
 	DARK_THEME,
 	drawElevationShadow,
@@ -53,17 +51,11 @@ import type {
 	GuiSessionStatus,
 	GuiTranscriptEntry,
 } from "./types.ts";
+import { annotateSpecNode, registerSpecChildren } from "./ui-spec-meta.ts";
 
-const DEFAULT_MAX_COLUMN_WIDTH = 760;
+const DEFAULT_MAX_COLUMN_WIDTH = 720;
 const NAV_RAIL_WIDTH = 18;
 const JUMP_BTN_SIZE = 32;
-
-const QUICK_START_PROMPTS: readonly string[] = [
-	"Summarize repo changes",
-	"Explain architecture",
-	"Run tests & fix failures",
-	"Review current diff",
-];
 
 /** Options for configuring createWakuTranscriptView. */
 export interface WakuTranscriptViewOptions {
@@ -97,8 +89,10 @@ export interface WakuTranscriptViewHandle {
 	getFindMatchInfo(): { readonly current: number; readonly total: number };
 	handleShortcutKey(event: GuiKeyEvent, ctx: GuiRenderContext): boolean;
 	scrollToTurn(index: number): void;
+	scrollToTop(): void;
 	scrollToEnd(): void;
 	isShowingEmptyState(): boolean;
+	getUserBubbleBoxes(): readonly Box[];
 	dispose(): void;
 }
 
@@ -108,12 +102,13 @@ class CenteredTranscriptColumn extends GuiComponent {
 	private readonly maxColumnWidth: number;
 	private readonly padX: number;
 
-	constructor(child: GuiComponent, maxColumnWidth = DEFAULT_MAX_COLUMN_WIDTH, padX = 24) {
+	constructor(child: GuiComponent, maxColumnWidth = DEFAULT_MAX_COLUMN_WIDTH, padX = 20) {
 		super();
 		this.child = child;
 		this.child.setParent(this);
 		this.maxColumnWidth = maxColumnWidth;
 		this.padX = padX;
+		registerSpecChildren(this, () => [this.child]);
 	}
 
 	override attachHost(host: GuiHost | undefined): void {
@@ -126,7 +121,7 @@ class CenteredTranscriptColumn extends GuiComponent {
 	}
 
 	measure(ctx: GuiRenderContext, maxWidth: number, maxHeight?: number): Size {
-		const availW = Math.max(80, maxWidth - this.padX * 2 - NAV_RAIL_WIDTH);
+		const availW = Math.max(80, maxWidth - this.padX * 2);
 		const colW = Math.min(this.maxColumnWidth, availW);
 		const measured = this.child.visible ? this.child.measure(ctx, colW, maxHeight) : { width: colW, height: 0 };
 		return {
@@ -137,7 +132,7 @@ class CenteredTranscriptColumn extends GuiComponent {
 
 	override layout(ctx: GuiRenderContext, rect: Rect): void {
 		super.layout(ctx, rect);
-		const availW = Math.max(80, rect.width - this.padX * 2 - NAV_RAIL_WIDTH);
+		const availW = Math.max(80, rect.width - this.padX * 2);
 		const colW = Math.min(this.maxColumnWidth, availW);
 		const measured = this.child.measure(ctx, colW, undefined);
 		const x = rect.x + Math.max(this.padX, Math.floor((rect.width - colW) / 2));
@@ -231,7 +226,7 @@ class TranscriptNavRail extends GuiComponent {
 		const r = this.layoutRect;
 		if (r.width <= 0 || r.height <= 24) return;
 		const lineX = r.x + Math.floor(r.width * 0.5);
-		ctx.drawLine(lineX, r.y + 14, lineX, r.y + r.height - 14, withAlpha(ctx.theme.border, 0.45), 1);
+		ctx.drawLine(lineX, r.y + 14, lineX, r.y + r.height - 14, ctx.theme.border, 1);
 
 		for (let i = 0; i < this.markers.length; i++) {
 			const y = this.markerY(i);
@@ -385,12 +380,7 @@ class WakuTranscriptViewport extends GuiComponent {
 
 	private layoutFloatingOverlays(ctx: GuiRenderContext, rect: Rect): void {
 		if (this.emptyState.visible) {
-			const esSize = this.emptyState.measure(ctx, Math.min(540, Math.max(220, rect.width - 48)), rect.height);
-			const esW = Math.min(rect.width - 32, esSize.width);
-			const esH = Math.min(rect.height - 32, esSize.height);
-			const esX = rect.x + Math.max(16, Math.floor((rect.width - esW) * 0.5));
-			const esY = rect.y + Math.max(16, Math.floor((rect.height - esH) * 0.44));
-			this.emptyState.layout(ctx, { x: esX, y: esY, width: Math.max(0, esW), height: Math.max(0, esH) });
+			this.emptyState.layout(ctx, rect);
 		}
 
 		if (this.navRail.visible) {
@@ -552,6 +542,7 @@ export function createWakuTranscriptView(
 	const cards: ThemedCard[] = [];
 	const searchableItems: SearchableTranscriptItem[] = [];
 	const userTurns: TurnRailItem[] = [];
+	const userBubbleBoxes: Box[] = [];
 	const activeBashCards = new Map<string, BashCardHandle>();
 	let lastStandaloneBashCard: BashCardHandle | undefined;
 	let activeTurnCluster: TurnClusterCardHandle | undefined;
@@ -563,95 +554,87 @@ export function createWakuTranscriptView(
 	let findMatches: SearchMatchLocation[] = [];
 	let currentFindIndex = 0;
 
-	const messagesStack = new VStack({ gap: 10 });
+	const messagesStack = new VStack({ gap: 12 });
 	const centeredColumn = new CenteredTranscriptColumn(
 		messagesStack,
 		options.maxColumnWidth ?? DEFAULT_MAX_COLUMN_WIDTH,
-		24,
+		20,
 	);
-	const scrollView = new ScrollView({
-		follow: "end",
-		scrollToEndLabel: "↓",
-		primary: true,
-		padding: { vertical: 16 },
-		child: centeredColumn,
-	});
+	const scrollView = annotateSpecNode(
+		new ScrollView({
+			follow: "end",
+			scrollToEndLabel: "↓",
+			primary: true,
+			overlayScrollbar: true,
+			padding: { vertical: 16 },
+			child: centeredColumn,
+		}),
+		{
+			key: "workspace.main.transcript",
+			role: "region",
+			flow: { type: "flex", dir: "column", justify: "start", align: "center", wrap: "nowrap", gap: 12 },
+			size: { w: "fill", h: "fill" },
+			overflow: "auto",
+		},
+	);
 
 	// --- Empty State Hero ---
-	const heroMark = new VectorIcon({ name: "waku-mark", size: 38, color: theme.accent });
-	const heroBadge = new Box({
-		background: withAlpha(theme.accent, theme.dark ? 0.14 : 0.1),
-		borderColor: withAlpha(theme.accent, theme.dark ? 0.35 : 0.28),
-		borderWidth: 1,
-		radius: 18,
-		padding: 12,
-		child: heroMark,
-	});
+	const heroMark = annotateSpecNode(
+		new VectorIcon({ name: "sparkles", size: 20, color: theme.accent }),
+		{
+			key: "workspace.main.empty_state.sparkle",
+			role: "img",
+			flow: { type: "block" },
+			size: { w: 20, h: 20 },
+			text: { value: "Empty State Sparkle", wrap: "nowrap", lines: 1, overflow: "ellipsis" },
+			asset: { kind: "icon", ref: "icons/sparkle.svg", alt: "Empty State Sparkle", w: 20, h: 20 },
+		},
+	);
 	const heroGreeting = new Text({
-		text: "Start building",
+		text: "What should we build in cwd?",
 		fontSize: theme.fontSizeHeading,
-		fontWeight: 600,
-		color: theme.textBright,
+		fontWeight: 500,
+		color: theme.textPrimary,
 		align: "center",
 	});
-	const heroSubtitle = new Text({
-		text: "Ask anything about this workspace or choose a prompt below.",
-		fontSize: theme.fontSizeSmall,
-		color: theme.textMuted,
-		align: "center",
+	annotateSpecNode(heroGreeting, {
+		key: "workspace.main.empty_state.heading",
+		role: "heading",
+		flow: { type: "flex", dir: "row", justify: "center", align: "baseline", wrap: "nowrap", gap: 0 },
+		size: { w: "hug", h: "hug" },
+		text: () => ({ value: heroGreeting.getText(), wrap: "nowrap", lines: 1, overflow: "ellipsis" }),
 	});
-	const heroModelPill = new Badge({
-		label: "No model",
-		variant: "neutral",
-		leadingIcon: "cpu",
-		iconSize: 12,
-	});
-
-	const quickPrompts = options.quickPrompts ?? QUICK_START_PROMPTS;
-	const promptButtons: GuiComponent[] = [];
-	for (let i = 0; i < quickPrompts.length; i++) {
-		const promptText = quickPrompts[i];
-		if (promptText === undefined) continue;
-		promptButtons.push(
-			new Button({
-				label: promptText,
-				variant: "secondary",
-				pill: true,
-				fontSize: theme.fontSizeSmall,
-				padding: { horizontal: 12, vertical: 6 },
-				onClick: () => {
-					if (options.onSelectPrompt !== undefined) {
-						options.onSelectPrompt(promptText);
-					} else {
-						void controller.sendUserMessage(promptText);
-					}
-				},
-			}),
-		);
-	}
-	const heroPromptsRow = new HStack({ gap: 8, align: "center", children: promptButtons });
 
 	const emptyStateStack = new VStack({
-		gap: 12,
+		gap: 14,
+		justify: "center",
 		align: "center",
-		children: [heroBadge, heroGreeting, heroModelPill, heroSubtitle, heroPromptsRow],
+		children: [heroMark, heroGreeting],
 	});
-	const emptyStateBox = new Box({
-		padding: { horizontal: 20, vertical: 16 },
-		child: emptyStateStack,
-	});
+	const emptyStateBox = annotateSpecNode(
+		new Box({
+			fillWidth: true,
+			fillHeight: true,
+			padding: { top: 0, right: 32, bottom: 31, left: 32 },
+			child: emptyStateStack,
+		}),
+		{
+			key: "workspace.main.empty_state",
+			role: "region",
+			flowComponent: emptyStateStack,
+			size: { w: "fill", h: "fill" },
+		},
+	);
 
 	const updateEmptyStateStatus = (status: GuiSessionStatus) => {
 		const projectName = basename(status.cwd);
-		heroGreeting.setText(projectName.length > 0 ? `Start building in ${projectName}` : "Start building");
-		const modelText = status.activeModel
-			? `${status.activeModel.provider} · ${status.activeModel.label}`
-			: "No model selected";
-		heroModelPill.setLabel(modelText);
+		heroGreeting.setText(projectName.length > 0 ? `What should we build in ${projectName}?` : "What should we build in cwd?");
 	};
 
 	const syncEmptyStateVisibility = () => {
-		emptyStateBox.visible = cards.length === 0;
+		const isEmpty = cards.length === 0;
+		emptyStateBox.visible = isEmpty;
+		scrollView.visible = !isEmpty;
 	};
 
 	// --- Find Bar (⌘F) ---
@@ -713,21 +696,7 @@ export function createWakuTranscriptView(
 	findBar.visible = false;
 
 	const refreshNavMarkers = () => {
-		if (cards.length === 0 || (userTurns.length === 0 && !isAgentStreaming)) {
-			navRail.setMarkers([], false);
-			return;
-		}
-		const totalCards = Math.max(1, cards.length - 1);
-		const markers: NavTickMarker[] = [];
-		for (let i = 0; i < userTurns.length; i++) {
-			const turn = userTurns[i];
-			if (turn === undefined) continue;
-			const cardIdx = cards.indexOf(turn.card);
-			const ratio = totalCards > 0 && cardIdx >= 0 ? cardIdx / totalCards : i / Math.max(1, userTurns.length);
-			const label = turn.snippet.length > 0 ? `Turn ${i + 1}: ${turn.snippet}` : `Turn ${i + 1}`;
-			markers.push({ label, ratio, index: i });
-		}
-		navRail.setMarkers(markers, isAgentStreaming);
+		navRail.setMarkers([], false);
 	};
 
 	const scrollToTurn = (turnIdx: number) => {
@@ -924,10 +893,35 @@ export function createWakuTranscriptView(
 		refreshNavMarkers();
 	};
 
+	let annotatedFirstTurnCluster = false;
+
+	const registerTurnClusterSpecIfFirst = (cluster: TurnClusterCardHandle) => {
+		if (annotatedFirstTurnCluster) return;
+		annotatedFirstTurnCluster = true;
+		annotateSpecNode(cluster.getWorkedFoldButton(), {
+			key: "workspace.main.transcript.worked_fold.0",
+			role: "button",
+			flow: { type: "flex", dir: "row", justify: "center", align: "center", wrap: "nowrap", gap: 10 },
+			size: { w: "fill", h: 24 },
+			text: null,
+			skipChildren: true,
+		});
+		annotateSpecNode(cluster.getAssistantBox(), {
+			key: "workspace.main.transcript.assistant.0",
+			role: "region",
+			flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 8 },
+			size: { w: "fill", h: "hug" },
+			text: null,
+			skipChildren: true,
+		});
+	};
+
 	const clearAll = () => {
 		cards.length = 0;
 		searchableItems.length = 0;
 		userTurns.length = 0;
+		userBubbleBoxes.length = 0;
+		annotatedFirstTurnCluster = false;
 		activeBashCards.clear();
 		lastStandaloneBashCard = undefined;
 		activeTurnCluster = undefined;
@@ -951,7 +945,18 @@ export function createWakuTranscriptView(
 			attachments,
 			onFork: options.onForkFromMessage,
 		});
+		if (userTurns.length === 0) {
+			annotateSpecNode(card.getBubbleBox(), {
+				key: "workspace.main.transcript.user_bubble.0",
+				role: "region",
+				flow: { type: "flex", dir: "column", justify: "start", align: "stretch", wrap: "nowrap", gap: 0 },
+				size: { w: "hug", h: "hug" },
+				text: null,
+				skipChildren: true,
+			});
+		}
 		const snippet = text.trim().split(/\r?\n/)[0] ?? "";
+		userBubbleBoxes.push(card.getBubbleBox());
 		userTurns.push({
 			card,
 			snippet: snippet.length > 36 ? `${snippet.slice(0, 33)}...` : snippet,
@@ -970,6 +975,7 @@ export function createWakuTranscriptView(
 				onViewDiff: options.onViewDiff,
 				onOpenChangedFile: options.onOpenChangedFile,
 			});
+			registerTurnClusterSpecIfFirst(cluster);
 			activeTurnCluster = cluster;
 			searchableItems.push({ kind: "turn", handle: cluster });
 			appendCard(cluster);
@@ -1013,6 +1019,7 @@ export function createWakuTranscriptView(
 							onViewDiff: options.onViewDiff,
 							onOpenChangedFile: options.onOpenChangedFile,
 						});
+						registerTurnClusterSpecIfFirst(turnCluster);
 						searchableItems.push({ kind: "turn", handle: turnCluster });
 						appendCard(turnCluster);
 					}
@@ -1047,6 +1054,7 @@ export function createWakuTranscriptView(
 							onViewDiff: options.onViewDiff,
 							onOpenChangedFile: options.onOpenChangedFile,
 						});
+						registerTurnClusterSpecIfFirst(turnCluster);
 						searchableItems.push({ kind: "turn", handle: turnCluster });
 						appendCard(turnCluster);
 					}
@@ -1347,14 +1355,12 @@ export function createWakuTranscriptView(
 		},
 		onShortcut: handleShortcutKey,
 	});
+	registerSpecChildren(root, () => [emptyStateBox.visible ? emptyStateBox : scrollView]);
 
 	const applyTheme = (nextTheme: GuiTheme) => {
 		theme = nextTheme;
 		heroMark.setColor(theme.accent);
-		heroBadge.setBackground(withAlpha(theme.accent, theme.dark ? 0.14 : 0.1));
-		heroBadge.setBorder(withAlpha(theme.accent, theme.dark ? 0.35 : 0.28), 1);
-		heroGreeting.setColor(theme.textBright);
-		heroSubtitle.setColor(theme.textMuted);
+		heroGreeting.setColor(theme.textPrimary);
 		findBar.setBackground(theme.surfaceElevated);
 		findBar.setBorder(theme.borderStrong, 1);
 		findCountText.setColor(theme.textMuted);
@@ -1388,11 +1394,16 @@ export function createWakuTranscriptView(
 		}),
 		handleShortcutKey,
 		scrollToTurn,
+		scrollToTop: () => {
+			scrollView.scrollTo(0);
+			app?.invalidate();
+		},
 		scrollToEnd: () => {
 			scrollView.scrollToEnd();
 			app?.invalidate();
 		},
 		isShowingEmptyState: () => emptyStateBox.visible,
+		getUserBubbleBoxes: () => [...userBubbleBoxes],
 		dispose: () => {
 			unsubscribe();
 		},

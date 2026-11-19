@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { ImageContent } from "@pi-ts/ai";
 import { darkGuiTheme, GuiApp, type GuiBackend, type GuiTheme, HeadlessBackend, lightGuiTheme } from "@pi-ts/gui";
 import { createNativeBackend } from "@pi-ts/gui/native";
@@ -8,6 +8,7 @@ import { createGuiControllerFromRuntime, type RealGuiSessionController } from ".
 import { loadGuiLayoutPreferences } from "./git-utils.ts";
 import { mountPiGui, type PiGuiHandle } from "./gui-mode.ts";
 import type { GuiAttachmentItem, GuiThemePreference } from "./types.ts";
+import { runUiReplicationExportAll } from "./ui-replication-export.ts";
 
 /**
  * Options passed by main.ts when launching `pi --gui` / `pi --mode gui`.
@@ -105,6 +106,19 @@ async function runNativeSmokeLoop(app: GuiApp): Promise<void> {
  * Launch the desktop GUI mode backed by an active AgentSessionRuntime.
  */
 export async function runGuiMode(runtime: AgentSessionRuntime, options: RunGuiModeOptions = {}): Promise<void> {
+	const replicationDirEnv = process.env.PI_UI_REPLICATION_DIR?.trim();
+	const replicationExportAll = isTruthyEnvFlag(process.env.PI_UI_REPLICATION_EXPORT_ALL);
+	if ((replicationDirEnv && replicationDirEnv.length > 0) || replicationExportAll) {
+		const targetDir =
+			replicationDirEnv && replicationDirEnv.length > 0
+				? replicationDirEnv
+				: join(process.cwd(), ".agents", "ui-replication");
+		runUiReplicationExportAll(targetDir);
+		await runtime.dispose();
+		process.exitCode = 0;
+		return;
+	}
+
 	const headlessSmoke = isTruthyEnvFlag(process.env.PI_GUI_HEADLESS_SMOKE);
 	const nativeSmoke = isTruthyEnvFlag(process.env.PI_GUI_NATIVE_SMOKE);
 
@@ -112,7 +126,7 @@ export async function runGuiMode(runtime: AgentSessionRuntime, options: RunGuiMo
 	const { appTheme, uiPreference } = resolveGuiThemes(options.initialThemeSetting, layout.appearance);
 	const initialAttachments = convertInitialImagesToAttachments(options.initialImages);
 
-	const backend: GuiBackend = headlessSmoke ? new HeadlessBackend({ width: 1280, height: 840 }) : createNativeBackend();
+	const backend: GuiBackend = headlessSmoke ? new HeadlessBackend({ width: 1280, height: 820 }) : createNativeBackend();
 	let app: GuiApp | undefined;
 	let handle: PiGuiHandle | undefined;
 	let controller: RealGuiSessionController | undefined;
@@ -124,7 +138,7 @@ export async function runGuiMode(runtime: AgentSessionRuntime, options: RunGuiMo
 			window: {
 				title: formatWindowTitle(runtime.cwd),
 				width: 1280,
-				height: 840,
+				height: 820,
 				resizable: true,
 				titlebarHidden: true,
 				unifiedTitlebar: true,

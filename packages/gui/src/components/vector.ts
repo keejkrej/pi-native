@@ -54,10 +54,15 @@ export type VectorIconName =
 	| "arrow-up"
 	| "arrow-down"
 	| "search"
+	| "settings"
 	| "sliders"
 	| "palette"
 	| "layout"
 	| "list"
+	| "list-filter"
+	| "queue"
+	| "star"
+	| "star-filled"
 	| "activity"
 	| "rocket"
 	| "compass"
@@ -65,8 +70,16 @@ export type VectorIconName =
 	| "cpu"
 	| "shield"
 	| "sparkles"
+	| "provider-claude"
+	| "provider-openai"
+	| "provider-google"
+	| "provider-pi"
+	| "provider-generic"
 	| "terminal"
 	| "folder"
+	| "folder-new"
+	| "corner-down-right"
+	| "ellipsis"
 	| "send"
 	| "stop"
 	| "menu"
@@ -455,6 +468,60 @@ export class RasterSurface {
 		}
 	}
 
+	/** Erase an anti-aliased line cutout from the surface alpha channel. */
+	eraseLineAA(x1: number, y1: number, x2: number, y2: number, lineWidth: number, capRound = true): void {
+		if (lineWidth <= 0 || this.pixelWidth <= 0 || this.pixelHeight <= 0) return;
+		const s = this.scale;
+		const sx1 = x1 * s;
+		const sy1 = y1 * s;
+		const sx2 = x2 * s;
+		const sy2 = y2 * s;
+		const hw = Math.max(0.45, lineWidth * s * 0.5);
+		const vx = sx2 - sx1;
+		const vy = sy2 - sy1;
+		const lenSq = vx * vx + vy * vy;
+		if (lenSq < 1e-8) return;
+		const len = Math.sqrt(lenSq);
+		const ux = vx / len;
+		const uy = vy / len;
+		const pad = hw + 1.5;
+		const minX = Math.max(0, Math.floor(Math.min(sx1, sx2) - pad));
+		const maxX = Math.min(this.pixelWidth - 1, Math.ceil(Math.max(sx1, sx2) + pad));
+		const minY = Math.max(0, Math.floor(Math.min(sy1, sy2) - pad));
+		const maxY = Math.min(this.pixelHeight - 1, Math.ceil(Math.max(sy1, sy2) + pad));
+		const buf = this.pixels;
+
+		for (let py = minY; py <= maxY; py++) {
+			const dy = py + 0.5 - sy1;
+			for (let px = minX; px <= maxX; px++) {
+				const dx = px + 0.5 - sx1;
+				let sd: number;
+				if (capRound) {
+					const t = clamp01((dx * vx + dy * vy) / lenSq);
+					sd = Math.hypot(dx - t * vx, dy - t * vy) - hw;
+				} else {
+					const along = dx * ux + dy * uy;
+					const perp = Math.abs(-dx * uy + dy * ux);
+					const endDist = Math.max(-along, along - len);
+					const perpDist = perp - hw;
+					sd = endDist > 0 && perpDist > 0 ? Math.hypot(endDist, perpDist) : Math.max(endDist, perpDist);
+				}
+				const cov = clamp01(0.5 - sd);
+				if (cov > 0) {
+					const idx = (py * this.pixelWidth + px) * 4;
+					const curA = buf[idx + 3] ?? 0;
+					const nextA = Math.round(curA * (1 - cov));
+					buf[idx + 3] = nextA;
+					if (nextA === 0) {
+						buf[idx] = 0;
+						buf[idx + 1] = 0;
+						buf[idx + 2] = 0;
+					}
+				}
+			}
+		}
+	}
+
 	/**
 	 * Draw a multi-segment anti-aliased polyline without alpha double-blending at vertices.
 	 */
@@ -664,6 +731,98 @@ export class RasterSurface {
 		}
 	}
 
+	/** Fill an anti-aliased closed polygon using 4x rotated-grid MSAA scanline coverage. */
+	fillPolygon(points: readonly VectorPoint[], color: Color): void {
+		if (points.length < 3 || this.pixelWidth <= 0 || this.pixelHeight <= 0) return;
+		const rgba = colorToRgba(color);
+		if (rgba.a <= 0) return;
+
+		const s = this.scale;
+		const polyX: number[] = [];
+		const polyY: number[] = [];
+		let minX = Number.POSITIVE_INFINITY;
+		let maxX = Number.NEGATIVE_INFINITY;
+		let minY = Number.POSITIVE_INFINITY;
+		let maxY = Number.NEGATIVE_INFINITY;
+
+		for (let i = 0; i < points.length; i++) {
+			const pt = points[i];
+			if (pt === undefined) continue;
+			const sx = pt.x * s;
+			const sy = pt.y * s;
+			polyX.push(sx);
+			polyY.push(sy);
+			if (sx < minX) minX = sx;
+			if (sx > maxX) maxX = sx;
+			if (sy < minY) minY = sy;
+			if (sy > maxY) maxY = sy;
+		}
+		const polyCount = polyX.length;
+		if (polyCount < 3) return;
+
+		const x0 = Math.max(0, Math.floor(minX - 1));
+		const x1 = Math.min(this.pixelWidth - 1, Math.ceil(maxX + 1));
+		const y0 = Math.max(0, Math.floor(minY - 1));
+		const y1 = Math.min(this.pixelHeight - 1, Math.ceil(maxY + 1));
+		const bw = x1 - x0 + 1;
+		const bh = y1 - y0 + 1;
+		if (bw <= 0 || bh <= 0) return;
+
+		const covBuf = new Float32Array(bw * bh);
+		const subOffsetsX = [0.125, 0.375, 0.625, 0.875];
+		const subOffsetsY = [0.375, 0.875, 0.125, 0.625];
+		const intersections: number[] = [];
+
+		for (let py = y0; py <= y1; py++) {
+			const rowOffset = (py - y0) * bw;
+			for (let sample = 0; sample < 4; sample++) {
+				const sy = py + (subOffsetsY[sample] ?? 0.5);
+				const ox = subOffsetsX[sample] ?? 0.5;
+				intersections.length = 0;
+
+				for (let i = 0; i < polyCount; i++) {
+					const j = (i + 1) % polyCount;
+					const yA = polyY[i] ?? 0;
+					const yB = polyY[j] ?? 0;
+					if ((yA <= sy && yB > sy) || (yB <= sy && yA > sy)) {
+						const xA = polyX[i] ?? 0;
+						const xB = polyX[j] ?? 0;
+						const t = (sy - yA) / (yB - yA);
+						intersections.push(xA + t * (xB - xA));
+					}
+				}
+				if (intersections.length < 2) continue;
+				intersections.sort((a, b) => a - b);
+
+				for (let k = 0; k + 1 < intersections.length; k += 2) {
+					const spanStart = intersections[k] ?? 0;
+					const spanEnd = intersections[k + 1] ?? 0;
+					const pxStart = Math.max(x0, Math.ceil(spanStart - ox));
+					const pxEnd = Math.min(x1, Math.floor(spanEnd - ox));
+					for (let px = pxStart; px <= pxEnd; px++) {
+						const idx = rowOffset + (px - x0);
+						covBuf[idx] = (covBuf[idx] ?? 0) + 0.25;
+					}
+				}
+			}
+		}
+
+		const r = clampByteInt(rgba.r);
+		const g = clampByteInt(rgba.g);
+		const b = clampByteInt(rgba.b);
+		const baseA = clamp01(rgba.a);
+		for (let ry = 0; ry < bh; ry++) {
+			const rowOffset = ry * bw;
+			const py = y0 + ry;
+			for (let rx = 0; rx < bw; rx++) {
+				const cov = covBuf[rowOffset + rx] ?? 0;
+				if (cov > 0) {
+					this.blendPixel(x0 + rx, py, r, g, b, baseA * cov);
+				}
+			}
+		}
+	}
+
 	/** Blit this surface onto a GUI render context. */
 	blit(ctx: GuiRenderContext, x: number, y: number, radius = 0, w = this.width, h = this.height): void {
 		if (w <= 0 || h <= 0 || this.pixelWidth <= 0 || this.pixelHeight <= 0) return;
@@ -803,6 +962,21 @@ export function renderVectorIcon(
 			circle(10.5, 10.5, 6);
 			line(15, 15, 20, 20);
 			break;
+		case "settings": {
+			const gearPts: [number, number][] = [];
+			const teeth = 8;
+			for (let k = 0; k < teeth; k++) {
+				const base = (k * Math.PI * 2) / teeth;
+				const step = (Math.PI * 2) / teeth;
+				gearPts.push([12 + 8.3 * Math.cos(base - step * 0.14), 12 + 8.3 * Math.sin(base - step * 0.14)]);
+				gearPts.push([12 + 8.3 * Math.cos(base + step * 0.14), 12 + 8.3 * Math.sin(base + step * 0.14)]);
+				gearPts.push([12 + 6.1 * Math.cos(base + step * 0.3), 12 + 6.1 * Math.sin(base + step * 0.3)]);
+				gearPts.push([12 + 6.1 * Math.cos(base + step * 0.7), 12 + 6.1 * Math.sin(base + step * 0.7)]);
+			}
+			poly(gearPts, true);
+			circle(12, 12, 2.8);
+			break;
+		}
 		case "sliders":
 			line(4, 7, 20, 7);
 			line(4, 12, 20, 12);
@@ -839,6 +1013,60 @@ export function renderVectorIcon(
 			line(9.2, 12, 19.5, 12);
 			line(9.2, 17, 19.5, 17);
 			break;
+		case "list-filter":
+			line(3, 6, 21, 6);
+			line(7, 12, 17, 12);
+			line(10, 18, 14, 18);
+			break;
+		case "queue":
+			line(4, 4.5, 20, 4.5);
+			poly([
+				[4, 4.5],
+				[4, 11.5],
+				[7.5, 15],
+				[19.5, 15],
+			]);
+			poly([
+				[15, 10.5],
+				[19.5, 15],
+				[15, 19.5],
+			]);
+			break;
+		case "star":
+			poly(
+				[
+					[12, 2.5],
+					[14.9, 8.38],
+					[21.39, 9.32],
+					[16.69, 13.9],
+					[17.8, 20.37],
+					[12, 17.32],
+					[6.2, 20.37],
+					[7.31, 13.9],
+					[2.61, 9.32],
+					[9.1, 8.38],
+				],
+				true,
+			);
+			break;
+		case "star-filled": {
+			const starPts: readonly [number, number][] = [
+				[12, 2.5],
+				[14.9, 8.38],
+				[21.39, 9.32],
+				[16.69, 13.9],
+				[17.8, 20.37],
+				[12, 17.32],
+				[6.2, 20.37],
+				[7.31, 13.9],
+				[2.61, 9.32],
+				[9.1, 8.38],
+			];
+			const mapped: VectorPoint[] = starPts.map((pair) => p(pair[0], pair[1]));
+			surface.fillPolygon(mapped, color);
+			poly(starPts, true);
+			break;
+		}
 		case "activity":
 			poly([
 				[2.5, 12],
@@ -950,6 +1178,80 @@ export function renderVectorIcon(
 			line(18.2, 15.5, 18.2, 20.5);
 			line(15.7, 18, 20.7, 18);
 			break;
+		case "provider-claude": {
+			const rays = 8;
+			for (let i = 0; i < rays; i++) {
+				const a = (i * Math.PI * 2) / rays - 0.18;
+				const rInner = i % 2 === 0 ? 2.4 : 3.2;
+				const rOuter = i % 2 === 0 ? 9.6 : 8.2;
+				line(12 + Math.cos(a) * rInner, 12 + Math.sin(a) * rInner, 12 + Math.cos(a) * rOuter, 12 + Math.sin(a) * rOuter);
+			}
+			break;
+		}
+		case "provider-openai": {
+			const hexPts: [number, number][] = [];
+			for (let i = 0; i < 6; i++) {
+				const a = (i * Math.PI) / 3 - Math.PI / 6;
+				hexPts.push([12 + 8.6 * Math.cos(a), 12 + 8.6 * Math.sin(a)]);
+				line(12 + 3.6 * Math.cos(a + 0.52), 12 + 3.6 * Math.sin(a + 0.52), 12 + 8.6 * Math.cos(a), 12 + 8.6 * Math.sin(a));
+			}
+			poly(hexPts, true);
+			circle(12, 12, 3.6);
+			break;
+		}
+		case "provider-google":
+			poly(
+				[
+					[12, 3.2],
+					[14.4, 9.6],
+					[20.8, 12],
+					[14.4, 14.4],
+					[12, 20.8],
+					[9.6, 14.4],
+					[3.2, 12],
+					[9.6, 9.6],
+				],
+				true,
+			);
+			break;
+		case "provider-pi":
+			poly(
+				[
+					[4.5, 4.5],
+					[16, 4.5],
+					[16, 11.8],
+					[12, 11.8],
+					[12, 15.8],
+					[8, 15.8],
+					[8, 19.5],
+					[4.5, 19.5],
+				],
+				true,
+			);
+			poly(
+				[
+					[8.5, 8.2],
+					[12.2, 8.2],
+					[12.2, 11.8],
+					[8.5, 11.8],
+				],
+				true,
+			);
+			poly(
+				[
+					[16, 12],
+					[19.5, 12],
+					[19.5, 19.5],
+					[16, 19.5],
+				],
+				true,
+			);
+			break;
+		case "provider-generic":
+			circle(12, 12, 8.2);
+			line(7.5, 12, 16.5, 12);
+			line(12, 7.5, 12, 16.5);
+			break;
 		case "terminal":
 			poly(
 				[
@@ -980,6 +1282,43 @@ export function renderVectorIcon(
 				true,
 			);
 			break;
+		case "folder-new": {
+			poly([
+				[13.8, 7.6],
+				[8.4, 7.6],
+				[6.4, 5.6],
+				[3.0, 5.6],
+				[2.0, 6.6],
+				[2.0, 18.8],
+				[3.0, 19.8],
+				[18.2, 19.8],
+				[19.2, 18.8],
+				[19.2, 14.0],
+			]);
+			line(2.0, 10.2, 13.8, 10.2);
+			surface.fillCircle(x + 18.8 * u, y + 8.6 * u, 4.4 * u, color);
+			const cutW = Math.max(1.15, lw * 0.85);
+			surface.eraseLineAA(x + 16.9 * u, y + 8.6 * u, x + 20.7 * u, y + 8.6 * u, cutW, true);
+			surface.eraseLineAA(x + 18.8 * u, y + 6.7 * u, x + 18.8 * u, y + 10.5 * u, cutW, true);
+			break;
+		}
+		case "corner-down-right":
+			line(4.8, 4.5, 4.8, 10.8);
+			arc(8.8, 10.8, 4.0, Math.PI * 0.5, Math.PI);
+			line(8.8, 14.8, 19.2, 14.8);
+			poly([
+				[14.8, 10.3],
+				[19.4, 14.8],
+				[14.8, 19.3],
+			]);
+			break;
+		case "ellipsis": {
+			const dotRadius = Math.max(1.05, lw * 0.82);
+			fillDot(5.5, 12, dotRadius);
+			fillDot(12, 12, dotRadius);
+			fillDot(18.5, 12, dotRadius);
+			break;
+		}
 		case "send":
 			poly(
 				[
@@ -1748,8 +2087,8 @@ export class Badge extends GuiComponent {
 		const textSize = ctx.measureText(style, 0, this.labelText);
 		const iconSz = this.leadingIcon !== undefined ? (this.iconSize ?? Math.max(10, fs)) : 0;
 		const iconGap = this.leadingIcon !== undefined && this.labelText.length > 0 ? 5 : 0;
-		const width = Math.min(maxWidth, textSize.width + iconSz + iconGap + this.padding.left + this.padding.right);
-		const height = Math.max(textSize.height, iconSz) + this.padding.top + this.padding.bottom;
+		const width = Math.min(maxWidth, Math.ceil(textSize.width) + iconSz + iconGap + this.padding.left + this.padding.right);
+		const height = Math.ceil(Math.max(textSize.height, iconSz)) + this.padding.top + this.padding.bottom;
 		return { width: Math.max(0, width), height: Math.max(0, height) };
 	}
 
@@ -1773,6 +2112,7 @@ export class Badge extends GuiComponent {
 		const innerW = Math.max(0, r.width - this.padding.left - this.padding.right);
 		let cursorX = r.x + this.padding.left + Math.max(0, (innerW - contentW) * 0.5);
 
+		ctx.pushClip(r);
 		if (this.leadingIcon !== undefined) {
 			const iconY = r.y + Math.max(0, (r.height - iconSz) * 0.5);
 			drawVectorIcon(ctx, this.leadingIcon, cursorX, iconY, iconSz, colors.text);
@@ -1780,9 +2120,9 @@ export class Badge extends GuiComponent {
 		}
 		if (this.labelText.length > 0) {
 			const textY = r.y + Math.max(0, (r.height - textSize.lineHeight) * 0.5);
-			const availTextW = Math.max(0, r.x + r.width - this.padding.right - cursorX);
-			ctx.drawStyledText(cursorX, textY, availTextW, colors.text, style, this.labelText);
+			ctx.drawStyledText(cursorX, textY, 0, colors.text, style, this.labelText);
 		}
+		ctx.popClip();
 	}
 
 	override collectAccessibilityNodes(out: GuiA11yNode[], _ctx: GuiRenderContext): void {

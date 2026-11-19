@@ -24,6 +24,12 @@ import {
 	SGUI_FONT_MONO,
 } from "./protocol.ts";
 
+export type HeadlessTextMeasurer = (
+	style: TextStyle,
+	maxWidth: number,
+	text: string,
+) => TextMetrics | undefined;
+
 export interface HeadlessBackendOptions {
 	readonly width?: number;
 	readonly height?: number;
@@ -33,6 +39,7 @@ export interface HeadlessBackendOptions {
 	readonly insetLeft?: number;
 	readonly titlebarHeight?: number;
 	readonly platform?: string;
+	readonly measureText?: HeadlessTextMeasurer;
 }
 
 export interface HeadlessWindowChromeState {
@@ -189,6 +196,7 @@ export class HeadlessBackend extends GuiBackend {
 	};
 	private readonly windows: Map<number, HeadlessWindowState>;
 	private readonly measureCache: TextMeasureCache;
+	private readonly customMeasureText: HeadlessTextMeasurer | undefined;
 	private readonly eventQueue: GuiNativeEvent[];
 	private nextWindowId: number;
 	private initialized: boolean;
@@ -209,6 +217,7 @@ export class HeadlessBackend extends GuiBackend {
 		};
 		this.windows = new Map<number, HeadlessWindowState>();
 		this.measureCache = new TextMeasureCache();
+		this.customMeasureText = options.measureText;
 		this.eventQueue = [];
 		this.nextWindowId = 1;
 		this.initialized = false;
@@ -320,6 +329,13 @@ export class HeadlessBackend extends GuiBackend {
 		if (cached !== undefined) {
 			return cached;
 		}
+		if (this.customMeasureText !== undefined) {
+			const measured = this.customMeasureText(style, maxWidth, text);
+			if (measured !== undefined) {
+				this.measureCache.set(resolved, maxWidth, text, measured);
+				return measured;
+			}
+		}
 		const lineHeight = Math.max(1, Math.ceil(resolved.fontSize * 1.35));
 		const baseline = Math.max(1, Math.ceil(resolved.fontSize * 0.85));
 		const paragraphs = text.split("\n");
@@ -360,7 +376,11 @@ export class HeadlessBackend extends GuiBackend {
 	getTextCaretX(style: TextStyle, line: string, charIndex: number): number {
 		const resolved = resolveTextStyle(style);
 		const limit = Math.max(0, Math.min(charIndex, line.length));
-		return measureLineWidth(line.slice(0, limit), resolved.fontFamily, resolved.fontSize, resolved.fontWeight);
+		const slice = line.slice(0, limit);
+		if (this.customMeasureText !== undefined) {
+			return this.measureText(style, 0, slice).width;
+		}
+		return measureLineWidth(slice, resolved.fontFamily, resolved.fontSize, resolved.fontWeight);
 	}
 
 	hitTestText(style: TextStyle, line: string, x: number): number {

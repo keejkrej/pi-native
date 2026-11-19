@@ -46,6 +46,7 @@ export interface OverlayOptions {
 	readonly anchor?: OverlayAnchor;
 	readonly anchorRect?: Rect;
 	readonly width?: number | string;
+	readonly height?: number | string;
 	readonly maxWidth?: number;
 	readonly maxHeight?: number;
 	readonly margin?: PaddingInput;
@@ -53,6 +54,7 @@ export interface OverlayOptions {
 	readonly offsetY?: number;
 	readonly modal?: boolean;
 	readonly radius?: number;
+	readonly border?: boolean;
 	readonly shadow?: ShadowLevel | false;
 	readonly dismissOnBackdropClick?: boolean;
 	readonly dismissOnEscape?: boolean;
@@ -122,6 +124,10 @@ class GuiAppHost extends GuiHost {
 		return this.app.isComponentFocused(component);
 	}
 
+	isFocusVisible(component: GuiComponent): boolean {
+		return this.app.isComponentFocusVisible(component);
+	}
+
 	isHovered(component: GuiComponent): boolean {
 		return this.app.isComponentHovered(component);
 	}
@@ -159,6 +165,7 @@ export class GuiApp {
 	private rootComponent: GuiComponent | undefined;
 	private readonly overlays: OverlayEntry[];
 	private focusedComponent: GuiComponent | undefined;
+	private focusVisibleState: boolean;
 	private hoveredComponent: GuiComponent | undefined;
 	private capturedComponent: GuiComponent | undefined;
 	private activeCursor: CursorKindId;
@@ -204,6 +211,7 @@ export class GuiApp {
 		this.overlays = [];
 		this.rootComponent = undefined;
 		this.focusedComponent = undefined;
+		this.focusVisibleState = false;
 		this.hoveredComponent = undefined;
 		this.capturedComponent = undefined;
 		this.activeCursor = SGUI_CURSOR_ARROW;
@@ -222,6 +230,20 @@ export class GuiApp {
 
 	getTheme(): GuiTheme {
 		return this.themeValue;
+	}
+
+	getRootComponent(): GuiComponent | undefined {
+		return this.rootComponent;
+	}
+
+	getVisibleOverlayComponents(): readonly GuiComponent[] {
+		const visible = this.visibleOverlays();
+		const out: GuiComponent[] = [];
+		for (let i = 0; i < visible.length; i++) {
+			const entry = visible[i];
+			if (entry !== undefined) out.push(entry.component);
+		}
+		return out;
 	}
 
 	setTheme(theme: GuiTheme): void {
@@ -376,20 +398,28 @@ export class GuiApp {
 		return this.focusedComponent;
 	}
 
-	setFocus(component: GuiComponent | undefined): void {
+	setFocus(component: GuiComponent | undefined, showFocusRing = false): void {
 		const target = component?.focusable && component.visible ? component : undefined;
-		if (this.focusedComponent === target) {
+		const nextVisible = showFocusRing && target !== undefined;
+		if (this.focusedComponent === target && this.focusVisibleState === nextVisible) {
 			return;
 		}
 		const prev = this.focusedComponent;
 		this.focusedComponent = target;
-		prev?.onFocusChange(false);
-		target?.onFocusChange(true);
+		this.focusVisibleState = nextVisible;
+		if (prev !== target) {
+			prev?.onFocusChange(false);
+			target?.onFocusChange(true);
+		}
 		this.needsRender = true;
 	}
 
 	isComponentFocused(component: GuiComponent): boolean {
 		return this.focusedComponent === component && this.metrics.focused;
+	}
+
+	isComponentFocusVisible(component: GuiComponent): boolean {
+		return this.focusedComponent === component && this.metrics.focused && this.focusVisibleState;
 	}
 
 	isComponentHovered(component: GuiComponent): boolean {
@@ -509,15 +539,19 @@ export class GuiApp {
 		const availH = Math.max(0, this.metrics.height - margin.top - margin.bottom);
 
 		let targetW = parseWidthSpec(opts.width, availW);
+		let targetH = parseWidthSpec(opts.height, availH);
 		const maxW = opts.maxWidth !== undefined ? Math.min(availW, opts.maxWidth) : availW;
 		const maxH = opts.maxHeight !== undefined ? Math.min(availH, opts.maxHeight) : availH;
 		if (targetW !== undefined) {
 			targetW = clampNumber(targetW, 0, maxW);
 		}
+		if (targetH !== undefined) {
+			targetH = clampNumber(targetH, 0, maxH);
+		}
 
-		const measured = entry.component.measure(ctx, targetW ?? maxW, maxH);
+		const measured = entry.component.measure(ctx, targetW ?? maxW, targetH ?? maxH);
 		const w = clampNumber(targetW ?? measured.width, 0, maxW);
-		const h = clampNumber(measured.height, 0, maxH);
+		const h = clampNumber(targetH ?? measured.height, 0, maxH);
 
 		let x = margin.left + (availW - w) * 0.5;
 		let y = margin.top + (availH - h) * 0.5;
@@ -617,13 +651,13 @@ export class GuiApp {
 				ctx.fillRect(rect.x, rect.y, rect.width, rect.height, this.themeValue.surfaceElevated, overlayRadius);
 			}
 			entry.component.render(ctx);
-			if (box === undefined || !box.hasBorder()) {
+			if (entry.options.border !== false && (box === undefined || !box.hasBorder())) {
 				ctx.strokeRect(
 					rect.x,
 					rect.y,
 					rect.width,
 					rect.height,
-					withAlpha(this.themeValue.border, this.themeValue.dark ? 0.9 : 0.8),
+					this.themeValue.border,
 					1,
 					overlayRadius,
 				);
@@ -863,17 +897,17 @@ export class GuiApp {
 		if (focusables.length === 0) return;
 		if (this.focusedComponent === undefined) {
 			const first = reverse ? focusables[focusables.length - 1] : focusables[0];
-			this.setFocus(first);
+			this.setFocus(first, true);
 			return;
 		}
 		const idx = focusables.indexOf(this.focusedComponent);
 		if (idx === -1) {
-			this.setFocus(focusables[0]);
+			this.setFocus(focusables[0], true);
 			return;
 		}
 		const delta = reverse ? -1 : 1;
 		const nextIdx = (idx + delta + focusables.length) % focusables.length;
-		this.setFocus(focusables[nextIdx]);
+		this.setFocus(focusables[nextIdx], true);
 	}
 
 	private handleKeyEvent(raw: Extract<GuiNativeEvent, { kind: "key" }>, ctx: GuiRenderContext): void {

@@ -809,13 +809,14 @@ export async function openWorkspaceInApp(openerId: string, targetPath: string): 
  */
 export function getDefaultGuiLayoutPreferences(): GuiLayoutPreferences {
 	return {
-		sidebarWidth: 260,
+		sidebarWidth: 252,
 		sidebarCollapsed: false,
-		rightPanelWidth: 380,
+		rightPanelWidth: 460,
 		rightPanelOpen: false,
 		rightPanelTab: "changes",
 		diffViewMode: "unified",
 		sidebarGroupBy: "updated",
+		sidebarOrderBy: "newest",
 		appearance: "system",
 		pinnedSessionIds: [],
 		sessionCustomNames: {},
@@ -849,7 +850,10 @@ export function loadGuiLayoutPreferences(agentDir: string = getAgentDir()): GuiL
 		}
 
 		const rightPanelTab =
-			parsed.rightPanelTab === "changes" || parsed.rightPanelTab === "files" || parsed.rightPanelTab === "tree"
+			parsed.rightPanelTab === "changes" ||
+			parsed.rightPanelTab === "files" ||
+			parsed.rightPanelTab === "terminal" ||
+			parsed.rightPanelTab === "tree"
 				? parsed.rightPanelTab
 				: defaults.rightPanelTab;
 		const diffViewMode =
@@ -860,6 +864,10 @@ export function loadGuiLayoutPreferences(agentDir: string = getAgentDir()): GuiL
 			parsed.sidebarGroupBy === "updated" || parsed.sidebarGroupBy === "project"
 				? parsed.sidebarGroupBy
 				: defaults.sidebarGroupBy;
+		const sidebarOrderBy =
+			parsed.sidebarOrderBy === "newest" || parsed.sidebarOrderBy === "oldest"
+				? parsed.sidebarOrderBy
+				: defaults.sidebarOrderBy;
 		const appearance =
 			parsed.appearance === "system" || parsed.appearance === "dark" || parsed.appearance === "light"
 				? parsed.appearance
@@ -879,14 +887,15 @@ export function loadGuiLayoutPreferences(agentDir: string = getAgentDir()): GuiL
 		}
 
 		return {
-			sidebarWidth: clampNumber(parsed.sidebarWidth, defaults.sidebarWidth, 180, 480),
+			sidebarWidth: clampNumber(parsed.sidebarWidth, defaults.sidebarWidth, 180, 420),
 			sidebarCollapsed:
 				typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : defaults.sidebarCollapsed,
-			rightPanelWidth: clampNumber(parsed.rightPanelWidth, defaults.rightPanelWidth, 240, 720),
+			rightPanelWidth: clampNumber(parsed.rightPanelWidth, defaults.rightPanelWidth, 280, 1000),
 			rightPanelOpen: typeof parsed.rightPanelOpen === "boolean" ? parsed.rightPanelOpen : defaults.rightPanelOpen,
 			rightPanelTab,
 			diffViewMode,
 			sidebarGroupBy,
+			sidebarOrderBy,
 			appearance,
 			pinnedSessionIds,
 			sessionCustomNames,

@@ -101,8 +101,8 @@ export class Text extends GuiComponent {
 	measure(ctx: GuiRenderContext, maxWidth: number, _maxHeight?: number): Size {
 		const innerMaxW = Math.max(0, maxWidth - this.padding.left - this.padding.right);
 		const metrics = ctx.measureText(this.buildStyle(ctx), this.wrap ? innerMaxW : 0, this.textValue);
-		const width = Math.min(maxWidth, metrics.width + this.padding.left + this.padding.right);
-		const height = metrics.height + this.padding.top + this.padding.bottom;
+		const width = Math.min(maxWidth, Math.ceil(metrics.width) + this.padding.left + this.padding.right);
+		const height = Math.ceil(metrics.height) + this.padding.top + this.padding.bottom;
 		return { width, height };
 	}
 
@@ -118,7 +118,9 @@ export class Text extends GuiComponent {
 			return;
 		}
 		const style = this.buildStyle(ctx);
-		const metrics = ctx.measureText(style, this.wrap ? innerW : 0, this.textValue);
+		const naturalMetrics = ctx.measureText(style, 0, this.textValue);
+		const shouldWrap = this.wrap && naturalMetrics.width > innerW + 0.5;
+		const metrics = shouldWrap ? ctx.measureText(style, innerW, this.textValue) : naturalMetrics;
 		let drawX = r.x + this.padding.left;
 		if (this.align === "center" && metrics.width < innerW) {
 			drawX += (innerW - metrics.width) * 0.5;
@@ -132,7 +134,7 @@ export class Text extends GuiComponent {
 		ctx.drawStyledText(
 			drawX,
 			r.y + this.padding.top,
-			this.wrap ? innerW : 0,
+			shouldWrap ? innerW : 0,
 			this.color ?? ctx.theme.text,
 			style,
 			this.textValue,
@@ -215,10 +217,10 @@ export class TruncatedText extends GuiComponent {
 		if (maxWidth <= 0 || singleLine.length === 0) {
 			return "";
 		}
-		if (ctx.getTextCaretX(style, singleLine, singleLine.length) <= maxWidth) {
+		if (ctx.measureText(style, 0, singleLine).width <= maxWidth + 0.5) {
 			return singleLine;
 		}
-		const ellipsisW = ctx.getTextCaretX(style, this.ellipsis, this.ellipsis.length);
+		const ellipsisW = ctx.measureText(style, 0, this.ellipsis).width;
 		if (ellipsisW >= maxWidth) {
 			return this.ellipsis;
 		}
@@ -227,7 +229,7 @@ export class TruncatedText extends GuiComponent {
 		let hi = singleLine.length;
 		while (lo < hi) {
 			const mid = Math.ceil((lo + hi) / 2);
-			const w = ctx.getTextCaretX(style, singleLine, mid);
+			const w = ctx.measureText(style, 0, singleLine.slice(0, mid)).width;
 			if (w <= budget) {
 				lo = mid;
 			} else {
@@ -243,8 +245,8 @@ export class TruncatedText extends GuiComponent {
 		const fitted = this.fitText(ctx, style, innerMaxW);
 		const metrics = ctx.measureText(style, 0, fitted.length > 0 ? fitted : " ");
 		return {
-			width: Math.min(maxWidth, metrics.width + this.padding.left + this.padding.right),
-			height: metrics.lineHeight + this.padding.top + this.padding.bottom,
+			width: Math.min(maxWidth, Math.ceil(metrics.width) + this.padding.left + this.padding.right),
+			height: Math.ceil(metrics.lineHeight) + this.padding.top + this.padding.bottom,
 		};
 	}
 

@@ -82,14 +82,20 @@ export {
 	openGitBranchModal,
 	openGitCommitModal,
 	openModelPicker,
+	openProjectPicker,
 	openSessionPicker,
 	openSettingsModal,
+	openSidebarOptionsPopover,
+	openThinkingPicker,
+	openWorkspacePicker,
 	resolveAppearanceTheme,
 	type WakuCommandGroup,
 	type WakuCommandItem,
 	type WakuCommandPaletteOptions,
 	type WakuContextPopoverOptions,
+	type WakuGitBranchModalOptions,
 	type WakuModelPickerOptions,
+	type WakuSettingsCategory,
 	type WakuSettingsModalOptions,
 } from "./overlays.ts";
 export {
@@ -97,9 +103,15 @@ export {
 	RIGHT_PANEL_DEFAULT_WIDTH,
 	RIGHT_PANEL_MAX_WIDTH,
 	RIGHT_PANEL_MIN_WIDTH,
+	type RightPanelTab,
 	type WakuRightPanelCallbacks,
 	type WakuRightPanelHandle,
 } from "./right-panel.ts";
+export {
+	runUiReplicationExportAll,
+	type UiReplicationExportResult,
+	type UiReplicationScenarioSummary,
+} from "./ui-replication-export.ts";
 export {
 	createWakuSidebar,
 	SIDEBAR_CARD_HEIGHT,
